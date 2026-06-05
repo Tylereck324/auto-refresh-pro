@@ -298,6 +298,16 @@
 
   .custom-input::placeholder { color: var(--text2); }
   .custom-input:focus { border-color: var(--accent); }
+  .custom-input.invalid { border-color: var(--yellow); }
+
+  .custom-hint {
+    display: none;
+    font-size: 10px;
+    color: var(--yellow);
+    margin-top: 5px;
+    letter-spacing: 0.2px;
+  }
+  .custom-hint.show { display: block; }
 
   .unit-select {
     background: var(--card2);
@@ -615,6 +625,7 @@
         <option value="3600000">hr</option>
       </select>
     </div>
+    <div class="custom-hint" id="customHint">Minimum is 2 seconds — using 2s.</div>
   </div>
 
   <!-- Keyword detection -->

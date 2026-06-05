@@ -47,24 +47,8 @@ function bindEvents() {
   // Preset buttons are rendered + bound dynamically in renderPresets().
 
   // Custom interval
-  document.getElementById('customValue').addEventListener('input', () => {
-    document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
-    const val = parseFloat(document.getElementById('customValue').value);
-    const unit = parseInt(document.getElementById('customUnit').value);
-    if (val > 0) {
-      selectedMs = Math.max(2000, val * unit);
-      applyIntervalChange();
-    }
-  });
-
-  document.getElementById('customUnit').addEventListener('change', () => {
-    const val = parseFloat(document.getElementById('customValue').value);
-    if (val > 0) {
-      const unit = parseInt(document.getElementById('customUnit').value);
-      selectedMs = Math.max(2000, val * unit);
-      applyIntervalChange();
-    }
-  });
+  document.getElementById('customValue').addEventListener('input', applyCustomInterval);
+  document.getElementById('customUnit').addEventListener('change', applyCustomInterval);
 
   // Start/Stop
   document.getElementById('btnStart').addEventListener('click', startRefresh);
@@ -110,6 +94,29 @@ function bindEvents() {
     if (el) el.addEventListener('change', saveSettings);
     if (el && el.type === 'text') el.addEventListener('input', saveSettings);
   });
+}
+
+// Read the custom interval row, clamp to the 2s minimum, and surface a hint
+// when the typed value was below that floor (instead of clamping silently).
+function applyCustomInterval() {
+  const input = document.getElementById('customValue');
+  const hint  = document.getElementById('customHint');
+  const val   = parseFloat(input.value);
+  const unit  = parseInt(document.getElementById('customUnit').value);
+
+  if (!(val > 0)) {
+    input.classList.remove('invalid');
+    if (hint) hint.classList.remove('show');
+    return;
+  }
+
+  document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+  const raw = val * unit;
+  const clamped = raw < 2000;
+  selectedMs = Math.max(2000, raw);
+  input.classList.toggle('invalid', clamped);
+  if (hint) hint.classList.toggle('show', clamped);
+  applyIntervalChange();
 }
 
 function updateConditionalRows() {
