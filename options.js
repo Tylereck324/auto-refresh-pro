@@ -185,6 +185,7 @@ function load() {
 
     // Presets
     const presets = s.presets || defaultPresets;
+    presetCount = presets.length; // remember how many rows we render, so save reads them all
     const list = document.getElementById('presetsList');
     list.innerHTML = '';
     // Build each row with createElement (see preset-row.js) — never innerHTML —
@@ -207,16 +208,13 @@ function load() {
 // popup's behavior. Writes are debounced so typing doesn't spam storage.
 let saveTimer = null;
 let loaded = false;
+let presetCount = defaultPresets.length; // number of preset rows currently rendered
 
 function gatherAndSave() {
   if (!loaded) return; // don't persist before the initial load populates the form
-  const presets = defaultPresets.map(function(_, i) {
-    const labelEl = document.getElementById('pLabel' + i);
-    const secEl = document.getElementById('pSec' + i);
-    const label = (labelEl && labelEl.value) || String(i + 1);
-    const sec = parseFloat(secEl && secEl.value) || 30;
-    return { label: label, ms: Math.max(2000, sec * 1000) };
-  });
+  // Read back exactly the rows we rendered (presetCount) — not a fixed template
+  // length — so importing/having ≠8 presets doesn't drop or fabricate rows.
+  const presets = readPresets(document, presetCount);
 
   const settings = {
     hardRefresh: document.getElementById('defHardRefresh').checked,

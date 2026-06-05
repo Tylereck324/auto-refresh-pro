@@ -10,6 +10,7 @@
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.buildPresetRow = api.buildPresetRow;
+  root.readPresets = api.readPresets;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
@@ -41,5 +42,23 @@
     return div;
   }
 
-  return { buildPresetRow };
+  // Read back the `count` rendered preset rows (pLabel{i}/pSec{i}) into preset
+  // objects. `count` MUST be the number of rows actually rendered — iterating a
+  // fixed template length instead silently dropped presets past that length and
+  // fabricated phantom ones when fewer existed. Missing rows are skipped rather
+  // than defaulted, so the saved set always matches what the user sees.
+  function readPresets(doc, count) {
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const labelEl = doc.getElementById('pLabel' + i);
+      const secEl = doc.getElementById('pSec' + i);
+      if (!labelEl && !secEl) continue; // row not present — don't fabricate one
+      const label = (labelEl && labelEl.value) || String(i + 1);
+      const sec = parseFloat(secEl && secEl.value) || 30;
+      out.push({ label: label, ms: Math.max(2000, sec * 1000) });
+    }
+    return out;
+  }
+
+  return { buildPresetRow, readPresets };
 });
