@@ -2,10 +2,14 @@
 
 let currentTabId = null;
 let selectedMs = 30000;
-let countdownTimer = null;
-let countdownRemaining = 0;
-let countdownTotal = 1;
 let isActive = false;
+
+// Countdown is a pure render of the background's authoritative deadline.
+// jobDeadline is an absolute timestamp (job.nextRefresh); jobTotal is the
+// current cycle's interval, used only as the progress-bar denominator.
+let jobDeadline = 0;
+let jobTotal = 1;
+let renderTimer = null;
 
 // ── Init ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -17,7 +21,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   await refreshStatus();
   bindEvents();
 
-  // Poll for status updates
+  // Primary sync: the background pushes STATUS_UPDATE on start/refresh/stop so
+  // the countdown resets in lockstep with the authoritative deadline.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'STATUS_UPDATE') applyStatus(msg);
+  });
+
+  // Fallback: poll once a second in case a broadcast was missed or the service
+  // worker was restarted. Also keeps refreshCount/active-count stats fresh.
   setInterval(refreshStatus, 1000);
 });
 
@@ -110,8 +121,9 @@ function applyIntervalChange() {
     settings
   });
 
-  // Immediately reset the popup countdown to the new duration
-  startPopupCountdown(selectedMs);
+  // Optimistically reset the countdown to the new duration for instant feedback.
+  // The background's STATUS_UPDATE push will correct it (e.g. under random mode).
+  setDeadline(Date.now() + selectedMs, selectedMs);
 }
 
 // ── Start / Stop ────────────────────────────────────────────────────────────
@@ -128,7 +140,9 @@ async function startRefresh() {
 
   isActive = true;
   setActiveUI(true, settings.interval);
-  startPopupCountdown(settings.currentInterval || settings.interval);
+  // Optimistic deadline; corrected by the background's STATUS_UPDATE push.
+  const total = settings.currentInterval || settings.interval;
+  setDeadline(Date.now() + total, total);
   saveSettings();
 }
 
@@ -137,7 +151,8 @@ async function stopRefresh() {
   chrome.runtime.sendMessage({ type: 'STOP_REFRESH', tabId: currentTabId });
   isActive = false;
   setActiveUI(false);
-  stopPopupCountdown();
+  stopRenderLoop();
+  jobDeadline = 0;
 }
 
 // ── Settings gather ─────────────────────────────────────────────────────────
@@ -153,7 +168,6 @@ function gatherSettings() {
     notify: document.getElementById('optNotify').checked,
     sound: document.getElementById('optSound').checked,
     monitorMode: document.getElementById('optMonitor').checked,
-    monitorChange: document.getElementById('optMonitor').checked && document.getElementById('optStopOnChange').checked,
     randomTimer,
     randomMin: randomMinSec * 1000,
     randomMax: randomMaxSec * 1000,
@@ -182,33 +196,52 @@ function setActiveUI(active, interval) {
   btnStop.disabled  = !active;
 }
 
-function startPopupCountdown(duration) {
-  stopPopupCountdown();
-  countdownRemaining = duration;
-  countdownTotal     = duration;
-
-  const display = document.getElementById('countdownDisplay');
-  const fill    = document.getElementById('progressFill');
-
-  function tick() {
-    if (display) display.textContent = formatTime(Math.max(0, countdownRemaining));
-    if (fill)    fill.style.width    = Math.max(0, (countdownRemaining / countdownTotal) * 100) + '%';
-    if (countdownRemaining <= 0) {
-      countdownRemaining = countdownTotal;
-    } else {
-      countdownRemaining -= 1000;
-    }
-  }
-
-  tick();
-  countdownTimer = setInterval(tick, 1000);
+// Point the countdown at an absolute deadline and start rendering it.
+// total is the cycle interval, used only as the progress-bar denominator.
+function setDeadline(deadline, total) {
+  const changed = deadline !== jobDeadline;
+  jobDeadline = deadline;
+  if (total) jobTotal = total;
+  // Only force an immediate repaint when the deadline actually moved (start /
+  // refresh / reset). On a steady-state poll the deadline is unchanged, so we
+  // leave the boundary-aligned loop to paint and avoid a once-a-second stutter.
+  if (changed) renderCountdown();
+  startRenderLoop();
 }
 
-function stopPopupCountdown() {
-  if (countdownTimer) {
-    clearInterval(countdownTimer);
-    countdownTimer = null;
+// Self-scheduling render aligned to the wall-clock second boundary. Both this
+// and the in-page overlay use the identical scheme over the same absolute
+// deadline, so their displayed second flips at the same instant — no residual
+// sub-second phase skew between the two timers. The number is a pure function
+// of the deadline, so there is nothing to drift or self-reset.
+function startRenderLoop() {
+  if (renderTimer) return;
+  tickAligned();
+}
+
+function tickAligned() {
+  renderCountdown();
+  const remaining = Math.max(0, jobDeadline - Date.now());
+  // ms until ceil(remaining/1000) next changes, +15ms to land just past it.
+  // While waiting for a post-refresh reset (remaining 0), poll at 250ms.
+  const delay = remaining > 0 ? (remaining % 1000) + 15 : 250;
+  renderTimer = setTimeout(tickAligned, delay);
+}
+
+function stopRenderLoop() {
+  if (renderTimer) {
+    clearTimeout(renderTimer);
+    renderTimer = null;
   }
+}
+
+function renderCountdown() {
+  const display = document.getElementById('countdownDisplay');
+  const fill    = document.getElementById('progressFill');
+  const remaining = Math.max(0, jobDeadline - Date.now());
+  if (display) display.textContent = formatTime(remaining);
+  if (fill)    fill.style.width    =
+    (jobTotal > 0 ? Math.max(0, Math.min(100, remaining / jobTotal * 100)) : 0) + '%';
 }
 
 function formatTime(ms) {
@@ -221,36 +254,38 @@ function formatTime(ms) {
 // ── Status polling ──────────────────────────────────────────────────────────
 async function refreshStatus() {
   if (!currentTabId) return;
-
   chrome.runtime.sendMessage({ type: 'GET_STATUS', tabId: currentTabId }, (resp) => {
-    if (!resp) return;
-    const job     = resp.job;
-    const allJobs = resp.jobs || {};
-    const activeCount = Object.keys(allJobs).length;
-
-    const statActive    = document.getElementById('statActive');
-    const statRefreshes = document.getElementById('statRefreshes');
-    if (statActive)    statActive.textContent    = activeCount;
-    if (statRefreshes) statRefreshes.textContent = job ? (job.refreshCount || 0) : 0;
-
-    if (job) {
-      if (!isActive) {
-        isActive = true;
-        setActiveUI(true);
-        // Sync to actual remaining time, not the full interval
-        const fullInterval = job.settings.currentInterval || job.settings.interval;
-        const timeLeft = Math.max(1000, job.nextRefresh - Date.now());
-        startPopupCountdown(timeLeft);
-        countdownTotal = fullInterval; // fix the progress bar denominator
-      }
-    } else {
-      if (isActive) {
-        isActive = false;
-        setActiveUI(false);
-        stopPopupCountdown();
-      }
-    }
+    if (resp) applyStatus(resp);
   });
+}
+
+// Shared by the 1 s poll (GET_STATUS resp) and the STATUS_UPDATE push. Both
+// carry a `jobs` map; GET_STATUS also carries the resolved `job`. We always
+// re-point the countdown at the authoritative nextRefresh — single source of
+// truth — so a real refresh moving the deadline forward is reflected at once.
+function applyStatus(resp) {
+  const allJobs = resp.jobs || {};
+  const job = resp.job || allJobs[currentTabId] || null;
+  const activeCount = Object.keys(allJobs).length;
+
+  const statActive    = document.getElementById('statActive');
+  const statRefreshes = document.getElementById('statRefreshes');
+  if (statActive)    statActive.textContent    = activeCount;
+  if (statRefreshes) statRefreshes.textContent = job ? (job.refreshCount || 0) : 0;
+
+  if (job) {
+    if (!isActive) {
+      isActive = true;
+      setActiveUI(true);
+    }
+    const total = (job.settings && (job.settings.currentInterval || job.settings.interval)) || jobTotal;
+    setDeadline(job.nextRefresh, total);
+  } else if (isActive) {
+    isActive = false;
+    setActiveUI(false);
+    stopRenderLoop();
+    jobDeadline = 0;
+  }
 }
 
 // ── Persist settings ─────────────────────────────────────────────────────────

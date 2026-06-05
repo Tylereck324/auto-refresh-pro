@@ -40,7 +40,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     // Run keyword/monitor check if: keyword is set, OR monitor-change mode is on
     const hasKeyword = job.settings.keyword && job.settings.keyword.trim().length > 0;
-    const hasMonitor = job.settings.monitorMode || job.settings.monitorChange;
+    const hasMonitor = job.settings.monitorMode;
     if (hasKeyword || hasMonitor) {
       await doMonitorRefresh(tabId, job);
     } else {
@@ -61,12 +61,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (activeJobs[tabId]) {
     chrome.alarms.create(alarm.name, { delayInMinutes: nextInterval / 60000 });
     activeJobs[tabId].nextRefresh = Date.now() + nextInterval;
+    // Push the new deadline to all extension pages (popup) immediately so its
+    // countdown resets in lockstep instead of waiting up to a second for its poll.
+    broadcastStatus();
   }
 
   // Notify content script of countdown start.
   // Small head-start delay: the page just reloaded so tab.status is 'loading'.
   // sendCountdownStart will poll tab.status and retry until it's 'complete'.
-  setTimeout(() => sendCountdownStart(tabId, nextInterval, 0), 300);
+  // It reads the job's absolute nextRefresh, so even a late delivery is correct.
+  setTimeout(() => sendCountdownStart(tabId, 0), 300);
 });
 
 async function doRefresh(tabId, job) {
@@ -90,6 +94,21 @@ async function doRefresh(tabId, job) {
   // Sound only fires when a keyword is detected or a page change is found.
 }
 
+// Injected into the page to read its visible text for change/keyword detection.
+// Excludes Auto Refresh Pro's own countdown overlay (#__ar_overlay) — its live
+// timer ticks every second and would otherwise be read as a "page change".
+// The overlay is detached only for the synchronous innerText read, then restored
+// in the same call, so there is no visible flicker.
+function readPageText() {
+  if (!document.body) return '';
+  const ov = document.getElementById('__ar_overlay');
+  let parent = null, next = null;
+  if (ov) { parent = ov.parentNode; next = ov.nextSibling; ov.remove(); }
+  const text = document.body.innerText || '';
+  if (ov && parent) parent.insertBefore(ov, next);
+  return text;
+}
+
 async function doMonitorRefresh(tabId, job) {
   // Step 1: Read current page content BEFORE reloading.
   // Sound must also fire BEFORE reload — the content script is destroyed during navigation.
@@ -97,15 +116,14 @@ async function doMonitorRefresh(tabId, job) {
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => ({ text: document.body ? document.body.innerText : '' })
+      func: readPageText
     });
   } catch (e) {
     await doRefresh(tabId, job);
     return;
   }
 
-  const pageData = results && results[0] && results[0].result;
-  const currentContent = pageData ? pageData.text : '';
+  const currentContent = (results && results[0] && results[0].result) || '';
   const prevContent = job.previousContent; // null/undefined = no baseline yet
 
   // ── Keyword detection ──
@@ -134,7 +152,7 @@ async function doMonitorRefresh(tabId, job) {
 
   // ── Page change detection ──
   // Only alert when we have a real baseline and content actually changed.
-  if (job.settings.monitorChange && prevContent !== null && prevContent !== undefined) {
+  if (job.settings.monitorMode && prevContent !== null && prevContent !== undefined) {
     if (currentContent !== prevContent) {
       if (job.settings.sound) await playBeep();
       chrome.notifications.create('chg_' + Date.now(), {
@@ -188,7 +206,7 @@ async function startRefresh(tabId, settings) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => document.body ? document.body.innerText : null
+      func: readPageText
     });
     const raw = results && results[0] && results[0].result;
     // Only use as baseline if we got real content (non-empty).
@@ -213,14 +231,14 @@ async function startRefresh(tabId, settings) {
 
   // Notify content script — retry until it responds, since the content script
   // may not be injected yet (tab still loading) when Start is pressed.
-  sendCountdownStart(tabId, interval, 0);
+  sendCountdownStart(tabId, 0);
 
   // Persist to storage
   await saveJobToStorage(tabId, settings);
   broadcastStatus();
 }
 
-async function sendCountdownStart(tabId, duration, attempt) {
+async function sendCountdownStart(tabId, attempt) {
   if (!activeJobs[tabId]) return;
 
   // Wait until the tab has finished loading before trying to message the content script.
@@ -231,7 +249,7 @@ async function sendCountdownStart(tabId, duration, attempt) {
       // Page still loading — wait and retry
       if (attempt < 12) {
         const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
-        setTimeout(() => sendCountdownStart(tabId, duration, attempt + 1), delay);
+        setTimeout(() => sendCountdownStart(tabId, attempt + 1), delay);
       }
       return;
     }
@@ -245,7 +263,13 @@ async function sendCountdownStart(tabId, duration, attempt) {
   const job = activeJobs[tabId];
   if (!job) return;
   const stopOnClick = !!(job.settings && job.settings.stopOnClick);
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', duration, stopOnClick }, (resp) => {
+  // Carry the absolute deadline + the cycle's total so the overlay renders
+  // remaining = nextRefresh - Date.now(), matching the popup exactly. Absolute
+  // timestamps are comparable across the service worker and page (same clock),
+  // and make a late/retried delivery self-correcting rather than reading high.
+  const nextRefresh = job.nextRefresh;
+  const total = (job.settings && job.settings.currentInterval) || job.settings.interval;
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script (page was loaded before the extension was
       // installed/reloaded). Inject it programmatically so the overlay shows
@@ -260,7 +284,7 @@ async function sendCountdownStart(tabId, duration, attempt) {
       // overlay, and the resend lands once its onMessage listener is registered.
       if (attempt < 12) {
         const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
-        setTimeout(() => sendCountdownStart(tabId, duration, attempt + 1), delay);
+        setTimeout(() => sendCountdownStart(tabId, attempt + 1), delay);
       }
     }
   });
@@ -394,7 +418,6 @@ chrome.commands.onCommand.addListener(async (command) => {
       notify: s.notify || false,
       sound: s.sound || false,
       monitorMode: s.monitor || false,
-      monitorChange: (s.monitor && s.stopOnChange) || false,
       randomTimer: s.random || false,
       randomMin: (parseFloat(s.randomMin) || 5) * 1000,
       randomMax: (parseFloat(s.randomMax) || 60) * 1000,
@@ -460,7 +483,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         chrome.alarms.create(`refresh_${updateTabId}`, { delayInMinutes: newInterval / 60000 });
 
         // Tell the content script to reset its countdown
-        sendCountdownStart(updateTabId, newInterval, 0);
+        sendCountdownStart(updateTabId, 0);
 
         await saveJobToStorage(updateTabId, job.settings);
         broadcastStatus();
@@ -482,7 +505,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             interval, hardRefresh: s.hardRefresh || false,
             showCountdown: s.showCountdown !== false, notify: s.notify || false,
             sound: s.sound || false, monitorMode: s.monitor || false,
-            monitorChange: (s.monitor && s.stopOnChange) || false, randomTimer: s.random || false,
+            randomTimer: s.random || false,
             randomMin: (parseFloat(s.randomMin) || 5) * 1000,
             randomMax: (parseFloat(s.randomMax) || 60) * 1000,
             stopAfter: parseInt(s.stopAfter) || 0, keyword: s.keyword || '',
