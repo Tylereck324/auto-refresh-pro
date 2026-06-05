@@ -185,16 +185,13 @@ function load() {
 
     // Presets
     const presets = s.presets || defaultPresets;
+    presetCount = presets.length; // remember how many rows we render, so save reads them all
     const list = document.getElementById('presetsList');
     list.innerHTML = '';
+    // Build each row with createElement (see preset-row.js) — never innerHTML —
+    // so a malicious stored preset label can't inject HTML/script here.
     presets.forEach((p, i) => {
-      const div = document.createElement('div');
-      div.className = 'preset-item';
-      div.innerHTML =
-        '<span class="preset-label">Preset ' + (i + 1) + '</span>' +
-        '<input type="text" value="' + p.label + '" id="pLabel' + i + '" placeholder="Label">' +
-        '<input type="number" value="' + Math.round(p.ms / 1000) + '" id="pSec' + i + '" placeholder="Sec" min="2">';
-      list.appendChild(div);
+      list.appendChild(buildPresetRow(document, p, i));
     });
 
     // Auto-save when any preset field changes.
@@ -211,16 +208,13 @@ function load() {
 // popup's behavior. Writes are debounced so typing doesn't spam storage.
 let saveTimer = null;
 let loaded = false;
+let presetCount = defaultPresets.length; // number of preset rows currently rendered
 
 function gatherAndSave() {
   if (!loaded) return; // don't persist before the initial load populates the form
-  const presets = defaultPresets.map(function(_, i) {
-    const labelEl = document.getElementById('pLabel' + i);
-    const secEl = document.getElementById('pSec' + i);
-    const label = (labelEl && labelEl.value) || String(i + 1);
-    const sec = parseFloat(secEl && secEl.value) || 30;
-    return { label: label, ms: Math.max(2000, sec * 1000) };
-  });
+  // Read back exactly the rows we rendered (presetCount) — not a fixed template
+  // length — so importing/having ≠8 presets doesn't drop or fabricate rows.
+  const presets = readPresets(document, presetCount);
 
   const settings = {
     hardRefresh: document.getElementById('defHardRefresh').checked,

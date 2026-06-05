@@ -58,10 +58,17 @@ async function loadJobs() {
     const job = jobs[tabId];
     const intervalSec = Math.round((job.settings.currentInterval || job.settings.interval) / 1000);
 
+    // tab.favIconUrl is controlled by the visited (possibly hostile) page. Only
+    // render it when it's a safe http(s) or validated raster-image data: URL;
+    // anything else (javascript:, file:, svg, oversized/corrupt data:) falls back
+    // to the bundled icon. escapeHtml already blocks HTML-attribute breakout;
+    // this additionally blocks unsafe schemes and malformed image payloads.
+    const favIcon = ARPValidators.isSafeImageSrc(tab.favIconUrl) ? tab.favIconUrl : 'icons/icon16.png';
+
     const card = document.createElement('div');
     card.className = 'tab-card active';
     card.innerHTML = `
-      <img class="tab-favicon" src="${escapeHtml(tab.favIconUrl || 'icons/icon16.png')}">
+      <img class="tab-favicon" src="${escapeHtml(favIcon)}">
       <div class="tab-info">
         <div class="tab-title">${escapeHtml(tab.title || 'Unknown Tab')}</div>
         <div class="tab-url">${escapeHtml(tab.url)}</div>
@@ -128,6 +135,12 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
   const url = document.getElementById('asUrl').value.trim();
   const sec = parseInt(document.getElementById('asInterval').value) || 0;
   if (!url) return;
+  // Only persist http(s) URLs — these are later auto-opened via chrome.tabs.create
+  // on browser startup, so a javascript:/file:/data: entry must never be stored.
+  if (!ARPValidators.isSafeNavigableUrl(url)) {
+    showToast('Only http(s) URLs can be auto-started.', true);
+    return;
+  }
 
   const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
   autoStartUrls.push({
@@ -177,13 +190,20 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
     showToast('Invalid settings file: not valid JSON.', true);
     return;
   }
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    showToast('Invalid settings file: expected a JSON object.', true);
+  // Sanitize before persisting: an imported file is fully attacker-controlled.
+  // This strips unsafe auto-start URLs, bounds/cleans preset labels (which are
+  // otherwise rendered on the Settings page), and shape-checks the hotkey.
+  const result = ARPValidators.sanitizeImportedSettings(data);
+  if (!result.ok) {
+    showToast('Invalid settings file: ' + (result.errors[0] || 'bad format') + '.', true);
     return;
   }
   try {
-    await chrome.storage.local.set(data);
-    showToast('Settings imported successfully!', false);
+    await chrome.storage.local.set(result.value);
+    const note = result.errors.length
+      ? 'Settings imported (' + result.errors.join('; ') + ').'
+      : 'Settings imported successfully!';
+    showToast(note, result.errors.length > 0);
     loadJobs();
     loadAutoStart();
   } catch {

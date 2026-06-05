@@ -157,7 +157,7 @@ async function startRefresh() {
   });
 
   isActive = true;
-  setActiveUI(true, settings.interval);
+  setActiveUI(true);
   // Optimistic deadline; corrected by the background's STATUS_UPDATE push.
   const total = settings.currentInterval || settings.interval;
   setDeadline(Date.now() + total, total);
@@ -202,7 +202,7 @@ function gatherSettings() {
 }
 
 // ── UI helpers ──────────────────────────────────────────────────────────────
-function setActiveUI(active, interval) {
+function setActiveUI(active) {
   const dot   = document.getElementById('statusDot');
   const label = document.getElementById('statusLabel');
   const hero  = document.getElementById('hero');

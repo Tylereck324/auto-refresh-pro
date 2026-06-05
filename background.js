@@ -1,5 +1,11 @@
 // background.js - Service Worker for Auto Refresh Pro
 
+// Shared input-validation / sanitization helpers (URL, image, import, sender).
+// Must load first so every handler below can use ARPValidators.
+importScripts('validators.js');
+// Pure refresh-interval computation (ARPInterval.computeInterval).
+importScripts('interval.js');
+
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
 const activeJobs = {};
@@ -173,17 +179,10 @@ async function doMonitorRefresh(tabId, job) {
   await doRefresh(tabId, job);
 }
 
-function computeInterval(settings) {
-  if (settings.randomTimer) {
-    // Guard against an inverted or sub-2s range (defensive — the popup also
-    // validates) so we never produce a negative-width or too-short interval.
-    let min = Math.max(2000, settings.randomMin || 5000);
-    let max = Math.max(2000, settings.randomMax || 30000);
-    if (min > max) { const t = min; min = max; max = t; }
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-  return settings.interval;
-}
+// Refresh-interval computation lives in interval.js (ARPInterval.computeInterval)
+// so it is unit-testable and the fixed path is NaN-hardened. Thin local alias
+// keeps the call sites below unchanged.
+const computeInterval = ARPInterval.computeInterval;
 
 // ── Start refresh ──────────────────────────────────────────────────────────
 async function startRefresh(tabId, settings) {
@@ -339,10 +338,12 @@ async function restoreJobs() {
     }
   }
 
-  // Auto-start URLs
+  // Auto-start URLs. Only open entries whose URL is a safe http(s) navigation —
+  // a poisoned storage value (e.g. an imported javascript:/file: URL) must never
+  // be auto-opened on browser startup.
   const autoStartUrls = data.autoStartUrls || [];
   for (const item of autoStartUrls) {
-    if (item.url) {
+    if (item.url && ARPValidators.isSafeNavigableUrl(item.url)) {
       const tab = await chrome.tabs.create({ url: item.url, active: false });
       if (item.autoRefresh && item.refreshSettings) {
         await startRefresh(tab.id, item.refreshSettings);
@@ -401,6 +402,15 @@ function serializeJobs() {
 
 // ── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Trust boundary: only honour messages from this extension's own surfaces
+  // (popup/options/manage pages and our injected content scripts). All of those
+  // carry sender.id === chrome.runtime.id; a web page or another extension does
+  // not. Without externally_connectable, web pages can't reach us directly, but
+  // this fails closed and guards against a compromised/another extension.
+  if (!msg || !ARPValidators.isTrustedSender(sender)) {
+    sendResponse && sendResponse({ ok: false, error: 'untrusted sender' });
+    return false;
+  }
   (async () => {
     switch (msg.type) {
       case 'START_REFRESH':

@@ -1,0 +1,11 @@
+{
+  "name": "auto-refresh-pro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Auto Refresh Pro Chrome extension — security test suite",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "lint": "node scripts/lint.mjs"
+  }
+}
