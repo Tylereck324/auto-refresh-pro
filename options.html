@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Settings — Auto Refresh Pro</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+    --border: #30363d; --accent: #58a6ff; --accent2: #3fb950;
+    --danger: #f85149; --text: #c9d1d9; --text2: #8b949e; --radius: 8px;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; min-height: 100vh; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
+  .logo-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #58a6ff, #3fb950); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .container { max-width: 600px; margin: 32px auto; padding: 0 24px 48px; }
+  .page-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 11px; font-weight: 600; margin-bottom: 16px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 16px; }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-label { font-size: 13px; }
+  .setting-sub { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: background 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+  .presets-list { display: flex; flex-direction: column; gap: 8px; }
+  .preset-item { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .preset-item input { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; padding: 5px 8px; border-radius: 6px; outline: none; width: 80px; }
+  .preset-item input:focus { border-color: var(--accent); }
+  .preset-label { flex: 1; font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text2); }
+  .btn-save { background: linear-gradient(135deg, #58a6ff, #1f6feb); color: white; border: none; padding: 12px 28px; border-radius: var(--radius); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; transition: opacity 0.15s; }
+  .btn-save:hover { opacity: 0.9; }
+  .success-msg { display: none; color: var(--accent2); text-align: center; font-size: 13px; padding: 10px; }
+
+  /* ── Keybinding recorder ── */
+  .hotkey-section { display: flex; flex-direction: column; gap: 12px; }
+
+  .hotkey-recorder {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .hotkey-display {
+    flex: 1;
+    min-width: 180px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+  }
+
+  .hotkey-display.recording {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+    color: var(--accent);
+  }
+
+  .hotkey-display.recording::after {
+    content: '';
+    position: absolute;
+    right: 12px;
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: blink 0.8s ease-in-out infinite;
+  }
+
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+  .key-badge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    white-space: nowrap;
+  }
+
+  .hotkey-actions { display: flex; gap: 8px; }
+
+  .btn-record {
+    background: rgba(88,166,255,0.12);
+    color: var(--accent);
+    border: 1px solid rgba(88,166,255,0.3);
+    padding: 9px 16px;
+    border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+  .btn-record:hover { background: rgba(88,166,255,0.2); }
+  .btn-record.recording { background: rgba(88,166,255,0.25); }
+
+  .btn-clear {
+    background: rgba(248,81,73,0.1);
+    color: var(--danger);
+    border: 1px solid rgba(248,81,73,0.25);
+    padding: 9px 14px;
+    border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-clear:hover { background: rgba(248,81,73,0.2); }
+
+  .hotkey-info {
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.5;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  .hotkey-info strong { color: var(--text); }
+
+  .chrome-shortcut-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .chrome-shortcut-link:hover { text-decoration: underline; }
+
+  .recording-hint {
+    font-size: 11px;
+    color: var(--accent);
+    display: none;
+    text-align: center;
+    padding: 6px;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .num-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    outline: none;
+    width: 80px;
+    text-align: center;
+  }
+  .num-input:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">↻</div>
+    Auto Refresh Pro — Settings
+  </div>
+</header>
+
+<div class="container">
+  <div class="page-title">Extension Settings</div>
+
+  <!-- ── HOTKEY ── -->
+  <div class="card">
+    <div class="card-title">Keyboard Shortcut</div>
+    <div class="hotkey-section">
+
+      <div class="hotkey-recorder">
+        <div class="hotkey-display" id="hotkeyDisplay" title="Click 'Record' then press your desired key combo">
+          <span id="hotkeyText" style="color:var(--text2);font-size:12px;">Click Record to set</span>
+        </div>
+        <div class="hotkey-actions">
+          <button class="btn-record" id="recordBtn">⏺ Record</button>
+          <button class="btn-clear" id="clearBtn" title="Reset to default (F8)">✕</button>
+        </div>
+      </div>
+
+      <div class="recording-hint" id="recordingHint">
+        Press any key combination… (Esc to cancel)
+      </div>
+
+      <div class="hotkey-info">
+        <strong>Default:</strong> <kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-family:DM Mono,monospace;font-size:11px;">Alt+R</kbd>
+        — quick one-handed shortcut.<br>
+        This custom shortcut works on any webpage. You can also change the Chrome-level shortcut (which works even when a page isn't focused) at
+        <a class="chrome-shortcut-link" id="chromeShortcutLink">chrome://extensions/shortcuts ↗</a>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── DEFAULTS ── -->
+  <div class="card">
+    <div class="card-title">Defaults</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Default Hard Refresh</div>
+        <div class="setting-sub">Bypass cache on every refresh by default</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defHardRefresh"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Show Countdown Overlay</div>
+        <div class="setting-sub">Show timer on pages by default</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defCountdown" checked><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Notifications</div>
+        <div class="setting-sub">Notify after each refresh by default</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defNotify"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Sound Alerts</div>
+        <div class="setting-sub">Alert beep when keyword / change detected</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defSound"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Default Interval</div>
+        <div class="setting-sub">Pre-selected interval when opening popup (seconds)</div>
+      </div>
+      <input class="num-input" type="number" id="defInterval" value="30" min="2">
+    </div>
+  </div>
+
+  <!-- ── PRESETS ── -->
+  <div class="card">
+    <div class="card-title">Custom Presets</div>
+    <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">Edit the preset buttons shown in the popup (values in seconds).</div>
+    <div class="presets-list" id="presetsList"></div>
+  </div>
+
+  <!-- ── ABOUT ── -->
+  <div class="card">
+    <div class="card-title">About</div>
+    <div class="setting-row">
+      <div><div class="setting-label">Auto Refresh Pro</div><div class="setting-sub">Personal edition — all features unlocked</div></div>
+      <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);">v1.0.0</span>
+    </div>
+  </div>
+
+  <button class="btn-save" id="saveBtn">Save Settings</button>
+  <div class="success-msg" id="successMsg">✓ Settings saved!</div>
+</div>
+
+<script>
+// ── Keybinding state ──────────────────────────────────────────────────────
+let currentHotkey = null; // { key, ctrl, alt, shift, meta }
+let pendingHotkey = null;
+let recording = false;
+
+const displayEl = document.getElementById('hotkeyDisplay');
+const textEl = document.getElementById('hotkeyText');
+const recordBtn = document.getElementById('recordBtn');
+const clearBtn = document.getElementById('clearBtn');
+const recordingHint = document.getElementById('recordingHint');
+
+function formatHotkey(hk) {
+  if (!hk) return null;
+  const parts = [];
+  if (hk.ctrl)  parts.push('Ctrl');
+  if (hk.alt)   parts.push('Alt');
+  if (hk.shift) parts.push('Shift');
+  if (hk.meta)  parts.push('⌘');
+  parts.push(hk.key.length === 1 ? hk.key.toUpperCase() : hk.key);
+  return parts;
+}
+
+function renderHotkey(hk) {
+  textEl.innerHTML = '';
+  if (!hk) {
+    textEl.style.color = 'var(--text2)';
+    textEl.style.fontSize = '12px';
+    textEl.textContent = 'Using default (Alt+R)';
+    return;
+  }
+  const parts = formatHotkey(hk);
+  parts.forEach((p, i) => {
+    const badge = document.createElement('kbd');
+    badge.className = 'key-badge';
+    badge.textContent = p;
+    textEl.appendChild(badge);
+    if (i < parts.length - 1) {
+      const plus = document.createElement('span');
+      plus.style.cssText = 'color:var(--text2);font-size:11px;';
+      plus.textContent = '+';
+      textEl.appendChild(plus);
+    }
+  });
+  textEl.style.color = '';
+  textEl.style.fontSize = '';
+}
+
+// Keys that are only modifiers — don't accept them alone
+const MODIFIER_KEYS = new Set(['Control','Alt','Shift','Meta','CapsLock','NumLock','ScrollLock']);
+// Keys to always block from recording (browser critical)
+const BLOCKED_KEYS = new Set(['F5','F11','F12','Tab']);
+
+function startRecording() {
+  recording = true;
+  pendingHotkey = null;
+  displayEl.classList.add('recording');
+  recordBtn.textContent = '⏹ Cancel';
+  recordBtn.classList.add('recording');
+  recordingHint.style.display = 'block';
+  textEl.innerHTML = '';
+  textEl.style.color = 'var(--accent)';
+  textEl.style.fontSize = '12px';
+  textEl.textContent = 'Listening…';
+}
+
+function stopRecording(apply) {
+  recording = false;
+  displayEl.classList.remove('recording');
+  recordBtn.textContent = '⏺ Record';
+  recordBtn.classList.remove('recording');
+  recordingHint.style.display = 'none';
+
+  if (apply && pendingHotkey) {
+    currentHotkey = pendingHotkey;
+  }
+  renderHotkey(currentHotkey);
+  pendingHotkey = null;
+}
+
+recordBtn.addEventListener('click', () => {
+  if (recording) { stopRecording(false); } else { startRecording(); }
+});
+
+clearBtn.addEventListener('click', () => {
+  if (recording) stopRecording(false);
+  currentHotkey = null;
+  renderHotkey(null);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!recording) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.key === 'Escape') { stopRecording(false); return; }
+  if (MODIFIER_KEYS.has(e.key)) return; // wait for actual key
+  if (BLOCKED_KEYS.has(e.key)) {
+    textEl.textContent = `${e.key} is reserved — try another key`;
+    return;
+  }
+
+  // Require at least one modifier unless it's a function key
+  const isFunctionKey = /^F\d+$/.test(e.key);
+  if (!isFunctionKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    textEl.textContent = 'Add Ctrl, Alt, or Shift with that key';
+    return;
+  }
+
+  pendingHotkey = {
+    key: e.key,
+    ctrl: e.ctrlKey,
+    alt: e.altKey,
+    shift: e.shiftKey,
+    meta: e.metaKey
+  };
+
+  // Preview it
+  const parts = formatHotkey(pendingHotkey);
+  textEl.innerHTML = '';
+  parts.forEach((p, i) => {
+    const badge = document.createElement('kbd');
+    badge.className = 'key-badge';
+    badge.style.borderColor = 'var(--accent)';
+    badge.style.color = 'var(--accent)';
+    badge.textContent = p;
+    textEl.appendChild(badge);
+    if (i < parts.length - 1) {
+      const plus = document.createElement('span');
+      plus.style.cssText = 'color:var(--accent);font-size:11px;';
+      plus.textContent = '+';
+      textEl.appendChild(plus);
+    }
+  });
+
+  // Auto-confirm after a short delay
+  setTimeout(() => { if (recording) stopRecording(true); }, 800);
+}, true);
+
+// chrome://extensions/shortcuts — options pages can't open chrome:// URLs,
+// so copy to clipboard and hint the user to paste it.
+document.getElementById('chromeShortcutLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  navigator.clipboard.writeText('chrome://extensions/shortcuts').catch(() => {});
+  const link = e.currentTarget;
+  const orig = link.textContent;
+  link.textContent = '✓ Copied! Paste in address bar';
+  link.style.color = 'var(--accent2)';
+  setTimeout(() => { link.textContent = orig; link.style.color = ''; }, 2500);
+});
+
+// ── Presets ───────────────────────────────────────────────────────────────
+const defaultPresets = [
+  { label: '5s', ms: 5000 }, { label: '10s', ms: 10000 },
+  { label: '30s', ms: 30000 }, { label: '1m', ms: 60000 },
+  { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 },
+  { label: '30m', ms: 1800000 }, { label: '1h', ms: 3600000 }
+];
+
+function setCheck(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.checked = !!val;
+}
+
+function load() {
+  chrome.storage.local.get(['globalSettings', 'customHotkey'], function(data) {
+    const s = data.globalSettings || {};
+
+    // Hotkey
+    currentHotkey = data.customHotkey || null;
+    renderHotkey(currentHotkey);
+
+    // Toggles
+    setCheck('defHardRefresh', s.hardRefresh);
+    setCheck('defCountdown', s.showCountdown !== false);
+    setCheck('defNotify', s.notify);
+    setCheck('defSound', s.sound);
+    if (s.defaultInterval) document.getElementById('defInterval').value = s.defaultInterval;
+
+    // Presets
+    const presets = s.presets || defaultPresets;
+    const list = document.getElementById('presetsList');
+    list.innerHTML = '';
+    presets.forEach((p, i) => {
+      const div = document.createElement('div');
+      div.className = 'preset-item';
+      div.innerHTML =
+        '<span class="preset-label">Preset ' + (i + 1) + '</span>' +
+        '<input type="text" value="' + p.label + '" id="pLabel' + i + '" placeholder="Label">' +
+        '<input type="number" value="' + Math.round(p.ms / 1000) + '" id="pSec' + i + '" placeholder="Sec" min="2">';
+      list.appendChild(div);
+    });
+  });
+}
+
+document.getElementById('saveBtn').addEventListener('click', function() {
+  const presets = defaultPresets.map(function(_, i) {
+    const labelEl = document.getElementById('pLabel' + i);
+    const secEl = document.getElementById('pSec' + i);
+    const label = (labelEl && labelEl.value) || String(i);
+    const sec = parseFloat(secEl && secEl.value) || 30;
+    return { label: label, ms: Math.max(2000, sec * 1000) };
+  });
+
+  const settings = {
+    hardRefresh: document.getElementById('defHardRefresh').checked,
+    showCountdown: document.getElementById('defCountdown').checked,
+    notify: document.getElementById('defNotify').checked,
+    sound: document.getElementById('defSound').checked,
+    defaultInterval: parseInt(document.getElementById('defInterval').value) || 30,
+    presets: presets
+  };
+
+  chrome.storage.local.set({ globalSettings: settings, customHotkey: currentHotkey || null }, function() {
+    const msg = document.getElementById('successMsg');
+    msg.style.display = 'block';
+    setTimeout(function() { msg.style.display = 'none'; }, 2000);
+  });
+});
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto Refresh Pro</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0c10;
+    --card:     #111318;
+    --card2:    #191c23;
+    --border:   #252830;
+    --border2:  #2e3138;
+    --accent:   #4f9eff;
+    --accent-g: linear-gradient(135deg, #4f9eff 0%, #a78bfa 100%);
+    --green:    #34d399;
+    --red:      #f87171;
+    --yellow:   #fbbf24;
+    --text:     #e2e8f0;
+    --text2:    #6b7280;
+    --text3:    #9ca3af;
+    --radius:   10px;
+    --radius-s: 7px;
+  }
+
+  body {
+    width: 360px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 13px 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: var(--card);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .logo-mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--accent-g);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .logo-text {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.2px;
+  }
+
+  .logo-sub {
+    font-size: 10px;
+    color: var(--text2);
+    font-weight: 400;
+    margin-top: 1px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text2);
+    transition: background 0.3s;
+    box-shadow: none;
+  }
+
+  .status-dot.active {
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(52,211,153,0.5);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 4px rgba(52,211,153,0.4); }
+    50%       { box-shadow: 0 0 10px rgba(52,211,153,0.7); }
+  }
+
+  .status-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--text2);
+    transition: color 0.3s;
+  }
+
+  .status-label.active { color: var(--green); }
+
+  .btn-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: var(--card2);
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+  }
+  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Hero countdown (active state) ── */
+  .hero {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 16px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% -20%, rgba(79,158,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero.visible { display: flex; }
+
+  .hero-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 48px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -1px;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .hero-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text2);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .hero-bar-wrap {
+    width: 100%;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .hero-bar-fill {
+    height: 100%;
+    background: var(--accent-g);
+    border-radius: 3px;
+    width: 100%;
+    transition: width 1s linear;
+  }
+
+  .hero-meta {
+    display: flex;
+    gap: 20px;
+    margin-top: 12px;
+  }
+
+  .hero-stat {
+    text-align: center;
+  }
+
+  .hero-stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+    display: block;
+  }
+
+  .hero-stat-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text2);
+    margin-top: 1px;
+  }
+
+  /* ── Main body ── */
+  .main {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* ── Section ── */
+  .section-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text2);
+    margin-bottom: 8px;
+  }
+
+  /* ── Interval pills ── */
+  .pill-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+    margin-bottom: 8px;
+  }
+
+  .pill {
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    color: var(--text3);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 4px;
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.12s;
+    letter-spacing: 0.3px;
+  }
+
+  .pill:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(79,158,255,0.06);
+  }
+
+  .pill.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(79,158,255,0.12);
+    font-weight: 600;
+  }
+
+  /* ── Custom interval row ── */
+  .custom-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .custom-input {
+    flex: 1;
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    padding: 8px 11px;
+    border-radius: var(--radius-s);
+    outline: none;
+    min-width: 0;
+    transition: border-color 0.15s;
+  }
+
+  .custom-input::placeholder { color: var(--text2); }
+  .custom-input:focus { border-color: var(--accent); }
+
+  .unit-select {
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    color: var(--text3);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius-s);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .unit-select:focus { border-color: var(--accent); }
+
+  /* ── Keyword section ── */
+  .keyword-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .keyword-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .keyword-icon {
+    padding: 0 10px;
+    color: var(--text2);
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .keyword-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 10px 11px 10px 0;
+    outline: none;
+  }
+
+  .keyword-input::placeholder { color: var(--text2); font-family: 'Inter', sans-serif; font-size: 12px; }
+
+  .keyword-opts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .kw-opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+  }
+
+  .kw-opt:first-child {
+    border-right: 1px solid var(--border);
+  }
+
+  .kw-opt-label { font-size: 11px; font-weight: 500; color: var(--text3); }
+
+  /* ── Toggle ── */
+  .toggle {
+    position: relative;
+    width: 34px;
+    height: 19px;
+    flex-shrink: 0;
+  }
+
+  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border2);
+    border-radius: 19px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .toggle-thumb {
+    position: absolute;
+    width: 13px;
+    height: 13px;
+    top: 3px;
+    left: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s, box-shadow 0.2s;
+    pointer-events: none;
+  }
+
+  .toggle input:checked ~ .toggle-track { background: var(--accent); }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(15px); box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+
+  /* ── Options grid ── */
+  .opts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+
+  .opt-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    padding: 9px 11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: border-color 0.15s;
+  }
+
+  .opt-card:hover { border-color: var(--border2); }
+
+  .opt-label { font-size: 12px; font-weight: 500; color: var(--text); }
+  .opt-sub   { font-size: 10px; color: var(--text2); margin-top: 1px; }
+
+  /* ── Advanced collapse ── */
+  .adv-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
+    transition: color 0.15s;
+  }
+
+  .adv-toggle:hover { color: var(--accent); }
+
+  .adv-chevron {
+    font-size: 9px;
+    transition: transform 0.2s;
+    display: inline-block;
+  }
+
+  .adv-toggle.open .adv-chevron { transform: rotate(90deg); }
+
+  .adv-panel {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .adv-panel.open { display: flex; }
+
+  .field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .field-label { font-size: 10px; font-weight: 600; color: var(--text2); letter-spacing: 0.3px; }
+
+  .field-input {
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 8px 11px;
+    border-radius: var(--radius-s);
+    outline: none;
+    width: 100%;
+    transition: border-color 0.15s;
+  }
+
+  .field-input:focus { border-color: var(--accent); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* ── Action buttons ── */
+  .action-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-start {
+    flex: 1;
+    padding: 11px;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent-g);
+    color: white;
+    letter-spacing: 0.1px;
+    transition: opacity 0.15s, transform 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .btn-start:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+  .btn-start:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+  .btn-stop {
+    flex: 1;
+    padding: 11px;
+    border-radius: var(--radius);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: rgba(248,113,113,0.1);
+    color: var(--red);
+    border: 1px solid rgba(248,113,113,0.25);
+    letter-spacing: 0.1px;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .btn-stop:hover:not(:disabled) { background: rgba(248,113,113,0.18); border-color: rgba(248,113,113,0.5); }
+  .btn-stop:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Footer ── */
+  footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--card);
+  }
+
+  .footer-link {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .footer-link:hover { color: var(--accent); }
+
+  .footer-sep {
+    width: 1px;
+    height: 12px;
+    background: var(--border2);
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-mark">↻</div>
+    <div>
+      <div class="logo-text">Auto Refresh Pro</div>
+      <div class="logo-sub">Personal Edition</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="status-dot inactive" id="statusDot"></div>
+    <div class="status-label" id="statusLabel">IDLE</div>
+  </div>
+</header>
+
+<!-- Hero countdown (shown when active) -->
+<div class="hero" id="hero">
+  <div class="hero-time" id="countdownDisplay">0:00</div>
+  <div class="hero-label">until next refresh</div>
+  <div class="hero-bar-wrap">
+    <div class="hero-bar-fill" id="progressFill"></div>
+  </div>
+  <div class="hero-meta">
+    <div class="hero-stat">
+      <span class="hero-stat-val" id="statRefreshes">0</span>
+      <span class="hero-stat-label">Refreshes</span>
+    </div>
+    <div class="hero-stat">
+      <span class="hero-stat-val" id="statActive">0</span>
+      <span class="hero-stat-label">Active Tabs</span>
+    </div>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Interval -->
+  <div>
+    <div class="section-head">Refresh Interval</div>
+    <div class="pill-grid">
+      <button class="pill" data-ms="5000">5s</button>
+      <button class="pill" data-ms="10000">10s</button>
+      <button class="pill" data-ms="30000">30s</button>
+      <button class="pill" data-ms="60000">1m</button>
+      <button class="pill" data-ms="300000">5m</button>
+      <button class="pill" data-ms="600000">10m</button>
+      <button class="pill" data-ms="1800000">30m</button>
+      <button class="pill" data-ms="3600000">1h</button>
+    </div>
+    <div class="custom-row">
+      <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
+      <select class="unit-select" id="customUnit">
+        <option value="1000">sec</option>
+        <option value="60000">min</option>
+        <option value="3600000">hr</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Keyword detection -->
+  <div>
+    <div class="section-head">Keyword Detection</div>
+    <div class="keyword-wrap">
+      <div class="keyword-input-row">
+        <span class="keyword-icon">🔍</span>
+        <input class="keyword-input" type="text" id="optKeyword" placeholder="Word or phrase to watch for…">
+      </div>
+      <div class="keyword-opts">
+        <div class="kw-opt">
+          <span class="kw-opt-label">🔔 Sound alert</span>
+          <label class="toggle">
+            <input type="checkbox" id="optSound">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </label>
+        </div>
+        <div class="kw-opt">
+          <span class="kw-opt-label">⏹ Stop on found</span>
+          <label class="toggle">
+            <input type="checkbox" id="optStopOnKeyword">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Options -->
+  <div>
+    <div class="section-head">Options</div>
+    <div class="opts-grid">
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Hard Refresh</div>
+          <div class="opt-sub">Bypass cache</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optHardRefresh">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Overlay</div>
+          <div class="opt-sub">Show countdown</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optCountdown" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Notify</div>
+          <div class="opt-sub">On each refresh</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optNotify">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Monitor</div>
+          <div class="opt-sub">Detect changes</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optMonitor">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Stop on change</div>
+          <div class="opt-sub">If page changes</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optStopOnChange">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Random</div>
+          <div class="opt-sub">Random interval</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optRandom">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Advanced -->
+  <div>
+    <div class="adv-toggle" id="advancedToggle">
+      <span class="adv-chevron">▶</span>
+      Advanced
+    </div>
+    <div class="adv-panel" id="advancedPanel">
+      <div class="field-row">
+        <div class="field-label">STOP AFTER X REFRESHES (0 = unlimited)</div>
+        <input class="field-input" type="number" id="optStopAfter" min="0" value="0" placeholder="0">
+      </div>
+      <div id="randomRangeRow" style="display:none;">
+        <div class="field-label" style="margin-bottom:6px;">RANDOM RANGE</div>
+        <div class="two-col">
+          <div class="field-row">
+            <div class="field-label">MIN (seconds)</div>
+            <input class="field-input" type="number" id="optRandomMin" min="2" value="5">
+          </div>
+          <div class="field-row">
+            <div class="field-label">MAX (seconds)</div>
+            <input class="field-input" type="number" id="optRandomMax" min="2" value="60">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="action-row">
+    <button class="btn-start" id="btnStart">
+      <span>▶</span> Start
+    </button>
+    <button class="btn-stop" id="btnStop" disabled>
+      <span>■</span> Stop
+    </button>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<footer>
+  <a class="footer-link" id="manageLink">⊞ All Tabs</a>
+  <div class="footer-sep"></div>
+  <a class="footer-link" id="optionsLink">⚙ Settings</a>
+</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>

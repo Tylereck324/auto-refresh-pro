@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Manage All Tabs — Auto Refresh Pro</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+    --border: #30363d; --accent: #58a6ff; --accent2: #3fb950;
+    --danger: #f85149; --text: #c9d1d9; --text2: #8b949e; --radius: 8px;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; min-height: 100vh; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
+  .logo-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #58a6ff, #3fb950); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .btn-danger { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600; }
+  .btn-danger:hover { background: rgba(248,81,73,0.25); }
+  .container { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+  .page-title { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  .page-sub { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
+  .tab-list { display: flex; flex-direction: column; gap: 12px; }
+  .tab-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: border-color 0.15s;
+  }
+  .tab-card:hover { border-color: #444c56; }
+  .tab-card.active { border-color: rgba(88,166,255,0.4); }
+  .tab-favicon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
+  .tab-info { flex: 1; min-width: 0; }
+  .tab-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab-url { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'DM Mono', monospace; }
+  .tab-stats { display: flex; gap: 12px; flex-shrink: 0; font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text2); }
+  .stat-pill { background: var(--surface2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }
+  .active-badge { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.3); }
+  .tab-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; border: none; font-family: 'DM Sans', sans-serif; }
+  .btn-sm-stop { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); }
+  .btn-sm-stop:hover { background: rgba(248,81,73,0.25); }
+  .btn-sm-go { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-sm-go:hover { border-color: var(--accent); color: var(--accent); }
+  .empty-state { text-align: center; padding: 80px 0; color: var(--text2); }
+  .empty-icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+
+  /* Auto-start section */
+  .section-title { font-size: 14px; font-weight: 600; margin: 32px 0 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .autostart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .form-row label { font-size: 11px; color: var(--text2); min-width: 60px; }
+  .form-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; padding: 7px 10px; border-radius: 6px; outline: none; flex: 1; min-width: 200px; }
+  .form-input:focus { border-color: var(--accent); }
+  .btn-add { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+  .btn-add:hover { background: rgba(88,166,255,0.25); }
+  .autostart-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .autostart-item { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .autostart-url { flex: 1; font-family: 'DM Mono', monospace; font-size: 12px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .autostart-remove { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  .autostart-remove:hover { color: var(--danger); }
+
+  /* Import/Export */
+  .io-row { display: flex; gap: 10px; margin-top: 10px; }
+  .btn-io { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+  .btn-io:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">↻</div>
+    Auto Refresh Pro — Manage
+  </div>
+  <button class="btn-danger" id="stopAllBtn">■ Stop All</button>
+</header>
+
+<div class="container">
+  <div class="page-title">Active Refresh Jobs</div>
+  <div class="page-sub">View and manage all tabs with auto refresh enabled.</div>
+
+  <div class="tab-list" id="tabList">
+    <div class="empty-state">
+      <div class="empty-icon">⏸</div>
+      <div class="empty-title">No active refresh jobs</div>
+      <div>Open a tab and start auto refresh from the extension popup.</div>
+    </div>
+  </div>
+
+  <!-- Auto-Start URLs -->
+  <div class="section-title">Auto-Start URLs on Browser Open</div>
+  <div class="autostart-card">
+    <div class="form-row">
+      <label>URL</label>
+      <input class="form-input" id="asUrl" type="url" placeholder="https://example.com">
+      <input class="form-input" id="asInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2">
+      <button class="btn-add" id="addAutoStart">+ Add</button>
+    </div>
+    <div class="autostart-list" id="autoStartList"></div>
+  </div>
+
+  <!-- Import/Export -->
+  <div class="section-title">Import / Export Settings</div>
+  <div class="autostart-card">
+    <div style="color:var(--text2);font-size:12px;margin-bottom:10px;">Back up or restore your Auto Refresh Pro settings as a JSON file.</div>
+    <div class="io-row">
+      <button class="btn-io" id="exportBtn">⬇ Export Settings</button>
+      <button class="btn-io" id="importBtn">⬆ Import Settings</button>
+      <input type="file" id="importFile" accept=".json" style="display:none;">
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Load active jobs ─────────────────────────────────────────────────────
+async function loadJobs() {
+  const jobs = await new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'GET_ALL_JOBS' }, r => resolve(r ? r.jobs : {}))
+  );
+
+  const tabIds = Object.keys(jobs).map(Number);
+  const tabList = document.getElementById('tabList');
+
+  if (tabIds.length === 0) {
+    tabList.innerHTML = `<div class="empty-state"><div class="empty-icon">⏸</div><div class="empty-title">No active refresh jobs</div><div>Open a tab and start auto refresh from the extension popup.</div></div>`;
+    return;
+  }
+
+  const tabs = await Promise.all(tabIds.map(id => chrome.tabs.get(id).catch(() => null)));
+  tabList.innerHTML = '';
+
+  tabs.forEach((tab, i) => {
+    if (!tab) return;
+    const tabId = tabIds[i];
+    const job = jobs[tabId];
+    const intervalSec = Math.round((job.settings.currentInterval || job.settings.interval) / 1000);
+
+    const card = document.createElement('div');
+    card.className = 'tab-card active';
+    card.innerHTML = `
+      <img class="tab-favicon" src="${tab.favIconUrl || 'icons/icon16.png'}" onerror="this.src='icons/icon16.png'">
+      <div class="tab-info">
+        <div class="tab-title">${tab.title || 'Unknown Tab'}</div>
+        <div class="tab-url">${tab.url}</div>
+      </div>
+      <div class="tab-stats">
+        <span class="stat-pill active-badge">ACTIVE</span>
+        <span class="stat-pill">Every ${intervalSec}s</span>
+        <span class="stat-pill">${job.refreshCount || 0} refreshes</span>
+      </div>
+      <div class="tab-actions">
+        <button class="btn-sm btn-sm-go" data-id="${tabId}">Go to Tab</button>
+        <button class="btn-sm btn-sm-stop" data-id="${tabId}">Stop</button>
+      </div>
+    `;
+    tabList.appendChild(card);
+  });
+
+  document.querySelectorAll('.btn-sm-stop').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await chrome.runtime.sendMessage({ type: 'STOP_REFRESH', tabId: parseInt(btn.dataset.id) });
+      loadJobs();
+    });
+  });
+
+  document.querySelectorAll('.btn-sm-go').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chrome.tabs.update(parseInt(btn.dataset.id), { active: true });
+    });
+  });
+}
+
+// ── Auto-start URLs ──────────────────────────────────────────────────────
+async function loadAutoStart() {
+  const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+  const list = document.getElementById('autoStartList');
+  list.innerHTML = '';
+  autoStartUrls.forEach((item, i) => {
+    const div = document.createElement('div');
+    div.className = 'autostart-item';
+    div.innerHTML = `
+      <span class="autostart-url">${item.url}</span>
+      <span style="color:var(--text2);font-size:11px;">${item.intervalSec ? item.intervalSec + 's' : 'no refresh'}</span>
+      <button class="autostart-remove" data-idx="${i}">✕</button>
+    `;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.autostart-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+      autoStartUrls.splice(parseInt(btn.dataset.idx), 1);
+      await chrome.storage.local.set({ autoStartUrls });
+      loadAutoStart();
+    });
+  });
+}
+
+document.getElementById('addAutoStart').addEventListener('click', async () => {
+  const url = document.getElementById('asUrl').value.trim();
+  const sec = parseInt(document.getElementById('asInterval').value) || 0;
+  if (!url) return;
+
+  const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+  autoStartUrls.push({
+    url,
+    intervalSec: sec,
+    autoRefresh: sec > 0,
+    refreshSettings: sec > 0 ? { interval: sec * 1000, hardRefresh: false, stopAfter: 0, notify: false, sound: false, monitorMode: false, randomTimer: false } : null
+  });
+  await chrome.storage.local.set({ autoStartUrls });
+  document.getElementById('asUrl').value = '';
+  document.getElementById('asInterval').value = '';
+  loadAutoStart();
+});
+
+// ── Stop all ─────────────────────────────────────────────────────────────
+document.getElementById('stopAllBtn').addEventListener('click', async () => {
+  await chrome.runtime.sendMessage({ type: 'STOP_ALL' });
+  loadJobs();
+});
+
+// ── Export ───────────────────────────────────────────────────────────────
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const data = await chrome.storage.local.get(null);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'auto-refresh-pro-settings.json';
+  a.click();
+});
+
+// ── Import ───────────────────────────────────────────────────────────────
+document.getElementById('importBtn').addEventListener('click', () => {
+  document.getElementById('importFile').click();
+});
+
+document.getElementById('importFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const data = JSON.parse(text);
+    await chrome.storage.local.set(data);
+    alert('Settings imported successfully!');
+    loadJobs();
+    loadAutoStart();
+  } catch {
+    alert('Invalid settings file.');
+  }
+});
+
+// ── Refresh on focus ─────────────────────────────────────────────────────
+loadJobs();
+loadAutoStart();
+setInterval(loadJobs, 3000);
+</script>
+</body>
+</html>
