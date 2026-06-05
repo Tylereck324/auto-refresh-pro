@@ -227,10 +227,11 @@
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
     hintText.className = '__ar_hint_text';
-    hintText.textContent = formatHotkeyDisplay(DEFAULT_HOTKEY) + ' to toggle';
+    hintText.textContent = hintLabel();
+    // customHotkey may still be loading from storage; refresh once it's in.
     safeStorageGet('customHotkey', (data) => {
-      const hk = (data && data.customHotkey) || DEFAULT_HOTKEY;
-      hintText.textContent = formatHotkeyDisplay(hk) + ' to toggle';
+      customHotkey = (data && data.customHotkey) || customHotkey;
+      refreshHint();
     });
     hint.appendChild(hintText);
 
@@ -477,6 +478,7 @@
             || Math.max(0, resp.job.nextRefresh - Date.now());
           ensureOverlay();
           startCountdown(resp.job.nextRefresh, total);
+          refreshHint();
         }
       } else if (attempt < 8) {
         // Exponential backoff: 100, 200, 400, 800, 1000, 1000, 1000, 1000 ms
@@ -504,8 +506,7 @@
       if (!contextValid) return;
       if (changes.customHotkey) {
         customHotkey = changes.customHotkey.newValue || null;
-        const hint = overlayEl && overlayEl.querySelector('.__ar_hint_text');
-        if (hint) hint.textContent = formatHotkeyDisplay(activeHotkey()) + ' to toggle';
+        refreshHint();
       }
     });
   } catch (e) {}
@@ -530,6 +531,18 @@
     if (hk.meta)  p.push('⌘');
     p.push(hk.key.length === 1 ? hk.key.toUpperCase() : hk.key);
     return p.join('+');
+  }
+
+  // The overlay footer hint. When click-to-stop is armed, surface it so the
+  // next-click-stops behavior isn't a surprise; otherwise show the hotkey.
+  function hintLabel() {
+    const hk = formatHotkeyDisplay(activeHotkey());
+    return stopOnClickEnabled ? ('Click page or ' + hk + ' to stop') : (hk + ' to toggle');
+  }
+
+  function refreshHint() {
+    const h = overlayEl && overlayEl.querySelector('.__ar_hint_text');
+    if (h) h.textContent = hintLabel();
   }
 
   document.addEventListener('keydown', (e) => {
@@ -567,6 +580,7 @@
           } else {
             ensureOverlay();
             startCountdown(msg.nextRefresh, msg.total);
+            refreshHint();
           }
           synced = true;
           sendResponse({ ok: true });
