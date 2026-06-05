@@ -74,8 +74,18 @@ function bindEvents() {
   document.getElementById('advancedToggle').addEventListener('click', () => {
     const toggle = document.getElementById('advancedToggle');
     const panel  = document.getElementById('advancedPanel');
-    toggle.classList.toggle('open');
+    const open = toggle.classList.toggle('open');
     panel.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  // Keyboard activation for the non-native controls (Enter / Space).
+  ['advancedToggle', 'manageLink', 'optionsLink'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
   });
 
   // Monitor / random conditionals

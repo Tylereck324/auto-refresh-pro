@@ -167,6 +167,18 @@
     text-align: center;
   }
   .num-input:focus { border-color: var(--accent); }
+
+  /* ── Keyboard focus rings (accessibility) ── */
+  button:focus-visible,
+  input:focus-visible,
+  .hotkey-display:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .toggle input:focus-visible + .toggle-slider {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>
@@ -191,7 +203,7 @@
         </div>
         <div class="hotkey-actions">
           <button class="btn-record" id="recordBtn">⏺ Record</button>
-          <button class="btn-clear" id="clearBtn" title="Reset to default (Alt+R)">✕</button>
+          <button class="btn-clear" id="clearBtn" title="Reset to default (Alt+R)" aria-label="Reset hotkey to default (Alt+R)">✕</button>
         </div>
       </div>
 

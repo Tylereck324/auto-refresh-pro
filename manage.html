@@ -92,6 +92,13 @@
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.success { color: var(--accent2); border-color: rgba(63,185,80,0.4); }
   .toast.error { color: var(--danger); border-color: rgba(248,81,73,0.4); }
+
+  /* ── Keyboard focus rings (accessibility) ── */
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>

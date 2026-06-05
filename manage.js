@@ -35,6 +35,15 @@ async function loadJobs() {
   const tabIds = Object.keys(jobs).map(Number);
   const tabList = document.getElementById('tabList');
 
+  // Skip the DOM rebuild when nothing material changed since the last render.
+  // The 3s poll would otherwise wipe out keyboard focus / hover on every tick.
+  const sig = JSON.stringify(tabIds.map(id => [
+    id, jobs[id].refreshCount || 0,
+    jobs[id].settings.currentInterval || jobs[id].settings.interval,
+  ]));
+  if (sig === loadJobs._sig) return;
+  loadJobs._sig = sig;
+
   if (tabIds.length === 0) {
     tabList.innerHTML = `<div class="empty-state"><div class="empty-icon">⏸</div><div class="empty-title">No active refresh jobs</div><div>Open a tab and start auto refresh from the extension popup.</div></div>`;
     return;
@@ -100,7 +109,7 @@ async function loadAutoStart() {
     div.innerHTML = `
       <span class="autostart-url">${escapeHtml(item.url)}</span>
       <span style="color:var(--text2);font-size:11px;">${item.intervalSec ? escapeHtml(item.intervalSec) + 's' : 'no refresh'}</span>
-      <button class="autostart-remove" data-idx="${escapeHtml(i)}">✕</button>
+      <button class="autostart-remove" data-idx="${escapeHtml(i)}" aria-label="Remove ${escapeHtml(item.url)}" title="Remove">✕</button>
     `;
     list.appendChild(div);
   });

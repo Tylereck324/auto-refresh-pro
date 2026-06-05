@@ -23,8 +23,8 @@
     --red:      #f87171;
     --yellow:   #fbbf24;
     --text:     #e2e8f0;
-    --text2:    #6b7280;
-    --text3:    #9ca3af;
+    --text2:    #828b9a;
+    --text3:    #b3bac6;
     --radius:   10px;
     --radius-s: 7px;
   }
@@ -123,21 +123,20 @@
 
   .status-label.active { color: var(--green); }
 
-  .btn-icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    border: 1px solid var(--border2);
-    background: var(--card2);
-    color: var(--text3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 13px;
-    transition: all 0.15s;
+  /* ── Keyboard focus rings (accessibility) ── */
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  .pill:focus-visible,
+  .adv-toggle:focus-visible,
+  .footer-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
-  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+  .toggle input:focus-visible ~ .toggle-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   /* ── Hero countdown (active state) ── */
   .hero {
@@ -741,7 +740,7 @@
 
   <!-- Advanced -->
   <div>
-    <div class="adv-toggle" id="advancedToggle">
+    <div class="adv-toggle" id="advancedToggle" role="button" tabindex="0" aria-expanded="false">
       <span class="adv-chevron">▶</span>
       Advanced
     </div>
@@ -780,9 +779,9 @@
 
 <!-- Footer -->
 <footer>
-  <a class="footer-link" id="manageLink">⊞ All Tabs</a>
+  <a class="footer-link" id="manageLink" role="button" tabindex="0">⊞ All Tabs</a>
   <div class="footer-sep"></div>
-  <a class="footer-link" id="optionsLink">⚙ Settings</a>
+  <a class="footer-link" id="optionsLink" role="button" tabindex="0">⚙ Settings</a>
 </footer>
 
 <script src="popup.js"></script>
