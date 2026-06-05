@@ -258,6 +258,31 @@
     </div>
     <div class="setting-row">
       <div>
+        <div class="setting-label">Sound Tone</div>
+        <div class="setting-sub">Which alert tone to play</div>
+      </div>
+      <select class="num-input" id="defSoundTone">
+        <option value="beep">Beep</option>
+        <option value="chime">Chime</option>
+        <option value="alarm">Alarm</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Sound Repeat</div>
+        <div class="setting-sub">How many times to repeat the tone (1–5)</div>
+      </div>
+      <input class="num-input" type="number" id="defSoundRepeat" value="1" min="1" max="5">
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Sound Volume</div>
+        <div class="setting-sub">Alert loudness</div>
+      </div>
+      <input type="range" id="defSoundVolume" min="0" max="100" value="90" style="width:160px;">
+    </div>
+    <div class="setting-row">
+      <div>
         <div class="setting-label">Default Interval</div>
         <div class="setting-sub">Pre-selected interval when opening popup (seconds)</div>
       </div>

@@ -181,6 +181,10 @@ function load() {
     setCheck('defCountdown', s.showCountdown !== false);
     setCheck('defNotify', s.notify);
     setCheck('defSound', s.sound);
+    if (s.soundTone) document.getElementById('defSoundTone').value = s.soundTone;
+    document.getElementById('defSoundRepeat').value = s.soundRepeat || 1;
+    document.getElementById('defSoundVolume').value =
+      typeof s.soundVolume === 'number' ? Math.round(s.soundVolume * 100) : 90;
     if (s.defaultInterval) document.getElementById('defInterval').value = s.defaultInterval;
 
     // Presets
@@ -221,6 +225,9 @@ function gatherAndSave() {
     showCountdown: document.getElementById('defCountdown').checked,
     notify: document.getElementById('defNotify').checked,
     sound: document.getElementById('defSound').checked,
+    soundTone: document.getElementById('defSoundTone').value || 'beep',
+    soundRepeat: Math.min(5, Math.max(1, parseInt(document.getElementById('defSoundRepeat').value) || 1)),
+    soundVolume: Math.min(1, Math.max(0, (parseInt(document.getElementById('defSoundVolume').value, 10) || 90) / 100)),
     defaultInterval: parseInt(document.getElementById('defInterval').value) || 30,
     presets: presets
   };
@@ -242,10 +249,13 @@ function save() {
 }
 
 // Static default controls — attach once.
-['defHardRefresh', 'defCountdown', 'defNotify', 'defSound'].forEach(function(id) {
+['defHardRefresh', 'defCountdown', 'defNotify', 'defSound', 'defSoundTone'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', save);
 });
-document.getElementById('defInterval').addEventListener('input', save);
+['defInterval', 'defSoundRepeat', 'defSoundVolume'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', save);
+});
 
 load();

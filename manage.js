@@ -155,6 +155,68 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
   loadAutoStart();
 });
 
+// ── URL rules ────────────────────────────────────────────────────────────
+async function loadRules() {
+  const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+  const list = document.getElementById('ruleList');
+  list.innerHTML = '';
+  urlRules.forEach((rule, i) => {
+    const sec = Math.round(((rule.settings && rule.settings.interval) || 30000) / 1000);
+    const div = document.createElement('div');
+    div.className = 'autostart-item';
+    div.innerHTML = `
+      <span class="autostart-url">${escapeHtml(rule.pattern)}</span>
+      <span style="color:var(--text2);font-size:11px;">${escapeHtml(sec)}s</span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);">
+        <input type="checkbox" class="rule-enabled" data-idx="${escapeHtml(i)}" ${rule.enabled === false ? '' : 'checked'}> on
+      </label>
+      <button class="autostart-remove rule-remove" data-idx="${escapeHtml(i)}" aria-label="Remove ${escapeHtml(rule.pattern)}" title="Remove">✕</button>
+    `;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.rule-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+      urlRules.splice(parseInt(btn.dataset.idx), 1);
+      await chrome.storage.local.set({ urlRules });
+      loadRules();
+    });
+  });
+  list.querySelectorAll('.rule-enabled').forEach(box => {
+    box.addEventListener('change', async () => {
+      const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+      const idx = parseInt(box.dataset.idx);
+      if (urlRules[idx]) urlRules[idx].enabled = box.checked;
+      await chrome.storage.local.set({ urlRules });
+    });
+  });
+}
+
+document.getElementById('addRule').addEventListener('click', async () => {
+  const pattern = document.getElementById('rulePattern').value.trim();
+  const sec = parseInt(document.getElementById('ruleInterval').value) || 30;
+  if (!pattern) return;
+  if (!ARPValidators.isSafeUrlGlob(pattern)) {
+    showToast('Invalid pattern. Use e.g. *://*.example.com/*', true);
+    return;
+  }
+  const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+  if (urlRules.length >= ARPValidators.MAX_URL_RULES) {
+    showToast('Too many rules (max ' + ARPValidators.MAX_URL_RULES + ').', true);
+    return;
+  }
+  urlRules.push({
+    pattern,
+    enabled: true,
+    settings: ARPValidators.sanitizeRuleSettings({ interval: Math.max(2, sec) * 1000 }),
+  });
+  await chrome.storage.local.set({ urlRules });
+  document.getElementById('rulePattern').value = '';
+  document.getElementById('ruleInterval').value = '30';
+  loadRules();
+});
+
 // ── Stop all ─────────────────────────────────────────────────────────────
 document.getElementById('stopAllBtn').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'STOP_ALL' });
@@ -206,6 +268,7 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
     showToast(note, result.errors.length > 0);
     loadJobs();
     loadAutoStart();
+    loadRules();
   } catch {
     showToast('Failed to save imported settings.', true);
   }
@@ -214,4 +277,5 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
 // ── Refresh on focus ─────────────────────────────────────────────────────
 loadJobs();
 loadAutoStart();
+loadRules();
 setInterval(loadJobs, 3000);

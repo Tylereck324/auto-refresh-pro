@@ -26,6 +26,10 @@
   const NAV_SCHEMES = new Set(['http:', 'https:']);
   const MAX_URL_LEN = 2048;
 
+  // Caps for user-supplied keyword / regex patterns.
+  const MAX_KEYWORD_LEN = 200;
+  const MAX_REGEX_LEN = 200;
+
   // Cap on inline image (data:) payloads rendered as a favicon. A hostile site
   // controls its own favIconUrl; without a cap it could hand us a multi-MB
   // data: URI to decode and paint (memory / UI-jank DoS).
@@ -54,6 +58,81 @@
     let parsed;
     try { parsed = new URL(url); } catch (e) { return false; }
     return NAV_SCHEMES.has(parsed.protocol);
+  }
+
+  // ── Keyword / regex validation ─────────────────────────────────────────────
+  // A user can mark their keyword as a regex. That pattern is compiled and run
+  // against (potentially large) page text every refresh cycle, so an unbounded
+  // or catastrophically-backtracking pattern is a DoS risk. This is a BEST-EFFORT
+  // static guard — JS has no way to prove a regex is ReDoS-free — layered with a
+  // length cap here and an input-length cap at match time (keyword-match.js).
+  function sanitizeKeywordPattern(raw) {
+    if (typeof raw !== 'string') return '';
+    return raw.slice(0, MAX_KEYWORD_LEN);
+  }
+
+  function isSafeRegex(pattern) {
+    if (typeof pattern !== 'string') return false;
+    if (pattern.length === 0 || pattern.length > MAX_REGEX_LEN) return false;
+    // Must compile at all.
+    try { new RegExp(pattern); } catch (e) { return false; }
+    // Reject classic ReDoS shapes: a quantifier applied to a group that itself
+    // contains a quantifier (nested quantifiers), e.g. (a+)+ , (a*)* , (.+)+ ,
+    // (?:a|aa)+ style overlap. Heuristic, not a proof.
+    if (/\([^)]*[+*][^)]*\)\s*[+*]/.test(pattern)) return false;
+    if (/\([^)]*[+*][^)]*\)\s*\{\d+,?\d*\}/.test(pattern)) return false;
+    // Reject an unbounded open-ended repetition of a group: (...)+{n,} / (...){n,}
+    if (/\)\s*\{\d+,\}/.test(pattern)) return false;
+    // Cap total quantifier count — many stacked quantifiers compound backtracking.
+    const quant = (pattern.match(/[+*?]|\{\d+,?\d*\}/g) || []).length;
+    if (quant > 12) return false;
+    return true;
+  }
+
+  // ── URL match-pattern (glob) validation ────────────────────────────────────
+  // A per-domain rule auto-starts refreshing when a tab finishes loading a URL
+  // that matches the rule's pattern. Patterns use a small Chrome-match-pattern
+  // subset: <scheme>://<host><path> where scheme ∈ {http,https,*}, host may use a
+  // leading "*." (any subdomain) or be "*", and path may end in "*". Only http(s)
+  // ever matches, so a rule can never trigger navigation of a privileged scheme.
+  const MAX_GLOB_LEN = 200;
+  const MAX_URL_RULES = 100;
+
+  function escapeRegexLiteral(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Structural check: scheme is *|http|https, there is a host with no spaces,
+  // and a path beginning with '/'. Rejects file:/javascript:/data:/chrome: etc.
+  function isSafeUrlGlob(pattern) {
+    if (typeof pattern !== 'string') return false;
+    if (pattern.length === 0 || pattern.length > MAX_GLOB_LEN) return false;
+    if (/\s/.test(pattern)) return false;
+    return /^(\*|https?):\/\/[^/\s]+\/[^\s]*$/.test(pattern);
+  }
+
+  // Compile a glob to { ok, test(url)->bool }. The translation only ever turns
+  // '*' into a bounded character class — never a nested quantifier — so it can't
+  // ReDoS. Host wildcards use [^/]* so they cannot cross into the path.
+  function compileUrlGlob(pattern) {
+    if (!isSafeUrlGlob(pattern)) return { ok: false, test: () => false };
+    const m = /^(\*|https?):\/\/([^/]+)(\/.*)$/.exec(pattern);
+    if (!m) return { ok: false, test: () => false };
+    const scheme = m[1], host = m[2], pathPart = m[3];
+    const schemeRe = scheme === '*' ? 'https?' : scheme;
+    let hostRe;
+    if (host === '*') {
+      hostRe = '[^/]+';
+    } else if (host.startsWith('*.')) {
+      hostRe = '(?:[^/]+\\.)?' + escapeRegexLiteral(host.slice(2)); // domain or any subdomain
+    } else {
+      hostRe = escapeRegexLiteral(host).replace(/\\\*/g, '[^/]*');
+    }
+    const pathRe = escapeRegexLiteral(pathPart).replace(/\\\*/g, '.*');
+    let re;
+    try { re = new RegExp('^' + schemeRe + '://' + hostRe + pathRe + '$'); }
+    catch (e) { return { ok: false, test: () => false }; }
+    return { ok: true, test: (url) => typeof url === 'string' && re.test(url) };
   }
 
   // ── base64 decode (browser atob OR Node Buffer) ────────────────────────────
@@ -195,6 +274,53 @@
     return out;
   }
 
+  // Build a clean job-settings object from arbitrary (possibly imported) input.
+  // Every field is coerced/bounded; a regex keyword that fails the safety guard
+  // is downgraded to a literal so a poisoned rule can't smuggle in a ReDoS.
+  function sanitizeRuleSettings(s) {
+    s = isPlainObject(s) ? s : {};
+    const sec = Number(s.intervalSec);
+    const interval = Number.isFinite(Number(s.interval)) && Number(s.interval) >= 2000
+      ? Math.floor(Number(s.interval))
+      : (Number.isFinite(sec) && sec >= 2 ? Math.floor(sec) * 1000 : 30000);
+    let keyword = typeof s.keyword === 'string' ? s.keyword.slice(0, MAX_KEYWORD_LEN) : '';
+    let kwRegex = !!s.kwRegex;
+    if (kwRegex && !isSafeRegex(keyword)) kwRegex = false;
+    return {
+      interval,
+      hardRefresh: !!s.hardRefresh,
+      showCountdown: s.showCountdown !== false,
+      notify: !!s.notify,
+      sound: !!s.sound,
+      monitorMode: !!s.monitorMode,
+      randomTimer: false,
+      stopAfter: Number.isFinite(Number(s.stopAfter)) ? Math.max(0, Math.floor(Number(s.stopAfter))) : 0,
+      keyword,
+      kwCaseSensitive: !!s.kwCaseSensitive,
+      kwWholeWord: !!s.kwWholeWord,
+      kwRegex,
+      kwInverse: !!s.kwInverse,
+      stopOnKeyword: !!s.stopOnKeyword,
+      stopOnChange: !!s.stopOnChange,
+      currentInterval: interval,
+    };
+  }
+
+  function sanitizeUrlRules(arr) {
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const item of arr.slice(0, MAX_URL_RULES)) {
+      if (!isPlainObject(item)) continue;
+      if (!isSafeUrlGlob(item.pattern)) continue;
+      out.push({
+        pattern: item.pattern,
+        enabled: item.enabled !== false,
+        settings: sanitizeRuleSettings(item.settings),
+      });
+    }
+    return out;
+  }
+
   function sanitizePresets(arr) {
     if (!Array.isArray(arr)) return null; // null = "not present", caller keeps default
     const out = [];
@@ -240,8 +366,26 @@
         const presets = sanitizePresets(val.presets);
         if (presets) gs.presets = presets;
         out.globalSettings = gs;
+      } else if (key === 'urlRules') {
+        const safe = sanitizeUrlRules(val);
+        if (Array.isArray(val) && safe.length !== val.length) {
+          errors.push('removed ' + (val.length - safe.length) + ' unsafe URL rule(s)');
+        }
+        out.urlRules = safe;
       } else if (key === 'customHotkey') {
         out.customHotkey = sanitizeHotkey(val);
+      } else if (key === 'popupSettings') {
+        // Last-used popup state is attacker-controllable on import. The only
+        // dangerous field is a regex keyword: cap its length and drop regex mode
+        // if the stored pattern fails the safety guard (it stays a literal).
+        if (!isPlainObject(val)) { out.popupSettings = {}; continue; }
+        const ps = Object.assign({}, val);
+        if (typeof ps.keyword === 'string') ps.keyword = sanitizeKeywordPattern(ps.keyword);
+        if (ps.kwRegex && !isSafeRegex(ps.keyword)) {
+          ps.kwRegex = false;
+          errors.push('disabled an unsafe regex keyword');
+        }
+        out.popupSettings = ps;
       } else {
         out[key] = val; // booleans / numbers / last-used popup state, etc.
       }
@@ -271,7 +415,16 @@
     sanitizeAutoStartUrls,
     sanitizePresets,
     isTrustedSender,
+    isSafeRegex,
+    sanitizeKeywordPattern,
+    isSafeUrlGlob,
+    compileUrlGlob,
+    sanitizeUrlRules,
+    sanitizeRuleSettings,
     MAX_IMAGE_BYTES,
     MAX_PNG_DIMENSION,
+    MAX_KEYWORD_LEN,
+    MAX_REGEX_LEN,
+    MAX_URL_RULES,
   };
 });

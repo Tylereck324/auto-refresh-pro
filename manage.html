@@ -134,6 +134,22 @@
     <div class="autostart-list" id="autoStartList"></div>
   </div>
 
+  <!-- URL Rules -->
+  <div class="section-title">URL Rules (auto-start on matching pages)</div>
+  <div class="autostart-card">
+    <div style="color:var(--text2);font-size:12px;margin-bottom:10px;">
+      When a tab finishes loading a URL matching a pattern, refresh starts automatically.
+      Patterns use Chrome match syntax, e.g. <code>*://*.example.com/*</code> or <code>https://news.site/*</code>.
+    </div>
+    <div class="form-row">
+      <label>Pattern</label>
+      <input class="form-input" id="rulePattern" type="text" placeholder="*://*.example.com/*">
+      <input class="form-input" id="ruleInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2" value="30">
+      <button class="btn-add" id="addRule">+ Add</button>
+    </div>
+    <div class="autostart-list" id="ruleList"></div>
+  </div>
+
   <!-- Import/Export -->
   <div class="section-title">Import / Export Settings</div>
   <div class="autostart-card">

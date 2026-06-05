@@ -75,6 +75,16 @@ function bindEvents() {
   // Monitor / random conditionals
   document.getElementById('optMonitor').addEventListener('change', updateConditionalRows);
   document.getElementById('optRandom').addEventListener('change', updateConditionalRows);
+  document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
+
+  // A keyword takes precedence over generic change-monitoring (the background
+  // ignores Monitor while a keyword is set), so lock those controls to match.
+  document.getElementById('optKeyword').addEventListener('input', updateKeywordLock);
+
+  // Live-validate the regex when Regex mode is on, so an unsafe/invalid pattern
+  // is flagged (and refused) before it can be saved or started.
+  document.getElementById('optKeyword').addEventListener('input', validateKeywordRegex);
+  document.getElementById('optKwRegex').addEventListener('change', validateKeywordRegex);
 
   // Options link
   document.getElementById('optionsLink').addEventListener('click', () => {
@@ -88,7 +98,10 @@ function bindEvents() {
 
   // Save settings on any toggle change
   ['optHardRefresh','optCountdown','optNotify','optSound','optMonitor','optRandom',
-   'optStopAfter','optKeyword','optStopOnKeyword','optStopOnChange','optStopOnClick','optRandomMin','optRandomMax'
+   'optStopAfter','optKeyword','optStopOnKeyword','optStopOnChange','optStopOnClick','optPreserveScroll','optRandomMin','optRandomMax',
+   'optSoundTone','optSoundRepeat','optSoundVolume',
+   'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
+   'optNoiseTolerant','optCollapseDigits','optMinChange'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
@@ -123,6 +136,27 @@ function updateConditionalRows() {
   const random = document.getElementById('optRandom').checked;
   const randomRangeRow = document.getElementById('randomRangeRow');
   if (randomRangeRow) randomRangeRow.style.display = random ? '' : 'none';
+  // The change-sensitivity fields only matter when "Ignore noise" is on.
+  const noise = document.getElementById('optNoiseTolerant').checked;
+  const noiseRow = document.getElementById('noiseRow');
+  if (noiseRow) noiseRow.style.display = noise ? '' : 'none';
+}
+
+// When a keyword is set, the background uses the keyword as the sole signal and
+// skips the page-change path entirely (see doMonitorRefresh in background.js).
+// Reflect that in the UI by disabling Monitor + Stop-on-change so they can't be
+// toggled to no effect. The checkboxes keep their stored state, so clearing the
+// keyword restores whatever the user had selected before.
+function updateKeywordLock() {
+  const hasKeyword = document.getElementById('optKeyword').value.trim().length > 0;
+  [['cardMonitor', 'optMonitor'], ['cardStopOnChange', 'optStopOnChange'], ['cardNoise', 'optNoiseTolerant']].forEach(([cardId, inputId]) => {
+    const card  = document.getElementById(cardId);
+    const input = document.getElementById(inputId);
+    if (card)  card.classList.toggle('disabled', hasKeyword);
+    if (input) input.disabled = hasKeyword;
+  });
+  const sub = document.getElementById('subMonitor');
+  if (sub) sub.textContent = hasKeyword ? 'Ignored — keyword set' : 'Detect changes';
 }
 
 // Called whenever the interval selection changes.
@@ -147,6 +181,12 @@ function applyIntervalChange() {
 // ── Start / Stop ────────────────────────────────────────────────────────────
 async function startRefresh() {
   if (!currentTabId) return;
+
+  // Refuse to start with an invalid/unsafe regex keyword — flag it instead.
+  if (!validateKeywordRegex()) {
+    document.getElementById('optKeyword').focus();
+    return;
+  }
 
   const settings = gatherSettings();
 
@@ -189,16 +229,43 @@ function gatherSettings() {
     notify: document.getElementById('optNotify').checked,
     sound: document.getElementById('optSound').checked,
     monitorMode: document.getElementById('optMonitor').checked,
+    noiseTolerant: document.getElementById('optNoiseTolerant').checked,
+    collapseDigits: document.getElementById('optCollapseDigits').checked,
+    minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
     randomTimer,
     randomMin: randomMinSec * 1000,
     randomMax: randomMaxSec * 1000,
     stopAfter: parseInt(document.getElementById('optStopAfter').value) || 0,
     keyword: document.getElementById('optKeyword').value.trim(),
+    kwCaseSensitive: document.getElementById('optKwCase').checked,
+    kwWholeWord: document.getElementById('optKwWhole').checked,
+    kwRegex: document.getElementById('optKwRegex').checked,
+    kwInverse: document.getElementById('optKwInverse').checked,
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
     stopOnClick: document.getElementById('optStopOnClick').checked,
+    preserveScroll: document.getElementById('optPreserveScroll').checked,
+    soundVolume: clampSoundVolume(document.getElementById('optSoundVolume').value),
+    soundTone: document.getElementById('optSoundTone').value || 'beep',
+    soundRepeat: clampSoundRepeat(document.getElementById('optSoundRepeat').value),
+    beepUntilAck: document.getElementById('optBeepUntilAck').checked,
     currentInterval: selectedMs
   };
+}
+
+// Volume slider is 0–100 in the UI but stored/sent as a 0–1 gain.
+function clampSoundVolume(raw) {
+  const pct = parseInt(raw, 10);
+  return Number.isFinite(pct) ? Math.min(1, Math.max(0, pct / 100)) : 0.9;
+}
+function clampSoundRepeat(raw) {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1;
+}
+// "Min change %" is 0–100 in the UI but stored/sent as a 0–1 fraction.
+function clampFraction(raw) {
+  const pct = parseInt(raw, 10);
+  return Number.isFinite(pct) ? Math.min(1, Math.max(0, pct / 100)) : 0;
 }
 
 // ── UI helpers ──────────────────────────────────────────────────────────────
@@ -318,14 +385,26 @@ function saveSettings() {
     notify: document.getElementById('optNotify').checked,
     sound: document.getElementById('optSound').checked,
     monitor: document.getElementById('optMonitor').checked,
+    noiseTolerant: document.getElementById('optNoiseTolerant').checked,
+    collapseDigits: document.getElementById('optCollapseDigits').checked,
+    minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
     random: document.getElementById('optRandom').checked,
     stopAfter: document.getElementById('optStopAfter').value,
     keyword: document.getElementById('optKeyword').value,
+    kwCaseSensitive: document.getElementById('optKwCase').checked,
+    kwWholeWord: document.getElementById('optKwWhole').checked,
+    kwRegex: document.getElementById('optKwRegex').checked,
+    kwInverse: document.getElementById('optKwInverse').checked,
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
     stopOnClick: document.getElementById('optStopOnClick').checked,
+    preserveScroll: document.getElementById('optPreserveScroll').checked,
     randomMin: document.getElementById('optRandomMin').value,
     randomMax: document.getElementById('optRandomMax').value,
+    soundVolume: clampSoundVolume(document.getElementById('optSoundVolume').value),
+    soundTone: document.getElementById('optSoundTone').value || 'beep',
+    soundRepeat: clampSoundRepeat(document.getElementById('optSoundRepeat').value),
+    beepUntilAck: document.getElementById('optBeepUntilAck').checked,
   };
   chrome.storage.local.set({ popupSettings: settings });
 }
@@ -376,6 +455,7 @@ function loadSettings() {
     setCheckbox('optCountdown', g.showCountdown !== false);
     setCheckbox('optNotify', g.notify);
     setCheckbox('optSound', g.sound);
+    setSoundControls(g);
 
     // ── 3. Overlay the user's last-used popup state (takes precedence) ──
     if (s) {
@@ -386,23 +466,64 @@ function loadSettings() {
       setCheckbox('optNotify', s.notify);
       setCheckbox('optSound', s.sound);
       setCheckbox('optMonitor', s.monitor);
+      setCheckbox('optNoiseTolerant', s.noiseTolerant);
+      if (s.collapseDigits !== undefined) setCheckbox('optCollapseDigits', s.collapseDigits);
+      if (typeof s.minChangedFraction === 'number') {
+        document.getElementById('optMinChange').value = Math.round(s.minChangedFraction * 100);
+      }
       setCheckbox('optRandom', s.random);
       setCheckbox('optStopOnKeyword', s.stopOnKeyword);
       setCheckbox('optStopOnChange', s.stopOnChange);
       setCheckbox('optStopOnClick', s.stopOnClick);
+      setCheckbox('optPreserveScroll', s.preserveScroll);
+      setCheckbox('optKwCase', s.kwCaseSensitive);
+      setCheckbox('optKwWhole', s.kwWholeWord);
+      setCheckbox('optKwRegex', s.kwRegex);
+      setCheckbox('optKwInverse', s.kwInverse);
+      setCheckbox('optBeepUntilAck', s.beepUntilAck);
 
       if (s.stopAfter !== undefined) document.getElementById('optStopAfter').value = s.stopAfter;
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
       if (s.randomMin) document.getElementById('optRandomMin').value = s.randomMin;
       if (s.randomMax) document.getElementById('optRandomMax').value = s.randomMax;
+      setSoundControls(s);
     }
 
     highlightSelectedPreset();
     updateConditionalRows();
+    updateKeywordLock();
+    validateKeywordRegex();
   });
 }
 
 function setCheckbox(id, val) {
   const el = document.getElementById(id);
   if (el) el.checked = !!val;
+}
+
+// Returns true when the keyword field is OK to use. When Regex mode is on, the
+// pattern is checked against ARPValidators.isSafeRegex and the UI is flagged on
+// failure. Non-regex keywords are always valid.
+function validateKeywordRegex() {
+  const input = document.getElementById('optKeyword');
+  const hint  = document.getElementById('kwRegexHint');
+  const regexOn = document.getElementById('optKwRegex').checked;
+  const val = input.value.trim();
+  const bad = regexOn && val.length > 0 &&
+    !(typeof ARPValidators !== 'undefined' && ARPValidators.isSafeRegex(val));
+  input.classList.toggle('invalid', bad);
+  if (hint) hint.classList.toggle('show', bad);
+  return !bad;
+}
+
+// Apply sound settings from either globalSettings (gain 0–1) or popupSettings.
+// Only writes a control when the source actually carries that field, so the
+// defaults→last-used layering in loadSettings is preserved.
+function setSoundControls(src) {
+  if (!src) return;
+  if (typeof src.soundVolume === 'number') {
+    document.getElementById('optSoundVolume').value = Math.round(src.soundVolume * 100);
+  }
+  if (src.soundTone) document.getElementById('optSoundTone').value = src.soundTone;
+  if (src.soundRepeat) document.getElementById('optSoundRepeat').value = src.soundRepeat;
 }
