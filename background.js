@@ -242,7 +242,17 @@ async function sendCountdownStart(tabId, duration, attempt) {
   // Tab is complete — send the message
   chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', duration }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
-      // Content script not ready yet — retry
+      // No live content script (page was loaded before the extension was
+      // installed/reloaded). Inject it programmatically so the overlay shows
+      // immediately instead of waiting for the first refresh to re-inject it.
+      // content.js is idempotent (guards via window.__autoRefreshInjected), so
+      // injecting once here is safe even if a declarative injection races in.
+      if (attempt === 0) {
+        chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] })
+          .catch(() => {}); // not scriptable (chrome://, web store, etc.)
+      }
+      // Retry — the injected script's own GET_STATUS sync will also show the
+      // overlay, and the resend lands once its onMessage listener is registered.
       if (attempt < 12) {
         const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
         setTimeout(() => sendCountdownStart(tabId, duration, attempt + 1), delay);
