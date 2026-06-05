@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Auto Refresh Pro</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  /* No remote font @import — it leaks a request to Google on every open, fails
+     offline, and causes a flash of unstyled text. The font-family stacks below
+     fall back to the platform UI/monospace fonts. */
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -33,7 +35,11 @@
     color: var(--text);
     font-family: 'Inter', sans-serif;
     font-size: 13px;
-    overflow: hidden;
+    /* Hide horizontal overflow but allow vertical scrolling: with every section
+       expanded the content can exceed Chrome's ~600px popup cap, and
+       overflow:hidden would clip the Start/Stop buttons off the bottom. */
+    overflow-x: hidden;
+    overflow-y: auto;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -601,16 +607,7 @@
   <!-- Interval -->
   <div>
     <div class="section-head">Refresh Interval</div>
-    <div class="pill-grid">
-      <button class="pill" data-ms="5000">5s</button>
-      <button class="pill" data-ms="10000">10s</button>
-      <button class="pill" data-ms="30000">30s</button>
-      <button class="pill" data-ms="60000">1m</button>
-      <button class="pill" data-ms="300000">5m</button>
-      <button class="pill" data-ms="600000">10m</button>
-      <button class="pill" data-ms="1800000">30m</button>
-      <button class="pill" data-ms="3600000">1h</button>
-    </div>
+    <div class="pill-grid" id="pillGrid"></div>
     <div class="custom-row">
       <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
       <select class="unit-select" id="customUnit">

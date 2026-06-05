@@ -227,10 +227,10 @@
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
     hintText.className = '__ar_hint_text';
-    hintText.textContent = 'Alt+R to toggle';
+    hintText.textContent = formatHotkeyDisplay(DEFAULT_HOTKEY) + ' to toggle';
     safeStorageGet('customHotkey', (data) => {
-      const hk = data && data.customHotkey;
-      if (hk) hintText.textContent = formatHotkeyDisplay(hk) + ' to toggle';
+      const hk = (data && data.customHotkey) || DEFAULT_HOTKEY;
+      hintText.textContent = formatHotkeyDisplay(hk) + ' to toggle';
     });
     hint.appendChild(hintText);
 
@@ -469,11 +469,15 @@
       if (synced || !contextValid) return;
       if (resp && resp.job) {
         synced = true;
-        stopOnClickEnabled = !!(resp.job.settings && resp.job.settings.stopOnClick);
-        const total = (resp.job.settings && (resp.job.settings.currentInterval || resp.job.settings.interval))
-          || Math.max(0, resp.job.nextRefresh - Date.now());
-        ensureOverlay();
-        startCountdown(resp.job.nextRefresh, total);
+        const s = resp.job.settings || {};
+        stopOnClickEnabled = !!s.stopOnClick;
+        // Respect the "Show countdown overlay" setting (click-to-stop still works).
+        if (s.showCountdown !== false) {
+          const total = (s.currentInterval || s.interval)
+            || Math.max(0, resp.job.nextRefresh - Date.now());
+          ensureOverlay();
+          startCountdown(resp.job.nextRefresh, total);
+        }
       } else if (attempt < 8) {
         // Exponential backoff: 100, 200, 400, 800, 1000, 1000, 1000, 1000 ms
         const delay = Math.min(100 * Math.pow(2, attempt), 1000);
@@ -484,8 +488,16 @@
   syncWithBackground(0);
 
   // ── Custom keybinding ─────────────────────────────────────────────────────
+  // The in-page hotkey is the single source of truth for toggling refresh.
+  // When the user hasn't recorded a custom combo, this default applies so the
+  // shortcut works out of the box. `code` is the physical key (layout- and
+  // Option-key-safe on macOS, where Alt+R mangles `e.key`).
+  const DEFAULT_HOTKEY = { key: 'r', code: 'KeyR', ctrl: false, alt: true, shift: false, meta: false };
+
   let customHotkey = null;
   safeStorageGet('customHotkey', (d) => { customHotkey = (d && d.customHotkey) || null; });
+
+  function activeHotkey() { return customHotkey || DEFAULT_HOTKEY; }
 
   try {
     chrome.storage.onChanged.addListener((changes) => {
@@ -493,15 +505,18 @@
       if (changes.customHotkey) {
         customHotkey = changes.customHotkey.newValue || null;
         const hint = overlayEl && overlayEl.querySelector('.__ar_hint_text');
-        if (hint) hint.textContent = customHotkey
-          ? formatHotkeyDisplay(customHotkey) + ' to toggle' : 'Alt+R to toggle';
+        if (hint) hint.textContent = formatHotkeyDisplay(activeHotkey()) + ' to toggle';
       }
     });
   } catch (e) {}
 
   function matchesHotkey(e, hk) {
     if (!hk) return false;
-    return e.key === hk.key &&
+    // Prefer matching the physical key (e.code) when the combo carries one —
+    // robust across keyboard layouts and macOS Option-key remapping. Fall back
+    // to e.key for older recorded combos that predate the code field.
+    const keyMatch = hk.code ? e.code === hk.code : e.key === hk.key;
+    return keyMatch &&
       !!e.ctrlKey === !!hk.ctrl && !!e.altKey === !!hk.alt &&
       !!e.shiftKey === !!hk.shift && !!e.metaKey === !!hk.meta;
   }
@@ -518,8 +533,8 @@
   }
 
   document.addEventListener('keydown', (e) => {
-    if (!contextValid || !customHotkey) return;
-    if (matchesHotkey(e, customHotkey)) {
+    if (!contextValid) return;
+    if (matchesHotkey(e, activeHotkey())) {
       e.preventDefault();
       safeMessage({ type: 'HOTKEY_TOGGLE' });
     }
@@ -545,8 +560,14 @@
       switch (msg.type) {
         case 'COUNTDOWN_START':
           stopOnClickEnabled = !!msg.stopOnClick;
-          ensureOverlay();
-          startCountdown(msg.nextRefresh, msg.total);
+          // Respect the "Show countdown overlay" setting. Click-to-stop still
+          // works without the overlay, so it's wired above regardless.
+          if (msg.showCountdown === false) {
+            hideOverlay();
+          } else {
+            ensureOverlay();
+            startCountdown(msg.nextRefresh, msg.total);
+          }
           synced = true;
           sendResponse({ ok: true });
           break;

@@ -112,6 +112,7 @@ document.addEventListener('keydown', (e) => {
 
   pendingHotkey = {
     key: e.key,
+    code: e.code, // physical key — layout- and macOS-Option-key-safe matching
     ctrl: e.ctrlKey,
     alt: e.altKey,
     shift: e.shiftKey,
@@ -139,18 +140,6 @@ document.addEventListener('keydown', (e) => {
   // Auto-confirm after a short delay
   setTimeout(() => { if (recording) stopRecording(true); }, 800);
 }, true);
-
-// chrome://extensions/shortcuts — options pages can't open chrome:// URLs,
-// so copy to clipboard and hint the user to paste it.
-document.getElementById('chromeShortcutLink').addEventListener('click', (e) => {
-  e.preventDefault();
-  navigator.clipboard.writeText('chrome://extensions/shortcuts').catch(() => {});
-  const link = e.currentTarget;
-  const orig = link.textContent;
-  link.textContent = '✓ Copied! Paste in address bar';
-  link.style.color = 'var(--accent2)';
-  setTimeout(() => { link.textContent = orig; link.style.color = ''; }, 2500);
-});
 
 // ── Presets ───────────────────────────────────────────────────────────────
 const defaultPresets = [
