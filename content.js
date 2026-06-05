@@ -6,8 +6,8 @@
 
   let overlayEl  = null;
   let tickInterval = null;
-  let remaining    = 0;
-  let totalDuration = 0;
+  let deadline      = 0;  // absolute timestamp of the next refresh (job.nextRefresh)
+  let totalDuration = 0;  // current cycle interval — progress-bar denominator only
   let contextValid  = true;
   let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
 
@@ -156,7 +156,7 @@
           height:100%;
           background:linear-gradient(90deg,#4f9eff,#a78bfa);
           border-radius:4px; width:100%;
-          transition:width 0.95s linear;
+          transition:width 1s linear;
         }
         #__ar_hint {
           font-weight:500;
@@ -419,26 +419,36 @@
   }
 
   // ── Tick logic ────────────────────────────────────────────────────────────
-  function startTick(durationMs) {
+  // Render the countdown as a pure function of the absolute deadline, mirroring
+  // the popup. The tick is self-scheduled to land just past each wall-clock
+  // second boundary, so the displayed second flips at the same instant as the
+  // popup (which uses the identical scheme over the same deadline) — no residual
+  // phase skew. Absolute timing also self-corrects any COUNTDOWN_START latency.
+  function startCountdown(deadlineTs, total) {
     stopTick();
-    remaining     = durationMs;
-    totalDuration = durationMs;
+    deadline      = deadlineTs;
+    totalDuration = total || Math.max(0, deadlineTs - Date.now());
+    tickAligned();
+  }
+
+  function tickAligned() {
     renderTick();
-    tickInterval = setInterval(() => {
-      remaining = Math.max(0, remaining - 1000);
-      renderTick();
-    }, 1000);
+    const remaining = Math.max(0, deadline - Date.now());
+    // ms until ceil(remaining/1000) next changes, +15ms to land just past it.
+    const delay = remaining > 0 ? (remaining % 1000) + 15 : 250;
+    tickInterval = setTimeout(tickAligned, delay);
   }
 
   function stopTick() {
-    if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    if (tickInterval) { clearTimeout(tickInterval); tickInterval = null; }
   }
 
   function renderTick() {
     if (!overlayEl) return;
+    const remaining = Math.max(0, deadline - Date.now());
     if (overlayEl._timer) overlayEl._timer.textContent = formatTime(remaining);
     if (overlayEl._fill)  overlayEl._fill.style.width  = totalDuration > 0
-      ? (remaining / totalDuration * 100) + '%' : '0%';
+      ? Math.max(0, Math.min(100, remaining / totalDuration * 100)) + '%' : '0%';
   }
 
   function formatTime(ms) {
@@ -460,9 +470,10 @@
       if (resp && resp.job) {
         synced = true;
         stopOnClickEnabled = !!(resp.job.settings && resp.job.settings.stopOnClick);
-        const timeLeft = Math.max(500, resp.job.nextRefresh - Date.now());
+        const total = (resp.job.settings && (resp.job.settings.currentInterval || resp.job.settings.interval))
+          || Math.max(0, resp.job.nextRefresh - Date.now());
         ensureOverlay();
-        startTick(timeLeft);
+        startCountdown(resp.job.nextRefresh, total);
       } else if (attempt < 8) {
         // Exponential backoff: 100, 200, 400, 800, 1000, 1000, 1000, 1000 ms
         const delay = Math.min(100 * Math.pow(2, attempt), 1000);
@@ -535,7 +546,7 @@
         case 'COUNTDOWN_START':
           stopOnClickEnabled = !!msg.stopOnClick;
           ensureOverlay();
-          startTick(msg.duration);
+          startCountdown(msg.nextRefresh, msg.total);
           synced = true;
           sendResponse({ ok: true });
           break;
