@@ -5,6 +5,12 @@
 importScripts('validators.js');
 // Pure refresh-interval computation (ARPInterval.computeInterval).
 importScripts('interval.js');
+// Pure keyword-matching logic (ARPKeyword.compileMatcher).
+importScripts('keyword-match.js');
+// Pure text-normalization for noise-tolerant change detection (ARPNormalize).
+importScripts('normalize.js');
+// Pure notification-id encode/decode (ARPNotif) for click-to-focus-tab.
+importScripts('notif-id.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -14,7 +20,8 @@ const activeJobs = {};
 // Service workers can't play audio directly. We use an offscreen document
 // (Chrome 116+) which has full audio access and no gesture-policy restrictions.
 
-async function playBeep() {
+async function playBeep(opts = {}) {
+  const { volume = 0.9, tone = 'beep', repeat = 1 } = opts;
   try {
     const existing = await chrome.offscreen.hasDocument().catch(() => false);
     if (!existing) {
@@ -24,10 +31,114 @@ async function playBeep() {
         justification: 'Play keyword-detected alert beep'
       });
     }
-    chrome.runtime.sendMessage({ type: 'PLAY_BEEP' }).catch(() => {});
+    return await deliverBeep({ volume, tone, repeat });
   } catch (e) {
     console.warn('Offscreen audio failed:', e);
+    return false;
   }
+}
+
+// Pull the sound parameters off a job's settings into the shape playBeep wants.
+function soundOpts(settings) {
+  return {
+    volume: settings.soundVolume,
+    tone: settings.soundTone,
+    repeat: settings.soundRepeat,
+  };
+}
+
+// Compile a keyword matcher from a job's settings, injecting the regex-safety
+// guard so a poisoned/unsafe stored regex is refused (matcher.ok === false) and
+// the keyword path is skipped rather than running a dangerous pattern.
+function buildMatcher(settings) {
+  return ARPKeyword.compileMatcher(settings, { isSafeRegex: ARPValidators.isSafeRegex });
+}
+
+// ── Actionable notifications ────────────────────────────────────────────────
+// Clicking a keyword/change notification focuses the originating tab. The tab id
+// is both kept in this warm-path map and encoded in the notification id (so a
+// click still works after a service-worker restart wipes the map).
+const notifTabMap = {};
+
+function notify(prefix, tabId, options) {
+  const id = ARPNotif.buildNotifId(prefix, tabId, Date.now());
+  notifTabMap[id] = { tabId };
+  chrome.notifications.create(id, options);
+  return id;
+}
+
+async function handleNotifClick(id) {
+  const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  delete notifTabMap[id];
+  chrome.notifications.clear(id);
+  if (tabId == null) return;
+  // A click is an acknowledgement — stop any repeat-until-ack beeping.
+  clearAckBeeps(tabId);
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch (e) { /* tab gone */ }
+}
+
+chrome.notifications.onClicked.addListener(handleNotifClick);
+
+chrome.notifications.onClosed.addListener((id) => {
+  const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  delete notifTabMap[id];
+  if (tabId != null) clearAckBeeps(tabId);
+});
+
+// Repeat the alert beep on an interval until the user acknowledges (clicks/closes
+// the notification) or a bounded cap is reached. Strictly bounded and cleared on
+// every job-stop path so it can never run away.
+function startAckBeeps(tabId) {
+  const job = activeJobs[tabId];
+  if (!job || !job.settings.sound || !job.settings.beepUntilAck) return;
+  clearAckBeeps(tabId);
+  const intervalMs = Math.max(2000, (parseFloat(job.settings.beepAckIntervalSec) || 5) * 1000);
+  const maxRepeats = Math.min(10, Math.max(1, parseInt(job.settings.beepRepeatMax) || 5));
+  let count = 0;
+  const tick = () => {
+    const j = activeJobs[tabId];
+    if (!j || count >= maxRepeats) { clearAckBeeps(tabId); return; }
+    count++;
+    playBeep(soundOpts(j.settings));
+    j._ackTimer = setTimeout(tick, intervalMs);
+  };
+  job._ackTimer = setTimeout(tick, intervalMs);
+}
+
+function clearAckBeeps(tabId) {
+  const job = activeJobs[tabId];
+  if (job && job._ackTimer) { clearTimeout(job._ackTimer); job._ackTimer = null; }
+}
+
+// createDocument() resolves once the offscreen page has loaded, but offscreen.js
+// may not have registered its onMessage listener yet — a PLAY_BEEP sent in that
+// window is dropped ("receiving end does not exist") and was previously swallowed
+// silently, losing the beep. This bit hardest once beeps became sparse (keyword
+// edge only), since the document is torn down between rare beeps and every beep
+// then races a fresh creation. Retry until the offscreen side ACKs. The ACK is
+// synchronous, so a delivered message resolves on the first try and is never
+// replayed — no double beep.
+function deliverBeep(opts = {}, attempt = 0) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'PLAY_BEEP', volume: opts.volume, tone: opts.tone, repeat: opts.repeat }, () => {
+      if (chrome.runtime.lastError) {
+        // No live listener yet (or no receiver responded). Back off briefly and
+        // retry, capped so we never spin forever if the document failed to load.
+        if (attempt < 20) {
+          setTimeout(() => deliverBeep(opts, attempt + 1).then(resolve), 25);
+        } else {
+          console.warn('Offscreen audio never acknowledged the beep');
+          resolve(false);
+        }
+      } else {
+        resolve(true); // offscreen acknowledged — the beep was delivered
+      }
+    });
+  });
 }
 
 // ── Alarm handler ──────────────────────────────────────────────────────────
@@ -87,9 +198,9 @@ async function doRefresh(tabId, job) {
     await chrome.tabs.reload(tabId);
   }
 
-  // Notification
+  // Notification (clickable → focuses this tab)
   if (job.settings.notify) {
-    chrome.notifications.create({
+    notify('refresh', tabId, {
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Auto Refresh Pro',
@@ -132,36 +243,58 @@ async function doMonitorRefresh(tabId, job) {
   const currentContent = (results && results[0] && results[0].result) || '';
   const prevContent = job.previousContent; // null/undefined = no baseline yet
 
-  // ── Keyword detection ──
-  // Only alert when we have a real previous snapshot AND the keyword
-  // transitions from absent to present between cycles.
-  if (job.settings.keyword) {
-    const kw        = job.settings.keyword.toLowerCase();
-    const foundNow  = currentContent.toLowerCase().includes(kw);
-    const hasBaseline = prevContent !== null && prevContent !== undefined;
-    const foundPrev   = hasBaseline && prevContent.toLowerCase().includes(kw);
+  // A keyword takes precedence over generic change-monitoring. When one is set,
+  // the keyword is the signal of interest, so we skip the page-change path
+  // entirely below — otherwise every dynamic page (timestamps, ads, counters)
+  // would beep on essentially every reload regardless of the keyword.
+  // The matcher (multi-keyword / whole-word / case / regex) is compiled once at
+  // job start and cached on job._matcher; recompile lazily if it's missing.
+  const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
+  const hasKeyword = matcher.ok && !matcher.empty;
 
-    if (foundNow && hasBaseline && !foundPrev) {
-      if (job.settings.sound) await playBeep();
-      chrome.notifications.create('kw_' + Date.now(), {
+  // ── Keyword detection ──
+  // Alert on a transition between cycles: absent→present normally, or
+  // present→absent in inverse mode ("alert when the keyword disappears").
+  if (hasKeyword) {
+    const foundNow    = matcher.test(currentContent);
+    const hasBaseline = prevContent !== null && prevContent !== undefined;
+    const foundPrev   = hasBaseline && matcher.test(prevContent);
+    const fired = job.settings.kwInverse ? (!foundNow && foundPrev) : (foundNow && !foundPrev);
+
+    if (fired && hasBaseline) {
+      if (job.settings.sound) await playBeep(soundOpts(job.settings));
+      const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
+      notify('kw', tabId, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Keyword Detected!',
-        message: '"' + job.settings.keyword + '" found on page!'
+        message: '"' + job.settings.keyword + '" ' + verb + ' page!'
       });
       if (job.settings.stopOnKeyword) {
         await stopRefresh(tabId);
         return;
       }
+      startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
     }
   }
 
   // ── Page change detection ──
   // Only alert when we have a real baseline and content actually changed.
-  if (job.settings.monitorMode && prevContent !== null && prevContent !== undefined) {
-    if (currentContent !== prevContent) {
-      if (job.settings.sound) await playBeep();
-      chrome.notifications.create('chg_' + Date.now(), {
+  // Skipped entirely when a keyword is set — the keyword owns the signal so the
+  // generic change beep/notification doesn't drown it out (see hasKeyword above).
+  if (!hasKeyword && job.settings.monitorMode && prevContent !== null && prevContent !== undefined) {
+    // Strict raw comparison by default (exact legacy behavior). When noise
+    // tolerance is on, normalize (collapse whitespace/digits) and require the
+    // configured minimum changed-fraction so clocks/counters/ads don't alert.
+    const changed = job.settings.noiseTolerant
+      ? ARPNormalize.isMeaningfulChange(prevContent, currentContent, {
+          collapseDigits: job.settings.collapseDigits !== false,
+          minChangedFraction: job.settings.minChangedFraction,
+        })
+      : (currentContent !== prevContent);
+    if (changed) {
+      if (job.settings.sound) await playBeep(soundOpts(job.settings));
+      notify('chg', tabId, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Page Changed!',
@@ -171,6 +304,7 @@ async function doMonitorRefresh(tabId, job) {
         await stopRefresh(tabId);
         return;
       }
+      startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
     }
   }
 
@@ -226,7 +360,8 @@ async function startRefresh(tabId, settings) {
     nextRefresh: Date.now() + interval,
     alarmName: `refresh_${tabId}`,
     startUrl,
-    previousContent: initialContent  // null = no baseline yet, skip first cycle
+    previousContent: initialContent,  // null = no baseline yet, skip first cycle
+    _matcher: buildMatcher(settings)  // compiled once; reused every cycle
   };
 
   chrome.alarms.create(`refresh_${tabId}`, { delayInMinutes: interval / 60000 });
@@ -266,13 +401,14 @@ async function sendCountdownStart(tabId, attempt) {
   if (!job) return;
   const stopOnClick = !!(job.settings && job.settings.stopOnClick);
   const showCountdown = !(job.settings && job.settings.showCountdown === false);
+  const preserveScroll = !!(job.settings && job.settings.preserveScroll);
   // Carry the absolute deadline + the cycle's total so the overlay renders
   // remaining = nextRefresh - Date.now(), matching the popup exactly. Absolute
   // timestamps are comparable across the service worker and page (same clock),
   // and make a late/retried delivery self-correcting rather than reading high.
   const nextRefresh = job.nextRefresh;
   const total = (job.settings && job.settings.currentInterval) || job.settings.interval;
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown }, (resp) => {
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script (page was loaded before the extension was
       // installed/reloaded). Inject it programmatically so the overlay shows
@@ -295,6 +431,7 @@ async function sendCountdownStart(tabId, attempt) {
 
 async function stopRefresh(tabId) {
   if (activeJobs[tabId]) {
+    clearAckBeeps(tabId); // stop any repeat-until-ack loop before dropping the job
     chrome.alarms.clear(`refresh_${tabId}`);
     delete activeJobs[tabId];
   }
@@ -383,6 +520,36 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
+// ── Per-domain URL rules: auto-start a job when a tab finishes loading a URL
+// that matches an enabled rule. Sequences cleanly with the navigate-away stop
+// above (which fires earlier, on changeInfo.url) and with autoStartUrls (the
+// activeJobs guard prevents double-starting). ──────────────────────────────
+const startingTabs = new Set(); // in-flight guard against duplicate 'complete' events
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab || !tab.url) return;
+  if (activeJobs[tabId] || startingTabs.has(tabId)) return; // don't stomp an existing/in-flight job
+  if (!ARPValidators.isSafeNavigableUrl(tab.url)) return;
+
+  const data = await chrome.storage.local.get('urlRules');
+  const rules = Array.isArray(data.urlRules) ? data.urlRules : [];
+  if (rules.length === 0) return;
+
+  for (const rule of rules) {
+    if (!rule || rule.enabled === false) continue;
+    const m = ARPValidators.compileUrlGlob(rule.pattern);
+    if (m.ok && m.test(tab.url)) {
+      // Re-sanitize at apply time — storage could be poisoned outside import.
+      startingTabs.add(tabId);
+      try {
+        if (!activeJobs[tabId]) await startRefresh(tabId, ARPValidators.sanitizeRuleSettings(rule.settings));
+      } finally {
+        startingTabs.delete(tabId);
+      }
+      break;
+    }
+  }
+});
+
 // ── Broadcast status to all extension pages ────────────────────────────────
 function broadcastStatus() {
   chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', jobs: serializeJobs() }).catch(() => {});
@@ -456,6 +623,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         msg.settings.currentInterval = newInterval;
         job.settings = { ...job.settings, ...msg.settings };
         job.nextRefresh = Date.now() + newInterval;
+        job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
 
         // Create new alarm with new interval
         chrome.alarms.create(`refresh_${updateTabId}`, { delayInMinutes: newInterval / 60000 });
@@ -483,12 +651,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             interval, hardRefresh: s.hardRefresh || false,
             showCountdown: s.showCountdown !== false, notify: s.notify || false,
             sound: s.sound || false, monitorMode: s.monitor || false,
+            noiseTolerant: s.noiseTolerant || false,
+            collapseDigits: s.collapseDigits !== false,
+            minChangedFraction: parseFloat(s.minChangedFraction) || 0,
             randomTimer: s.random || false,
             randomMin: (parseFloat(s.randomMin) || 5) * 1000,
             randomMax: (parseFloat(s.randomMax) || 60) * 1000,
             stopAfter: parseInt(s.stopAfter) || 0, keyword: s.keyword || '',
+            kwCaseSensitive: s.kwCaseSensitive || false, kwWholeWord: s.kwWholeWord || false,
+            kwRegex: s.kwRegex || false, kwInverse: s.kwInverse || false,
             stopOnKeyword: s.stopOnKeyword || false, stopOnChange: s.stopOnChange || false,
             stopOnClick: s.stopOnClick || false,
+            preserveScroll: s.preserveScroll || false,
+            soundVolume: typeof s.soundVolume === 'number' ? s.soundVolume : 0.9,
+            soundTone: s.soundTone || 'beep',
+            soundRepeat: parseInt(s.soundRepeat) || 1,
+            beepUntilAck: s.beepUntilAck || false,
+            beepAckIntervalSec: parseFloat(s.beepAckIntervalSec) || 5,
+            beepRepeatMax: parseInt(s.beepRepeatMax) || 5,
             currentInterval: interval
           });
         }

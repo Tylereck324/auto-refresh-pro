@@ -377,6 +377,18 @@
 
   .kw-opt-label { font-size: 11px; font-weight: 500; color: var(--text3); }
 
+  .kw-flags {
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    padding: 8px 12px; border-top: 1px solid var(--border);
+  }
+  .kw-flag { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); cursor: pointer; }
+  .kw-flag input { accent-color: var(--accent); }
+  .kw-regex-hint {
+    padding: 0 12px 8px; font-size: 10px; color: #f87171; display: none;
+  }
+  .kw-regex-hint.show { display: block; }
+  .keyword-input.invalid { outline: 1px solid #f87171; }
+
   /* ── Toggle ── */
   .toggle {
     position: relative;
@@ -431,6 +443,11 @@
   }
 
   .opt-card:hover { border-color: var(--border2); }
+
+  /* Disabled while a keyword is set: the keyword owns the signal, so
+     change-monitoring is ignored by the background and the control is locked. */
+  .opt-card.disabled { opacity: 0.45; pointer-events: none; }
+  .opt-card.disabled:hover { border-color: var(--border); }
 
   .opt-label { font-size: 12px; font-weight: 500; color: var(--text); }
   .opt-sub   { font-size: 10px; color: var(--text2); margin-top: 1px; }
@@ -634,7 +651,7 @@
     <div class="keyword-wrap">
       <div class="keyword-input-row">
         <span class="keyword-icon">🔍</span>
-        <input class="keyword-input" type="text" id="optKeyword" placeholder="Word or phrase to watch for…">
+        <input class="keyword-input" type="text" id="optKeyword" placeholder="Word, phrase, or comma-separated list…">
       </div>
       <div class="keyword-opts">
         <div class="kw-opt">
@@ -654,6 +671,14 @@
           </label>
         </div>
       </div>
+      <div class="kw-flags">
+        <label class="kw-flag"><input type="checkbox" id="optKwCase"> Case-sensitive</label>
+        <label class="kw-flag"><input type="checkbox" id="optKwWhole"> Whole word</label>
+        <label class="kw-flag"><input type="checkbox" id="optKwRegex"> Regex</label>
+        <label class="kw-flag"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
+        <label class="kw-flag"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
+      </div>
+      <div class="kw-regex-hint" id="kwRegexHint">Invalid or unsafe regular expression.</div>
     </div>
   </div>
 
@@ -698,10 +723,10 @@
         </label>
       </div>
 
-      <div class="opt-card">
+      <div class="opt-card" id="cardMonitor">
         <div>
           <div class="opt-label">Monitor</div>
-          <div class="opt-sub">Detect changes</div>
+          <div class="opt-sub" id="subMonitor">Detect changes</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="optMonitor">
@@ -710,7 +735,19 @@
         </label>
       </div>
 
-      <div class="opt-card">
+      <div class="opt-card" id="cardNoise">
+        <div>
+          <div class="opt-label">Ignore noise</div>
+          <div class="opt-sub">Skip clocks/counters</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optNoiseTolerant">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card" id="cardStopOnChange">
         <div>
           <div class="opt-label">Stop on change</div>
           <div class="opt-sub">If page changes</div>
@@ -729,6 +766,18 @@
         </div>
         <label class="toggle">
           <input type="checkbox" id="optStopOnClick">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="opt-card">
+        <div>
+          <div class="opt-label">Keep scroll</div>
+          <div class="opt-sub">Restore position</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optPreserveScroll">
           <div class="toggle-track"></div>
           <div class="toggle-thumb"></div>
         </label>
@@ -773,6 +822,37 @@
           </div>
         </div>
       </div>
+      <div id="noiseRow" style="display:none;">
+        <div class="field-label" style="margin-top:10px;margin-bottom:6px;">CHANGE SENSITIVITY (Monitor)</div>
+        <div class="two-col">
+          <div class="field-row">
+            <div class="field-label">MIN CHANGE %</div>
+            <input class="field-input" type="number" id="optMinChange" min="0" max="100" value="0">
+          </div>
+          <div class="field-row" style="justify-content:flex-end;align-items:center;">
+            <label class="kw-flag"><input type="checkbox" id="optCollapseDigits" checked> Ignore digits</label>
+          </div>
+        </div>
+      </div>
+      <div class="field-label" style="margin-top:10px;margin-bottom:6px;">SOUND ALERT</div>
+      <div class="two-col">
+        <div class="field-row">
+          <div class="field-label">TONE</div>
+          <select class="field-input" id="optSoundTone">
+            <option value="beep">Beep</option>
+            <option value="chime">Chime</option>
+            <option value="alarm">Alarm</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field-label">REPEAT (1–5)</div>
+          <input class="field-input" type="number" id="optSoundRepeat" min="1" max="5" value="1">
+        </div>
+      </div>
+      <div class="field-row" style="margin-top:8px;">
+        <div class="field-label">VOLUME</div>
+        <input type="range" id="optSoundVolume" min="0" max="100" value="90" style="width:100%;">
+      </div>
     </div>
   </div>
 
@@ -795,6 +875,7 @@
   <a class="footer-link" id="optionsLink" role="button" tabindex="0">⚙ Settings</a>
 </footer>
 
+<script src="validators.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

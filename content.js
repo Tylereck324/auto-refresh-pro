@@ -10,6 +10,7 @@
   let totalDuration = 0;  // current cycle interval — progress-bar denominator only
   let contextValid  = true;
   let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
+  let preserveScrollEnabled = false; // when true, scroll position survives refreshes
 
 
 
@@ -457,6 +458,55 @@
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
 
+  // ── Scroll preservation ───────────────────────────────────────────────────
+  // The background reloads the tab via chrome.tabs.reload, which destroys this
+  // content script. We persist scrollY to sessionStorage (per-tab, per-URL) just
+  // before unload and restore it once the new page's sync confirms the feature is
+  // on. Listeners are armed only while enabled, to avoid touching sessionStorage
+  // on unrelated pages.
+  const SCROLL_KEY = '__ar_scroll_' + location.pathname + location.search;
+  let scrollListenersArmed = false;
+
+  function captureScroll() {
+    if (!preserveScrollEnabled) return;
+    try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY || window.pageYOffset || 0)); } catch (e) {}
+  }
+
+  function armScrollCapture() {
+    if (scrollListenersArmed) return;
+    scrollListenersArmed = true;
+    window.addEventListener('beforeunload', captureScroll);
+    // beforeunload is unreliable on some platforms; capture on hide too.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') captureScroll();
+    });
+  }
+
+  // Restore once, after the sync tells us the feature is on. Retried briefly to
+  // outlast late-laying-out pages, then the key is cleared so a later manual
+  // navigation doesn't snap-scroll.
+  let scrollRestored = false;
+  function restoreScroll() {
+    if (scrollRestored || !preserveScrollEnabled) return;
+    let saved;
+    try { saved = sessionStorage.getItem(SCROLL_KEY); } catch (e) { return; }
+    if (saved == null) return;
+    scrollRestored = true;
+    const y = parseInt(saved, 10);
+    if (!Number.isFinite(y)) return;
+    const apply = () => { try { window.scrollTo(0, y); } catch (e) {} };
+    apply();
+    requestAnimationFrame(apply);
+    setTimeout(() => { apply(); try { sessionStorage.removeItem(SCROLL_KEY); } catch (e) {} }, 400);
+  }
+
+  // Call when a settings payload (COUNTDOWN_START / GET_STATUS) tells us whether
+  // scroll preservation is enabled.
+  function applyPreserveScroll(enabled) {
+    preserveScrollEnabled = !!enabled;
+    if (preserveScrollEnabled) { armScrollCapture(); restoreScroll(); }
+  }
+
   // ── Sync on page load ─────────────────────────────────────────────────────
   // Retry several times with backoff — the background service worker may be
   // waking up, or the content script may have injected before the popup's
@@ -472,6 +522,7 @@
         synced = true;
         const s = resp.job.settings || {};
         stopOnClickEnabled = !!s.stopOnClick;
+        applyPreserveScroll(s.preserveScroll);
         // Respect the "Show countdown overlay" setting (click-to-stop still works).
         if (s.showCountdown !== false) {
           const total = (s.currentInterval || s.interval)
@@ -561,8 +612,10 @@
     if (!contextValid || !stopOnClickEnabled) return;
     if (e.button) return; // left-button only
     if (e.target && e.target.closest && e.target.closest('#__ar_overlay')) return;
-    stopOnClickEnabled = false; // fire once; the job is about to stop
-    safeMessage({ type: 'STOP_REFRESH', tabId: null });
+    // Stop the job, then disarm only once the stop is acknowledged. Disarming
+    // before the message round-trips could otherwise drop the click silently if
+    // the send failed. The flag is re-armed on the next COUNTDOWN_START anyway.
+    safeMessage({ type: 'STOP_REFRESH', tabId: null }, () => { stopOnClickEnabled = false; });
     hideOverlay();
   }, true);
 
@@ -573,6 +626,7 @@
       switch (msg.type) {
         case 'COUNTDOWN_START':
           stopOnClickEnabled = !!msg.stopOnClick;
+          applyPreserveScroll(msg.preserveScroll);
           // Respect the "Show countdown overlay" setting. Click-to-stop still
           // works without the overlay, so it's wired above regardless.
           if (msg.showCountdown === false) {
