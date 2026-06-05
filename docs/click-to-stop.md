@@ -44,9 +44,8 @@ currently refreshing. Opt-in, per-job.
   so the flag arrives the moment a job starts (not one refresh cycle later, when
   the re-injected content script would otherwise first learn it via
   `GET_STATUS`).
-- Add `stopOnClick` to the default-settings objects in **both**
-  `chrome.commands.onCommand` and `HOTKEY_TOGGLE`, so hotkey-started jobs honor
-  it.
+- Add `stopOnClick` to the default-settings object in the **`HOTKEY_TOGGLE`**
+  message handler, so hotkey-started jobs honor it.
 
 ### `popup.html` / `popup.js`
 - New `id="optStopOnClick"` checkbox under the existing Stop toggles.

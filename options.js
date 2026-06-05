@@ -54,12 +54,17 @@ const MODIFIER_KEYS = new Set(['Control','Alt','Shift','Meta','CapsLock','NumLoc
 // Keys to always block from recording (browser critical)
 const BLOCKED_KEYS = new Set(['F5','F11','F12','Tab']);
 
+const RECORD_HINT = 'Press any key combination… (Esc to cancel)';
+const CONFIRM_HINT = 'Press a different combo to change, or click “Use this” — Esc to cancel';
+
 function startRecording() {
   recording = true;
   pendingHotkey = null;
   displayEl.classList.add('recording');
   recordBtn.textContent = '⏹ Cancel';
   recordBtn.classList.add('recording');
+  recordBtn.classList.remove('confirm');
+  recordingHint.textContent = RECORD_HINT;
   recordingHint.style.display = 'block';
   textEl.innerHTML = '';
   textEl.style.color = 'var(--accent)';
@@ -72,7 +77,9 @@ function stopRecording(apply) {
   displayEl.classList.remove('recording');
   recordBtn.textContent = '⏺ Record';
   recordBtn.classList.remove('recording');
+  recordBtn.classList.remove('confirm');
   recordingHint.style.display = 'none';
+  recordingHint.textContent = RECORD_HINT;
 
   if (apply && pendingHotkey) {
     currentHotkey = pendingHotkey;
@@ -82,13 +89,17 @@ function stopRecording(apply) {
 }
 
 recordBtn.addEventListener('click', () => {
-  if (recording) { stopRecording(false); } else { startRecording(); }
+  if (!recording) { startRecording(); return; }
+  // While recording: confirm the captured combo if there is one, else cancel.
+  if (pendingHotkey) { stopRecording(true); save(); }
+  else { stopRecording(false); }
 });
 
 clearBtn.addEventListener('click', () => {
   if (recording) stopRecording(false);
   currentHotkey = null;
   renderHotkey(null);
+  save();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -112,6 +123,7 @@ document.addEventListener('keydown', (e) => {
 
   pendingHotkey = {
     key: e.key,
+    code: e.code, // physical key — layout- and macOS-Option-key-safe matching
     ctrl: e.ctrlKey,
     alt: e.altKey,
     shift: e.shiftKey,
@@ -136,21 +148,12 @@ document.addEventListener('keydown', (e) => {
     }
   });
 
-  // Auto-confirm after a short delay
-  setTimeout(() => { if (recording) stopRecording(true); }, 800);
+  // Wait for explicit confirmation instead of auto-applying, so the user can
+  // adjust the combo before committing.
+  recordBtn.textContent = '✓ Use this';
+  recordBtn.classList.add('confirm');
+  recordingHint.textContent = CONFIRM_HINT;
 }, true);
-
-// chrome://extensions/shortcuts — options pages can't open chrome:// URLs,
-// so copy to clipboard and hint the user to paste it.
-document.getElementById('chromeShortcutLink').addEventListener('click', (e) => {
-  e.preventDefault();
-  navigator.clipboard.writeText('chrome://extensions/shortcuts').catch(() => {});
-  const link = e.currentTarget;
-  const orig = link.textContent;
-  link.textContent = '✓ Copied! Paste in address bar';
-  link.style.color = 'var(--accent2)';
-  setTimeout(() => { link.textContent = orig; link.style.color = ''; }, 2500);
-});
 
 // ── Presets ───────────────────────────────────────────────────────────────
 const defaultPresets = [
@@ -193,14 +196,28 @@ function load() {
         '<input type="number" value="' + Math.round(p.ms / 1000) + '" id="pSec' + i + '" placeholder="Sec" min="2">';
       list.appendChild(div);
     });
+
+    // Auto-save when any preset field changes.
+    list.querySelectorAll('input').forEach(function(el) {
+      el.addEventListener('input', save);
+    });
+
+    loaded = true;
   });
 }
 
-document.getElementById('saveBtn').addEventListener('click', function() {
+// ── Auto-save ───────────────────────────────────────────────────────────────
+// Settings persist on every change (no explicit Save button), matching the
+// popup's behavior. Writes are debounced so typing doesn't spam storage.
+let saveTimer = null;
+let loaded = false;
+
+function gatherAndSave() {
+  if (!loaded) return; // don't persist before the initial load populates the form
   const presets = defaultPresets.map(function(_, i) {
     const labelEl = document.getElementById('pLabel' + i);
     const secEl = document.getElementById('pSec' + i);
-    const label = (labelEl && labelEl.value) || String(i);
+    const label = (labelEl && labelEl.value) || String(i + 1);
     const sec = parseFloat(secEl && secEl.value) || 30;
     return { label: label, ms: Math.max(2000, sec * 1000) };
   });
@@ -214,11 +231,27 @@ document.getElementById('saveBtn').addEventListener('click', function() {
     presets: presets
   };
 
-  chrome.storage.local.set({ globalSettings: settings, customHotkey: currentHotkey || null }, function() {
-    const msg = document.getElementById('successMsg');
-    msg.style.display = 'block';
-    setTimeout(function() { msg.style.display = 'none'; }, 2000);
-  });
+  chrome.storage.local.set({ globalSettings: settings, customHotkey: currentHotkey || null }, showSaved);
+}
+
+function showSaved() {
+  const msg = document.getElementById('successMsg');
+  if (!msg) return;
+  msg.style.display = 'inline';
+  clearTimeout(showSaved._t);
+  showSaved._t = setTimeout(function() { msg.style.display = 'none'; }, 1500);
+}
+
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(gatherAndSave, 350);
+}
+
+// Static default controls — attach once.
+['defHardRefresh', 'defCountdown', 'defNotify', 'defSound'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', save);
 });
+document.getElementById('defInterval').addEventListener('input', save);
 
 load();

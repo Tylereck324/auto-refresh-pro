@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Auto Refresh Pro</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  /* No remote font @import — it leaks a request to Google on every open, fails
+     offline, and causes a flash of unstyled text. The font-family stacks below
+     fall back to the platform UI/monospace fonts. */
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -21,8 +23,8 @@
     --red:      #f87171;
     --yellow:   #fbbf24;
     --text:     #e2e8f0;
-    --text2:    #6b7280;
-    --text3:    #9ca3af;
+    --text2:    #828b9a;
+    --text3:    #b3bac6;
     --radius:   10px;
     --radius-s: 7px;
   }
@@ -33,7 +35,11 @@
     color: var(--text);
     font-family: 'Inter', sans-serif;
     font-size: 13px;
-    overflow: hidden;
+    /* Hide horizontal overflow but allow vertical scrolling: with every section
+       expanded the content can exceed Chrome's ~600px popup cap, and
+       overflow:hidden would clip the Start/Stop buttons off the bottom. */
+    overflow-x: hidden;
+    overflow-y: auto;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -117,21 +123,20 @@
 
   .status-label.active { color: var(--green); }
 
-  .btn-icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    border: 1px solid var(--border2);
-    background: var(--card2);
-    color: var(--text3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 13px;
-    transition: all 0.15s;
+  /* ── Keyboard focus rings (accessibility) ── */
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  .pill:focus-visible,
+  .adv-toggle:focus-visible,
+  .footer-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
-  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+  .toggle input:focus-visible ~ .toggle-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   /* ── Hero countdown (active state) ── */
   .hero {
@@ -293,6 +298,16 @@
 
   .custom-input::placeholder { color: var(--text2); }
   .custom-input:focus { border-color: var(--accent); }
+  .custom-input.invalid { border-color: var(--yellow); }
+
+  .custom-hint {
+    display: none;
+    font-size: 10px;
+    color: var(--yellow);
+    margin-top: 5px;
+    letter-spacing: 0.2px;
+  }
+  .custom-hint.show { display: block; }
 
   .unit-select {
     background: var(--card2);
@@ -601,16 +616,7 @@
   <!-- Interval -->
   <div>
     <div class="section-head">Refresh Interval</div>
-    <div class="pill-grid">
-      <button class="pill" data-ms="5000">5s</button>
-      <button class="pill" data-ms="10000">10s</button>
-      <button class="pill" data-ms="30000">30s</button>
-      <button class="pill" data-ms="60000">1m</button>
-      <button class="pill" data-ms="300000">5m</button>
-      <button class="pill" data-ms="600000">10m</button>
-      <button class="pill" data-ms="1800000">30m</button>
-      <button class="pill" data-ms="3600000">1h</button>
-    </div>
+    <div class="pill-grid" id="pillGrid"></div>
     <div class="custom-row">
       <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
       <select class="unit-select" id="customUnit">
@@ -619,6 +625,7 @@
         <option value="3600000">hr</option>
       </select>
     </div>
+    <div class="custom-hint" id="customHint">Minimum is 2 seconds — using 2s.</div>
   </div>
 
   <!-- Keyword detection -->
@@ -744,7 +751,7 @@
 
   <!-- Advanced -->
   <div>
-    <div class="adv-toggle" id="advancedToggle">
+    <div class="adv-toggle" id="advancedToggle" role="button" tabindex="0" aria-expanded="false">
       <span class="adv-chevron">▶</span>
       Advanced
     </div>
@@ -783,9 +790,9 @@
 
 <!-- Footer -->
 <footer>
-  <a class="footer-link" id="manageLink">⊞ All Tabs</a>
+  <a class="footer-link" id="manageLink" role="button" tabindex="0">⊞ All Tabs</a>
   <div class="footer-sep"></div>
-  <a class="footer-link" id="optionsLink">⚙ Settings</a>
+  <a class="footer-link" id="optionsLink" role="button" tabindex="0">⚙ Settings</a>
 </footer>
 
 <script src="popup.js"></script>

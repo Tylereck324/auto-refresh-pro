@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <title>Settings — Auto Refresh Pro</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+  /* No remote font @import (privacy/offline/FOUT); font-family stacks fall back
+     to platform fonts. */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
@@ -34,9 +35,8 @@
   .preset-item input { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; padding: 5px 8px; border-radius: 6px; outline: none; width: 80px; }
   .preset-item input:focus { border-color: var(--accent); }
   .preset-label { flex: 1; font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text2); }
-  .btn-save { background: linear-gradient(135deg, #58a6ff, #1f6feb); color: white; border: none; padding: 12px 28px; border-radius: var(--radius); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; transition: opacity 0.15s; }
-  .btn-save:hover { opacity: 0.9; }
-  .success-msg { display: none; color: var(--accent2); text-align: center; font-size: 13px; padding: 10px; }
+  .autosave-note { margin-top: 16px; text-align: center; font-size: 12px; color: var(--text2); }
+  .success-msg { display: none; color: var(--accent2); font-weight: 600; }
 
   /* ── Keybinding recorder ── */
   .hotkey-section { display: flex; flex-direction: column; gap: 12px; }
@@ -116,6 +116,12 @@
   }
   .btn-record:hover { background: rgba(88,166,255,0.2); }
   .btn-record.recording { background: rgba(88,166,255,0.25); }
+  .btn-record.confirm {
+    background: rgba(63,185,80,0.15);
+    color: var(--accent2);
+    border-color: rgba(63,185,80,0.4);
+  }
+  .btn-record.confirm:hover { background: rgba(63,185,80,0.25); }
 
   .btn-clear {
     background: rgba(248,81,73,0.1);
@@ -143,18 +149,6 @@
 
   .hotkey-info strong { color: var(--text); }
 
-  .chrome-shortcut-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin-top: 6px;
-    color: var(--accent);
-    font-size: 11px;
-    cursor: pointer;
-    text-decoration: none;
-  }
-  .chrome-shortcut-link:hover { text-decoration: underline; }
-
   .recording-hint {
     font-size: 11px;
     color: var(--accent);
@@ -178,6 +172,18 @@
     text-align: center;
   }
   .num-input:focus { border-color: var(--accent); }
+
+  /* ── Keyboard focus rings (accessibility) ── */
+  button:focus-visible,
+  input:focus-visible,
+  .hotkey-display:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .toggle input:focus-visible + .toggle-slider {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>
@@ -202,7 +208,7 @@
         </div>
         <div class="hotkey-actions">
           <button class="btn-record" id="recordBtn">⏺ Record</button>
-          <button class="btn-clear" id="clearBtn" title="Reset to default (F8)">✕</button>
+          <button class="btn-clear" id="clearBtn" title="Reset to default (Alt+R)" aria-label="Reset hotkey to default (Alt+R)">✕</button>
         </div>
       </div>
 
@@ -213,8 +219,7 @@
       <div class="hotkey-info">
         <strong>Default:</strong> <kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-family:DM Mono,monospace;font-size:11px;">Alt+R</kbd>
         — quick one-handed shortcut.<br>
-        This custom shortcut works on any webpage. You can also change the Chrome-level shortcut (which works even when a page isn't focused) at
-        <a class="chrome-shortcut-link" id="chromeShortcutLink">chrome://extensions/shortcuts ↗</a>
+        Works on any normal web page to toggle refresh on the active tab. It won't fire on browser/system pages (the new-tab page, <strong>chrome://</strong> pages, or the Web Store) where extensions can't run.
       </div>
 
     </div>
@@ -276,8 +281,7 @@
     </div>
   </div>
 
-  <button class="btn-save" id="saveBtn">Save Settings</button>
-  <div class="success-msg" id="successMsg">✓ Settings saved!</div>
+  <div class="autosave-note">Changes are saved automatically. <span class="success-msg" id="successMsg">✓ Saved</span></div>
 </div>
 
 <script src="options.js"></script>

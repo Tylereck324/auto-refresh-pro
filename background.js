@@ -175,8 +175,11 @@ async function doMonitorRefresh(tabId, job) {
 
 function computeInterval(settings) {
   if (settings.randomTimer) {
-    const min = settings.randomMin || 5000;
-    const max = settings.randomMax || 30000;
+    // Guard against an inverted or sub-2s range (defensive — the popup also
+    // validates) so we never produce a negative-width or too-short interval.
+    let min = Math.max(2000, settings.randomMin || 5000);
+    let max = Math.max(2000, settings.randomMax || 30000);
+    if (min > max) { const t = min; min = max; max = t; }
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
   return settings.interval;
@@ -263,13 +266,14 @@ async function sendCountdownStart(tabId, attempt) {
   const job = activeJobs[tabId];
   if (!job) return;
   const stopOnClick = !!(job.settings && job.settings.stopOnClick);
+  const showCountdown = !(job.settings && job.settings.showCountdown === false);
   // Carry the absolute deadline + the cycle's total so the overlay renders
   // remaining = nextRefresh - Date.now(), matching the popup exactly. Absolute
   // timestamps are comparable across the service worker and page (same clock),
   // and make a late/retried delivery self-correcting rather than reading high.
   const nextRefresh = job.nextRefresh;
   const total = (job.settings && job.settings.currentInterval) || job.settings.interval;
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick }, (resp) => {
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script (page was loaded before the extension was
       // installed/reloaded). Inject it programmatically so the overlay shows
@@ -394,42 +398,6 @@ function serializeJobs() {
   }
   return out;
 }
-
-// ── Keyboard shortcut: Alt+Shift+R toggles refresh on active tab ───────────
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== 'toggle-refresh') return;
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
-  const tabId = tab.id;
-
-  if (activeJobs[tabId]) {
-    // Currently active — stop it
-    await stopRefresh(tabId);
-  } else {
-    // Not active — start with last saved settings, or sensible defaults
-    const data = await chrome.storage.local.get('popupSettings');
-    const s = data.popupSettings || {};
-    const interval = s.selectedMs || 30000;
-    await startRefresh(tabId, {
-      interval,
-      hardRefresh: s.hardRefresh || false,
-      showCountdown: s.showCountdown !== false,
-      notify: s.notify || false,
-      sound: s.sound || false,
-      monitorMode: s.monitor || false,
-      randomTimer: s.random || false,
-      randomMin: (parseFloat(s.randomMin) || 5) * 1000,
-      randomMax: (parseFloat(s.randomMax) || 60) * 1000,
-      stopAfter: parseInt(s.stopAfter) || 0,
-      keyword: s.keyword || '',
-      stopOnKeyword: s.stopOnKeyword || false,
-      stopOnChange: s.stopOnChange || false,
-      stopOnClick: s.stopOnClick || false,
-      currentInterval: interval
-    });
-  }
-});
 
 // ── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

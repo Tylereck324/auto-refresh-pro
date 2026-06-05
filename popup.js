@@ -4,6 +4,15 @@ let currentTabId = null;
 let selectedMs = 30000;
 let isActive = false;
 
+// Built-in fallback presets, mirrors options.js. Overridden by the user's
+// custom presets from the Settings page (globalSettings.presets) when present.
+const DEFAULT_PRESETS = [
+  { label: '5s', ms: 5000 },   { label: '10s', ms: 10000 },
+  { label: '30s', ms: 30000 }, { label: '1m', ms: 60000 },
+  { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 },
+  { label: '30m', ms: 1800000 }, { label: '1h', ms: 3600000 }
+];
+
 // Countdown is a pure render of the background's authoritative deadline.
 // jobDeadline is an absolute timestamp (job.nextRefresh); jobTotal is the
 // current cycle's interval, used only as the progress-bar denominator.
@@ -17,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!tab) return;
   currentTabId = tab.id;
 
+  renderPresets(DEFAULT_PRESETS); // immediate paint; loadSettings re-renders with custom presets
   loadSettings();
   await refreshStatus();
   bindEvents();
@@ -34,36 +44,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ── Events ──────────────────────────────────────────────────────────────────
 function bindEvents() {
-  // Preset buttons
-  document.querySelectorAll('.pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedMs = parseInt(btn.dataset.ms);
-      document.getElementById('customValue').value = '';
-      applyIntervalChange();
-    });
-  });
+  // Preset buttons are rendered + bound dynamically in renderPresets().
 
   // Custom interval
-  document.getElementById('customValue').addEventListener('input', () => {
-    document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
-    const val = parseFloat(document.getElementById('customValue').value);
-    const unit = parseInt(document.getElementById('customUnit').value);
-    if (val > 0) {
-      selectedMs = Math.max(2000, val * unit);
-      applyIntervalChange();
-    }
-  });
-
-  document.getElementById('customUnit').addEventListener('change', () => {
-    const val = parseFloat(document.getElementById('customValue').value);
-    if (val > 0) {
-      const unit = parseInt(document.getElementById('customUnit').value);
-      selectedMs = Math.max(2000, val * unit);
-      applyIntervalChange();
-    }
-  });
+  document.getElementById('customValue').addEventListener('input', applyCustomInterval);
+  document.getElementById('customUnit').addEventListener('change', applyCustomInterval);
 
   // Start/Stop
   document.getElementById('btnStart').addEventListener('click', startRefresh);
@@ -73,8 +58,18 @@ function bindEvents() {
   document.getElementById('advancedToggle').addEventListener('click', () => {
     const toggle = document.getElementById('advancedToggle');
     const panel  = document.getElementById('advancedPanel');
-    toggle.classList.toggle('open');
+    const open = toggle.classList.toggle('open');
     panel.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  // Keyboard activation for the non-native controls (Enter / Space).
+  ['advancedToggle', 'manageLink', 'optionsLink'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
   });
 
   // Monitor / random conditionals
@@ -99,6 +94,29 @@ function bindEvents() {
     if (el) el.addEventListener('change', saveSettings);
     if (el && el.type === 'text') el.addEventListener('input', saveSettings);
   });
+}
+
+// Read the custom interval row, clamp to the 2s minimum, and surface a hint
+// when the typed value was below that floor (instead of clamping silently).
+function applyCustomInterval() {
+  const input = document.getElementById('customValue');
+  const hint  = document.getElementById('customHint');
+  const val   = parseFloat(input.value);
+  const unit  = parseInt(document.getElementById('customUnit').value);
+
+  if (!(val > 0)) {
+    input.classList.remove('invalid');
+    if (hint) hint.classList.remove('show');
+    return;
+  }
+
+  document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+  const raw = val * unit;
+  const clamped = raw < 2000;
+  selectedMs = Math.max(2000, raw);
+  input.classList.toggle('invalid', clamped);
+  if (hint) hint.classList.toggle('show', clamped);
+  applyIntervalChange();
 }
 
 function updateConditionalRows() {
@@ -158,8 +176,11 @@ async function stopRefresh() {
 // ── Settings gather ─────────────────────────────────────────────────────────
 function gatherSettings() {
   const randomTimer = document.getElementById('optRandom').checked;
-  const randomMinSec = parseFloat(document.getElementById('optRandomMin').value) || 5;
-  const randomMaxSec = parseFloat(document.getElementById('optRandomMax').value) || 60;
+  // Validate the random range: floor at 2s, and swap if min > max so the
+  // interval computation never gets an inverted/negative-width range.
+  let randomMinSec = Math.max(2, parseFloat(document.getElementById('optRandomMin').value) || 5);
+  let randomMaxSec = Math.max(2, parseFloat(document.getElementById('optRandomMax').value) || 60);
+  if (randomMinSec > randomMaxSec) { [randomMinSec, randomMaxSec] = [randomMaxSec, randomMinSec]; }
 
   return {
     interval: selectedMs,
@@ -309,33 +330,74 @@ function saveSettings() {
   chrome.storage.local.set({ popupSettings: settings });
 }
 
+// Render the interval preset pills and bind their click handlers. Called once
+// immediately with the built-in defaults (avoids an empty-grid flash) and again
+// from loadSettings with the user's custom presets from the Settings page.
+function renderPresets(presets) {
+  const grid = document.getElementById('pillGrid');
+  if (!grid) return;
+  const list = (presets && presets.length) ? presets : DEFAULT_PRESETS;
+  grid.innerHTML = '';
+  list.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'pill';
+    btn.dataset.ms = p.ms;
+    btn.textContent = p.label;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedMs = parseInt(btn.dataset.ms);
+      document.getElementById('customValue').value = '';
+      applyIntervalChange();
+    });
+    grid.appendChild(btn);
+  });
+  highlightSelectedPreset();
+}
+
+function highlightSelectedPreset() {
+  document.querySelectorAll('.pill').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.ms) === selectedMs);
+  });
+}
+
 function loadSettings() {
-  chrome.storage.local.get('popupSettings', ({ popupSettings: s }) => {
-    if (!s) return;
-    if (s.selectedMs) selectedMs = s.selectedMs;
+  chrome.storage.local.get(['popupSettings', 'globalSettings'], ({ popupSettings: s, globalSettings: g }) => {
+    g = g || {};
 
-    setCheckbox('optHardRefresh', s.hardRefresh);
-    setCheckbox('optCountdown', s.showCountdown !== false);
-    setCheckbox('optNotify', s.notify);
-    setCheckbox('optSound', s.sound);
-    setCheckbox('optMonitor', s.monitor);
-    setCheckbox('optRandom', s.random);
-    setCheckbox('optStopOnKeyword', s.stopOnKeyword);
-    setCheckbox('optStopOnChange', s.stopOnChange);
-    setCheckbox('optStopOnClick', s.stopOnClick);
+    // ── 1. Custom presets from the Settings page (or built-in defaults) ──
+    renderPresets(g.presets);
 
-    if (s.stopAfter !== undefined) document.getElementById('optStopAfter').value = s.stopAfter;
-    if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
-    if (s.randomMin) document.getElementById('optRandomMin').value = s.randomMin;
-    if (s.randomMax) document.getElementById('optRandomMax').value = s.randomMax;
+    // ── 2. Seed from the Settings-page defaults ──
+    // These apply on first use and act as the baseline; the user's last-used
+    // popup state (popupSettings) below takes precedence when present.
+    if (g.defaultInterval) selectedMs = g.defaultInterval * 1000;
+    setCheckbox('optHardRefresh', g.hardRefresh);
+    setCheckbox('optCountdown', g.showCountdown !== false);
+    setCheckbox('optNotify', g.notify);
+    setCheckbox('optSound', g.sound);
 
-    // Highlight matching preset
-    if (s.selectedMs) {
-      document.querySelectorAll('.pill').forEach(btn => {
-        if (parseInt(btn.dataset.ms) === s.selectedMs) btn.classList.add('active');
-      });
+    // ── 3. Overlay the user's last-used popup state (takes precedence) ──
+    if (s) {
+      if (s.selectedMs) selectedMs = s.selectedMs;
+
+      setCheckbox('optHardRefresh', s.hardRefresh);
+      setCheckbox('optCountdown', s.showCountdown !== false);
+      setCheckbox('optNotify', s.notify);
+      setCheckbox('optSound', s.sound);
+      setCheckbox('optMonitor', s.monitor);
+      setCheckbox('optRandom', s.random);
+      setCheckbox('optStopOnKeyword', s.stopOnKeyword);
+      setCheckbox('optStopOnChange', s.stopOnChange);
+      setCheckbox('optStopOnClick', s.stopOnClick);
+
+      if (s.stopAfter !== undefined) document.getElementById('optStopAfter').value = s.stopAfter;
+      if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
+      if (s.randomMin) document.getElementById('optRandomMin').value = s.randomMin;
+      if (s.randomMax) document.getElementById('optRandomMax').value = s.randomMax;
     }
 
+    highlightSelectedPreset();
     updateConditionalRows();
   });
 }
