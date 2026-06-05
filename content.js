@@ -150,6 +150,7 @@
           width:100%;
           background:rgba(255,255,255,0.08);
           border-radius:4px; overflow:hidden;
+          flex-shrink:0;
         }
         #__ar_fill {
           height:100%;
