@@ -9,6 +9,7 @@
   let remaining    = 0;
   let totalDuration = 0;
   let contextValid  = true;
+  let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
 
 
 
@@ -457,6 +458,7 @@
       if (synced || !contextValid) return;
       if (resp && resp.job) {
         synced = true;
+        stopOnClickEnabled = !!(resp.job.settings && resp.job.settings.stopOnClick);
         const timeLeft = Math.max(500, resp.job.nextRefresh - Date.now());
         ensureOverlay();
         startTick(timeLeft);
@@ -511,18 +513,33 @@
     }
   }, true);
 
+  // ── Click-to-stop ─────────────────────────────────────────────────────────
+  // When enabled, a left-click anywhere on the page stops the refresh job.
+  // Pass-through: the click is NOT cancelled, so links/buttons still work.
+  // Clicks inside the overlay are ignored — it has its own Stop button.
+  document.addEventListener('click', (e) => {
+    if (!contextValid || !stopOnClickEnabled) return;
+    if (e.button) return; // left-button only
+    if (e.target && e.target.closest && e.target.closest('#__ar_overlay')) return;
+    stopOnClickEnabled = false; // fire once; the job is about to stop
+    safeMessage({ type: 'STOP_REFRESH', tabId: null });
+    hideOverlay();
+  }, true);
+
   // ── Messages from background ─────────────────────────────────────────────
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!contextValid) return;
       switch (msg.type) {
         case 'COUNTDOWN_START':
+          stopOnClickEnabled = !!msg.stopOnClick;
           ensureOverlay();
           startTick(msg.duration);
           synced = true;
           sendResponse({ ok: true });
           break;
         case 'STOPPED':
+          stopOnClickEnabled = false;
           hideOverlay();
           sendResponse({ ok: true });
           break;

@@ -82,7 +82,7 @@ function bindEvents() {
 
   // Save settings on any toggle change
   ['optHardRefresh','optCountdown','optNotify','optSound','optMonitor','optRandom',
-   'optStopAfter','optKeyword','optStopOnKeyword','optStopOnChange','optRandomMin','optRandomMax'
+   'optStopAfter','optKeyword','optStopOnKeyword','optStopOnChange','optStopOnClick','optRandomMin','optRandomMax'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
@@ -161,6 +161,7 @@ function gatherSettings() {
     keyword: document.getElementById('optKeyword').value.trim(),
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
+    stopOnClick: document.getElementById('optStopOnClick').checked,
     currentInterval: selectedMs
   };
 }
@@ -266,6 +267,7 @@ function saveSettings() {
     keyword: document.getElementById('optKeyword').value,
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
+    stopOnClick: document.getElementById('optStopOnClick').checked,
     randomMin: document.getElementById('optRandomMin').value,
     randomMax: document.getElementById('optRandomMax').value,
   };
@@ -285,6 +287,7 @@ function loadSettings() {
     setCheckbox('optRandom', s.random);
     setCheckbox('optStopOnKeyword', s.stopOnKeyword);
     setCheckbox('optStopOnChange', s.stopOnChange);
+    setCheckbox('optStopOnClick', s.stopOnClick);
 
     if (s.stopAfter !== undefined) document.getElementById('optStopAfter').value = s.stopAfter;
     if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
