@@ -187,14 +187,10 @@ function load() {
     const presets = s.presets || defaultPresets;
     const list = document.getElementById('presetsList');
     list.innerHTML = '';
+    // Build each row with createElement (see preset-row.js) — never innerHTML —
+    // so a malicious stored preset label can't inject HTML/script here.
     presets.forEach((p, i) => {
-      const div = document.createElement('div');
-      div.className = 'preset-item';
-      div.innerHTML =
-        '<span class="preset-label">Preset ' + (i + 1) + '</span>' +
-        '<input type="text" value="' + p.label + '" id="pLabel' + i + '" placeholder="Label">' +
-        '<input type="number" value="' + Math.round(p.ms / 1000) + '" id="pSec' + i + '" placeholder="Sec" min="2">';
-      list.appendChild(div);
+      list.appendChild(buildPresetRow(document, p, i));
     });
 
     // Auto-save when any preset field changes.

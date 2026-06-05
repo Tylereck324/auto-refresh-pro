@@ -1,5 +1,9 @@
 // background.js - Service Worker for Auto Refresh Pro
 
+// Shared input-validation / sanitization helpers (URL, image, import, sender).
+// Must load first so every handler below can use ARPValidators.
+importScripts('validators.js');
+
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
 const activeJobs = {};
@@ -339,10 +343,12 @@ async function restoreJobs() {
     }
   }
 
-  // Auto-start URLs
+  // Auto-start URLs. Only open entries whose URL is a safe http(s) navigation —
+  // a poisoned storage value (e.g. an imported javascript:/file: URL) must never
+  // be auto-opened on browser startup.
   const autoStartUrls = data.autoStartUrls || [];
   for (const item of autoStartUrls) {
-    if (item.url) {
+    if (item.url && ARPValidators.isSafeNavigableUrl(item.url)) {
       const tab = await chrome.tabs.create({ url: item.url, active: false });
       if (item.autoRefresh && item.refreshSettings) {
         await startRefresh(tab.id, item.refreshSettings);
@@ -401,6 +407,15 @@ function serializeJobs() {
 
 // ── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Trust boundary: only honour messages from this extension's own surfaces
+  // (popup/options/manage pages and our injected content scripts). All of those
+  // carry sender.id === chrome.runtime.id; a web page or another extension does
+  // not. Without externally_connectable, web pages can't reach us directly, but
+  // this fails closed and guards against a compromised/another extension.
+  if (!msg || !ARPValidators.isTrustedSender(sender)) {
+    sendResponse && sendResponse({ ok: false, error: 'untrusted sender' });
+    return false;
+  }
   (async () => {
     switch (msg.type) {
       case 'START_REFRESH':
