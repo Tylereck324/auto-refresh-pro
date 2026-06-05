@@ -239,8 +239,13 @@ async function sendCountdownStart(tabId, duration, attempt) {
     return; // Tab gone
   }
 
-  // Tab is complete — send the message
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', duration }, (resp) => {
+  // Tab is complete — send the message. Include stopOnClick so the content
+  // script knows immediately (the GET_STATUS sync only happens after a reload).
+  // Re-read the job here: it may have been stopped during the await above.
+  const job = activeJobs[tabId];
+  if (!job) return;
+  const stopOnClick = !!(job.settings && job.settings.stopOnClick);
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', duration, stopOnClick }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // Content script not ready yet — retry
       if (attempt < 12) {
@@ -387,6 +392,7 @@ chrome.commands.onCommand.addListener(async (command) => {
       keyword: s.keyword || '',
       stopOnKeyword: s.stopOnKeyword || false,
       stopOnChange: s.stopOnChange || false,
+      stopOnClick: s.stopOnClick || false,
       currentInterval: interval
     });
   }
@@ -471,6 +477,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             randomMax: (parseFloat(s.randomMax) || 60) * 1000,
             stopAfter: parseInt(s.stopAfter) || 0, keyword: s.keyword || '',
             stopOnKeyword: s.stopOnKeyword || false, stopOnChange: s.stopOnChange || false,
+            stopOnClick: s.stopOnClick || false,
             currentInterval: interval
           });
         }
