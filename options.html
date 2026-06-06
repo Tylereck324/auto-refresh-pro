@@ -3,19 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <title>Settings — Auto Refresh Pro</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  /* No remote font @import (privacy/offline/FOUT); font-family stacks fall back
-     to platform fonts. */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
-    --border: #30363d; --accent: #58a6ff; --accent2: #3fb950;
-    --danger: #f85149; --text: #c9d1d9; --text2: #8b949e; --radius: 8px;
-  }
-  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; min-height: 100vh; }
+  /* Tokens, reset, and shared components (toggle, buttons, inputs, focus rings,
+     reduced-motion) come from theme.css. Only Settings-specific layout below. */
+  body { min-height: 100vh; }
   header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; }
   .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
-  .logo-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #58a6ff, #3fb950); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .logo-icon { width: 28px; height: 28px; background: var(--accent-g); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
   .container { max-width: 600px; margin: 32px auto; padding: 0 24px 48px; }
   .page-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
@@ -24,17 +19,11 @@
   .setting-row:last-child { border-bottom: none; }
   .setting-label { font-size: 13px; }
   .setting-sub { font-size: 11px; color: var(--text2); margin-top: 2px; }
-  .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: background 0.2s; }
-  .toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
-  .toggle input:checked + .toggle-slider { background: var(--accent); }
-  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
   .presets-list { display: flex; flex-direction: column; gap: 8px; }
   .preset-item { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
-  .preset-item input { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; padding: 5px 8px; border-radius: 6px; outline: none; width: 80px; }
+  .preset-item input { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 5px 8px; border-radius: 6px; outline: none; width: 80px; }
   .preset-item input:focus { border-color: var(--accent); }
-  .preset-label { flex: 1; font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text2); }
+  .preset-label { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--text2); }
   .autosave-note { margin-top: 16px; text-align: center; font-size: 12px; color: var(--text2); }
   .success-msg { display: none; color: var(--accent2); font-weight: 600; }
 
@@ -55,7 +44,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 10px 14px;
-    font-family: 'DM Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 14px;
     color: var(--text);
     display: flex;
@@ -63,7 +52,9 @@
     gap: 8px;
     min-height: 42px;
     transition: border-color 0.15s, box-shadow 0.15s;
-    cursor: pointer;
+    /* Display-only: recording is driven by the Record button, so this isn't
+       clickable — don't imply otherwise with a pointer cursor. */
+    cursor: default;
     user-select: none;
     position: relative;
   }
@@ -95,7 +86,7 @@
     padding: 2px 8px;
     font-size: 12px;
     color: var(--text);
-    font-family: 'DM Mono', monospace;
+    font-family: var(--font-mono);
     white-space: nowrap;
   }
 
@@ -107,7 +98,7 @@
     border: 1px solid rgba(88,166,255,0.3);
     padding: 9px 16px;
     border-radius: var(--radius);
-    font-family: 'DM Sans', sans-serif;
+    font-family: var(--font-sans);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -129,7 +120,7 @@
     border: 1px solid rgba(248,81,73,0.25);
     padding: 9px 14px;
     border-radius: var(--radius);
-    font-family: 'DM Sans', sans-serif;
+    font-family: var(--font-sans);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -163,7 +154,7 @@
     background: var(--surface2);
     border: 1px solid var(--border);
     color: var(--text);
-    font-family: 'DM Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     padding: 6px 10px;
     border-radius: 6px;
@@ -172,18 +163,6 @@
     text-align: center;
   }
   .num-input:focus { border-color: var(--accent); }
-
-  /* ── Keyboard focus rings (accessibility) ── */
-  button:focus-visible,
-  input:focus-visible,
-  .hotkey-display:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .toggle input:focus-visible + .toggle-slider {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
 </style>
 </head>
 <body>
@@ -217,7 +196,7 @@
       </div>
 
       <div class="hotkey-info">
-        <strong>Default:</strong> <kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-family:DM Mono,monospace;font-size:11px;">Alt+R</kbd>
+        <strong>Default:</strong> <kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-family:var(--font-mono);font-size:11px;">Alt+R</kbd>
         — quick one-handed shortcut.<br>
         Works on any normal web page to toggle refresh on the active tab. It won't fire on browser/system pages (the new-tab page, <strong>chrome://</strong> pages, or the Web Store) where extensions can't run.
       </div>
@@ -233,35 +212,35 @@
         <div class="setting-label">Default Hard Refresh</div>
         <div class="setting-sub">Bypass cache on every refresh by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defHardRefresh"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defHardRefresh" aria-label="Default hard refresh"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Show Countdown Overlay</div>
         <div class="setting-sub">Show timer on pages by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defCountdown" checked><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defCountdown" checked aria-label="Show countdown overlay by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Notifications</div>
         <div class="setting-sub">Notify after each refresh by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defNotify"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defNotify" aria-label="Notifications on by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Alerts</div>
         <div class="setting-sub">Alert beep when keyword / change detected</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defSound"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defSound" aria-label="Sound alerts on by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Tone</div>
         <div class="setting-sub">Which alert tone to play</div>
       </div>
-      <select class="num-input" id="defSoundTone">
+      <select class="num-input" id="defSoundTone" aria-label="Default sound tone">
         <option value="beep">Beep</option>
         <option value="chime">Chime</option>
         <option value="alarm">Alarm</option>
@@ -272,21 +251,24 @@
         <div class="setting-label">Sound Repeat</div>
         <div class="setting-sub">How many times to repeat the tone (1–5)</div>
       </div>
-      <input class="num-input" type="number" id="defSoundRepeat" value="1" min="1" max="5">
+      <input class="num-input" type="number" id="defSoundRepeat" value="1" min="1" max="5" aria-label="Default sound repeat count">
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Volume</div>
         <div class="setting-sub">Alert loudness</div>
       </div>
-      <input type="range" id="defSoundVolume" min="0" max="100" value="90" style="width:160px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="range" id="defSoundVolume" min="0" max="100" value="90" style="width:160px;" aria-label="Default sound volume">
+        <span id="defSoundVolumeVal" style="font-family:var(--font-mono);font-size:12px;color:var(--text2);min-width:34px;text-align:right;">90%</span>
+      </div>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Default Interval</div>
         <div class="setting-sub">Pre-selected interval when opening popup (seconds)</div>
       </div>
-      <input class="num-input" type="number" id="defInterval" value="30" min="2">
+      <input class="num-input" type="number" id="defInterval" value="30" min="2" aria-label="Default interval in seconds">
     </div>
   </div>
 
@@ -302,7 +284,7 @@
     <div class="card-title">About</div>
     <div class="setting-row">
       <div><div class="setting-label">Auto Refresh Pro</div><div class="setting-sub">Personal edition — all features unlocked</div></div>
-      <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);">v1.0.0</span>
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text2);">v1.0.0</span>
     </div>
   </div>
 

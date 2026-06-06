@@ -185,6 +185,7 @@ function load() {
     document.getElementById('defSoundRepeat').value = s.soundRepeat || 1;
     document.getElementById('defSoundVolume').value =
       typeof s.soundVolume === 'number' ? Math.round(s.soundVolume * 100) : 90;
+    syncVolumeReadout();
     if (s.defaultInterval) document.getElementById('defInterval').value = s.defaultInterval;
 
     // Presets
@@ -257,5 +258,13 @@ function save() {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', save);
 });
+
+// Keep the volume percentage readout in sync with the slider.
+function syncVolumeReadout() {
+  const slider = document.getElementById('defSoundVolume');
+  const out = document.getElementById('defSoundVolumeVal');
+  if (slider && out) out.textContent = (parseInt(slider.value, 10) || 0) + '%';
+}
+document.getElementById('defSoundVolume').addEventListener('input', syncVolumeReadout);
 
 load();
