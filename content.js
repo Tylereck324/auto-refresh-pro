@@ -86,7 +86,8 @@
         #__ar_overlay, #__ar_overlay * { box-sizing:border-box; margin:0; padding:0; }
         #__ar_overlay {
           position:fixed; z-index:2147483647;
-          background:rgba(8,10,14,0.97);
+          /* parity with theme.css --bg #0a0c10 = rgb(10,12,16) */
+          background:rgba(10,12,16,0.97);
           backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
           border:1px solid rgba(255,255,255,0.12);
           box-shadow:0 12px 48px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.07) inset;
@@ -173,6 +174,14 @@
         }
         #__ar_resize:hover { opacity:0.8; }
         #__ar_resize svg { display:block; }
+        /* Honor the OS "reduce motion" preference: the overlay can't link
+           theme.css (it renders into the host page), so it carries its own
+           guard — stop the pulsing dot and drop the per-second bar/transition
+           animations. */
+        @media (prefers-reduced-motion: reduce) {
+          #__ar_dot { animation:none; }
+          #__ar_overlay, #__ar_fill, #__ar_stop, #__ar_resize { transition:none; }
+        }
       `;
       document.head.appendChild(style);
     }
