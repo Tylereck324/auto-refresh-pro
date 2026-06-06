@@ -85,6 +85,9 @@ await shot('popup.html', 'popup-idle', { width: 360, height: 640, full: true });
 // Settings + Manage (full-page surfaces)
 await shot('options.html', 'options', { width: 760, height: 1000 });
 await shot('manage.html', 'manage', { width: 980, height: 900 });
+// Narrow-width responsiveness check for the full-page surfaces.
+await shot('options.html', 'options-narrow', { width: 380, height: 1000 });
+await shot('manage.html', 'manage-narrow', { width: 380, height: 900 });
 
 // Overlay — start a refresh on a live page and snapshot the injected overlay.
 {

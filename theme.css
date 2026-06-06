@@ -89,7 +89,9 @@ body {
 .toggle {
   position: relative;
   width: 36px;
-  height: 20px;
+  /* 24px tall to meet the WCAG 2.5.8 minimum tap target; the visual track
+     stays 20px and is centered, so the control looks unchanged. */
+  height: 24px;
   flex-shrink: 0;
 }
 .toggle input {
@@ -100,7 +102,11 @@ body {
 }
 .toggle-slider {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 20px;
+  transform: translateY(-50%);
   background: var(--border2);
   border-radius: 20px;
   cursor: pointer;

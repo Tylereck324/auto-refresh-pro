@@ -52,7 +52,9 @@
     gap: 8px;
     min-height: 42px;
     transition: border-color 0.15s, box-shadow 0.15s;
-    cursor: pointer;
+    /* Display-only: recording is driven by the Record button, so this isn't
+       clickable — don't imply otherwise with a pointer cursor. */
+    cursor: default;
     user-select: none;
     position: relative;
   }
