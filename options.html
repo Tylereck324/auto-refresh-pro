@@ -210,35 +210,35 @@
         <div class="setting-label">Default Hard Refresh</div>
         <div class="setting-sub">Bypass cache on every refresh by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defHardRefresh"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defHardRefresh" aria-label="Default hard refresh"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Show Countdown Overlay</div>
         <div class="setting-sub">Show timer on pages by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defCountdown" checked><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defCountdown" checked aria-label="Show countdown overlay by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Notifications</div>
         <div class="setting-sub">Notify after each refresh by default</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defNotify"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defNotify" aria-label="Notifications on by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Alerts</div>
         <div class="setting-sub">Alert beep when keyword / change detected</div>
       </div>
-      <label class="toggle"><input type="checkbox" id="defSound"><span class="toggle-slider"></span></label>
+      <label class="toggle"><input type="checkbox" id="defSound" aria-label="Sound alerts on by default"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Tone</div>
         <div class="setting-sub">Which alert tone to play</div>
       </div>
-      <select class="num-input" id="defSoundTone">
+      <select class="num-input" id="defSoundTone" aria-label="Default sound tone">
         <option value="beep">Beep</option>
         <option value="chime">Chime</option>
         <option value="alarm">Alarm</option>
@@ -249,21 +249,24 @@
         <div class="setting-label">Sound Repeat</div>
         <div class="setting-sub">How many times to repeat the tone (1–5)</div>
       </div>
-      <input class="num-input" type="number" id="defSoundRepeat" value="1" min="1" max="5">
+      <input class="num-input" type="number" id="defSoundRepeat" value="1" min="1" max="5" aria-label="Default sound repeat count">
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Sound Volume</div>
         <div class="setting-sub">Alert loudness</div>
       </div>
-      <input type="range" id="defSoundVolume" min="0" max="100" value="90" style="width:160px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="range" id="defSoundVolume" min="0" max="100" value="90" style="width:160px;" aria-label="Default sound volume">
+        <span id="defSoundVolumeVal" style="font-family:var(--font-mono);font-size:12px;color:var(--text2);min-width:34px;text-align:right;">90%</span>
+      </div>
     </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Default Interval</div>
         <div class="setting-sub">Pre-selected interval when opening popup (seconds)</div>
       </div>
-      <input class="num-input" type="number" id="defInterval" value="30" min="2">
+      <input class="num-input" type="number" id="defInterval" value="30" min="2" aria-label="Default interval in seconds">
     </div>
   </div>
 

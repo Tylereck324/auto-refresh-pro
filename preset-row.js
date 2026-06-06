@@ -26,6 +26,9 @@
     labelInput.type = 'text';
     labelInput.id = 'pLabel' + i;
     labelInput.placeholder = 'Label';
+    // ariaLabel IDL property reflects to the aria-label attribute (ARIAMixin);
+    // using the property keeps the inert-value DOM stub in the tests happy.
+    labelInput.ariaLabel = 'Preset ' + (i + 1) + ' label';
     labelInput.value = String(p && p.label != null ? p.label : ''); // inert, not HTML
 
     const secInput = doc.createElement('input');
@@ -33,6 +36,7 @@
     secInput.id = 'pSec' + i;
     secInput.placeholder = 'Sec';
     secInput.min = '2';
+    secInput.ariaLabel = 'Preset ' + (i + 1) + ' seconds';
     const ms = Number(p && p.ms);
     secInput.value = String(Number.isFinite(ms) ? Math.round(ms / 1000) : 30);
 

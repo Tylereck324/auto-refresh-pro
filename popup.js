@@ -82,6 +82,9 @@ function bindEvents() {
   document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
   document.getElementById('optSound').addEventListener('change', updateConditionalRows);
 
+  // Live volume percentage readout next to the slider.
+  document.getElementById('optSoundVolume').addEventListener('input', syncVolumeReadout);
+
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
   document.getElementById('optKeyword').addEventListener('input', updateKeywordLock);
@@ -537,4 +540,12 @@ function setSoundControls(src) {
   }
   if (src.soundTone) document.getElementById('optSoundTone').value = src.soundTone;
   if (src.soundRepeat) document.getElementById('optSoundRepeat').value = src.soundRepeat;
+  syncVolumeReadout();
+}
+
+// Mirror the sound-volume slider value into its percentage readout.
+function syncVolumeReadout() {
+  const slider = document.getElementById('optSoundVolume');
+  const out = document.getElementById('optSoundVolumeVal');
+  if (slider && out) out.textContent = (parseInt(slider.value, 10) || 0) + '%';
 }

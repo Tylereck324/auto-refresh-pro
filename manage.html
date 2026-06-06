@@ -115,8 +115,8 @@
   <div class="autostart-card">
     <div class="form-row">
       <label>URL</label>
-      <input class="form-input" id="asUrl" type="url" placeholder="https://example.com">
-      <input class="form-input" id="asInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2">
+      <input class="form-input" id="asUrl" type="url" placeholder="https://example.com" aria-label="Auto-start URL">
+      <input class="form-input" id="asInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2" aria-label="Auto-start interval in seconds">
       <button class="btn-add" id="addAutoStart">+ Add</button>
     </div>
     <div class="autostart-list" id="autoStartList"></div>
@@ -131,8 +131,8 @@
     </div>
     <div class="form-row">
       <label>Pattern</label>
-      <input class="form-input" id="rulePattern" type="text" placeholder="*://*.example.com/*">
-      <input class="form-input" id="ruleInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2" value="30">
+      <input class="form-input" id="rulePattern" type="text" placeholder="*://*.example.com/*" aria-label="URL match pattern">
+      <input class="form-input" id="ruleInterval" type="number" placeholder="Interval (sec)" style="min-width:140px;max-width:160px;" min="2" value="30" aria-label="URL rule interval in seconds">
       <button class="btn-add" id="addRule">+ Add</button>
     </div>
     <div class="autostart-list" id="ruleList"></div>

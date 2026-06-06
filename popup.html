@@ -57,7 +57,7 @@
   }
 
   .logo-sub {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text2);
     font-weight: 400;
     margin-top: 1px;
@@ -175,7 +175,7 @@
   }
 
   .hero-stat-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -342,7 +342,7 @@
     display: flex; flex-wrap: wrap; gap: 6px 14px;
     padding: 8px 12px; border-top: 1px solid var(--border);
   }
-  .kw-flag { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); cursor: pointer; }
+  .kw-flag { display: flex; align-items: center; gap: 5px; padding: 4px 0; font-size: 11px; color: var(--text3); cursor: pointer; }
   .kw-flag input { accent-color: var(--accent); }
   .kw-regex-hint {
     padding: 0 12px 8px; font-size: 10px; color: #f87171; display: none;
@@ -377,7 +377,7 @@
   .opt-card.disabled:hover { border-color: var(--border); }
 
   .opt-label { font-size: 12px; font-weight: 500; color: var(--text); }
-  .opt-sub   { font-size: 10px; color: var(--text2); margin-top: 1px; }
+  .opt-sub   { font-size: 11px; color: var(--text2); margin-top: 1px; }
 
   /* ── Collapsible sections (progressive disclosure) ── */
   .section-toggle {
@@ -629,14 +629,14 @@
           <div class="kw-opt">
             <span class="kw-opt-label">🔔 Sound alert</span>
             <label class="toggle">
-              <input type="checkbox" id="optSound">
+              <input type="checkbox" id="optSound" aria-label="Sound alert when keyword found">
               <span class="toggle-slider"></span>
             </label>
           </div>
           <div class="kw-opt">
             <span class="kw-opt-label">⏹ Stop on found</span>
             <label class="toggle">
-              <input type="checkbox" id="optStopOnKeyword">
+              <input type="checkbox" id="optStopOnKeyword" aria-label="Stop refreshing when keyword found">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -670,7 +670,7 @@
             <div class="opt-sub">Bypass the cache</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optHardRefresh">
+            <input type="checkbox" id="optHardRefresh" aria-label="Hard refresh (bypass cache)">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -681,7 +681,7 @@
             <div class="opt-sub">On-page countdown</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optCountdown" checked>
+            <input type="checkbox" id="optCountdown" checked aria-label="Show on-page countdown overlay">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -692,7 +692,7 @@
             <div class="opt-sub">Randomize interval</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optRandom">
+            <input type="checkbox" id="optRandom" aria-label="Randomize interval">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -703,7 +703,7 @@
             <div class="opt-sub">Restore position</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optPreserveScroll">
+            <input type="checkbox" id="optPreserveScroll" aria-label="Keep scroll position across refreshes">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -717,7 +717,7 @@
             <div class="opt-sub" id="subMonitor">Watch for any change</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optMonitor">
+            <input type="checkbox" id="optMonitor" aria-label="Monitor page for any change">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -728,7 +728,7 @@
             <div class="opt-sub">Skip clocks &amp; counters</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optNoiseTolerant">
+            <input type="checkbox" id="optNoiseTolerant" aria-label="Ignore noise (skip clocks and counters)">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -739,7 +739,7 @@
             <div class="opt-sub">Stop when it changes</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optStopOnChange">
+            <input type="checkbox" id="optStopOnChange" aria-label="Stop when the page changes">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -754,7 +754,7 @@
             <div class="opt-sub">On each refresh</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optNotify">
+            <input type="checkbox" id="optNotify" aria-label="Notify on each refresh">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -765,7 +765,7 @@
             <div class="opt-sub">When you click page</div>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="optStopOnClick">
+            <input type="checkbox" id="optStopOnClick" aria-label="Stop when you click the page">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -827,7 +827,7 @@
           </div>
         </div>
         <div class="field-row" style="margin-top:8px;">
-          <div class="field-label">VOLUME</div>
+          <div class="field-label" style="display:flex;justify-content:space-between;align-items:center;">VOLUME <span id="optSoundVolumeVal" style="font-family:var(--font-mono);color:var(--text3);">90%</span></div>
           <input type="range" id="optSoundVolume" min="0" max="100" value="90" style="width:100%;" aria-label="Sound alert volume">
         </div>
       </div>
