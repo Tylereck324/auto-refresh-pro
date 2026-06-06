@@ -58,6 +58,30 @@ async function shot(file, name, { width = 1100, height = 900, full = true, wait 
 
 // Popup — idle (narrow viewport like the real toolbar popup)
 await shot('popup.html', 'popup-idle', { width: 360, height: 640, full: true });
+
+// Popup — expanded: open Options + Keyword, type a keyword to trigger the
+// change-detection lock note, and enable sound to reveal the sound row.
+{
+  const p = await browser.newPage();
+  await p.setViewport({ width: 360, height: 640 });
+  await p.goto(extUrl('popup.html'), { waitUntil: 'networkidle0' });
+  await sleep(500);
+  await p.evaluate(() => {
+    document.getElementById('toggleOptions').click();
+    document.getElementById('toggleKeyword').click();
+    document.getElementById('advancedToggle').click();
+    const kw = document.getElementById('optKeyword');
+    kw.value = 'in stock';
+    kw.dispatchEvent(new Event('input', { bubbles: true }));
+    const snd = document.getElementById('optSound');
+    snd.checked = true;
+    snd.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await sleep(300);
+  await p.screenshot({ path: path.join(OUT, 'popup-expanded.png'), fullPage: true });
+  await p.close();
+  log('shot popup-expanded');
+}
 // Settings + Manage (full-page surfaces)
 await shot('options.html', 'options', { width: 760, height: 1000 });
 await shot('manage.html', 'manage', { width: 980, height: 900 });

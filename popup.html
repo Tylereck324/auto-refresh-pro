@@ -4,43 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Auto Refresh Pro</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  /* No remote font @import — it leaks a request to Google on every open, fails
-     offline, and causes a flash of unstyled text. The font-family stacks below
-     fall back to the platform UI/monospace fonts. */
-
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:       #0a0c10;
-    --card:     #111318;
-    --card2:    #191c23;
-    --border:   #252830;
-    --border2:  #2e3138;
-    --accent:   #4f9eff;
-    --accent-g: linear-gradient(135deg, #4f9eff 0%, #a78bfa 100%);
-    --green:    #34d399;
-    --red:      #f87171;
-    --yellow:   #fbbf24;
-    --text:     #e2e8f0;
-    --text2:    #828b9a;
-    --text3:    #b3bac6;
-    --radius:   10px;
-    --radius-s: 7px;
-  }
+  /* Tokens, reset, shared components (toggle, buttons base, inputs, focus
+     rings, reduced-motion, scrollbar) come from theme.css. Only the
+     popup-specific layout lives here. */
 
   body {
     width: 360px;
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', sans-serif;
-    font-size: 13px;
-    /* Hide horizontal overflow but allow vertical scrolling: with every section
+    /* Hide horizontal overflow but allow vertical scrolling: with sections
        expanded the content can exceed Chrome's ~600px popup cap, and
-       overflow:hidden would clip the Start/Stop buttons off the bottom. */
+       overflow:hidden would clip content off the bottom. */
     overflow-x: hidden;
     overflow-y: auto;
-    -webkit-font-smoothing: antialiased;
   }
 
   /* ── Header ── */
@@ -122,21 +98,6 @@
   }
 
   .status-label.active { color: var(--green); }
-
-  /* ── Keyboard focus rings (accessibility) ── */
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  .pill:focus-visible,
-  .adv-toggle:focus-visible,
-  .footer-link:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .toggle input:focus-visible ~ .toggle-track {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
 
   /* ── Hero countdown (active state) ── */
   .hero {
@@ -389,40 +350,6 @@
   .kw-regex-hint.show { display: block; }
   .keyword-input.invalid { outline: 1px solid #f87171; }
 
-  /* ── Toggle ── */
-  .toggle {
-    position: relative;
-    width: 34px;
-    height: 19px;
-    flex-shrink: 0;
-  }
-
-  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-
-  .toggle-track {
-    position: absolute;
-    inset: 0;
-    background: var(--border2);
-    border-radius: 19px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .toggle-thumb {
-    position: absolute;
-    width: 13px;
-    height: 13px;
-    top: 3px;
-    left: 3px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s, box-shadow 0.2s;
-    pointer-events: none;
-  }
-
-  .toggle input:checked ~ .toggle-track { background: var(--accent); }
-  .toggle input:checked ~ .toggle-thumb { transform: translateX(15px); box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
-
   /* ── Options grid ── */
   .opts-grid {
     display: grid;
@@ -452,38 +379,69 @@
   .opt-label { font-size: 12px; font-weight: 500; color: var(--text); }
   .opt-sub   { font-size: 10px; color: var(--text2); margin-top: 1px; }
 
-  /* ── Advanced collapse ── */
-  .adv-toggle {
+  /* ── Collapsible sections (progressive disclosure) ── */
+  .section-toggle {
+    width: 100%;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
     font-size: 11px;
-    font-weight: 500;
-    color: var(--text2);
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 11px 13px;
+    border-radius: var(--radius-s);
     cursor: pointer;
-    user-select: none;
-    padding: 2px 0;
-    transition: color 0.15s;
+    transition: border-color 0.15s, background 0.15s;
   }
 
-  .adv-toggle:hover { color: var(--accent); }
-
-  .adv-chevron {
+  .section-toggle:hover { border-color: var(--border2); }
+  .section-toggle .section-count { margin-left: auto; color: var(--text2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+  .section-toggle .section-chevron {
+    margin-left: auto;
     font-size: 9px;
+    color: var(--text2);
     transition: transform 0.2s;
-    display: inline-block;
   }
+  .section-toggle.open { border-color: var(--border2); }
+  .section-toggle.open .section-chevron { transform: rotate(90deg); }
 
-  .adv-toggle.open .adv-chevron { transform: rotate(90deg); }
-
-  .adv-panel {
+  .collapse-panel {
     display: none;
     flex-direction: column;
     gap: 8px;
-    margin-top: 10px;
+    padding: 10px 2px 2px;
   }
+  .collapse-panel.open { display: flex; }
 
-  .adv-panel.open { display: flex; }
+  /* Sub-groups inside the Options panel */
+  .cluster-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text2);
+    margin: 10px 0 2px;
+  }
+  .cluster-head:first-child { margin-top: 0; }
+
+  /* Inline explanation when a keyword locks the change-detection cluster */
+  .lock-note {
+    display: none;
+    font-size: 10px;
+    color: var(--yellow);
+    margin-top: 4px;
+    padding: 6px 9px;
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(251,191,36,0.22);
+    border-radius: var(--radius-s);
+    line-height: 1.4;
+  }
+  .lock-note.show { display: block; }
 
   .field-row {
     display: flex;
@@ -630,13 +588,13 @@
 <!-- Main -->
 <div class="main">
 
-  <!-- Interval -->
+  <!-- Interval (always visible) -->
   <div>
     <div class="section-head">Refresh Interval</div>
     <div class="pill-grid" id="pillGrid"></div>
     <div class="custom-row">
       <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
-      <select class="unit-select" id="customUnit">
+      <select class="unit-select" id="customUnit" aria-label="Custom interval unit">
         <option value="1000">sec</option>
         <option value="60000">min</option>
         <option value="3600000">hr</option>
@@ -645,166 +603,184 @@
     <div class="custom-hint" id="customHint">Minimum is 2 seconds — using 2s.</div>
   </div>
 
-  <!-- Keyword detection -->
-  <div>
-    <div class="section-head">Keyword Detection</div>
-    <div class="keyword-wrap">
-      <div class="keyword-input-row">
-        <span class="keyword-icon">🔍</span>
-        <input class="keyword-input" type="text" id="optKeyword" placeholder="Word, phrase, or comma-separated list…">
-      </div>
-      <div class="keyword-opts">
-        <div class="kw-opt">
-          <span class="kw-opt-label">🔔 Sound alert</span>
-          <label class="toggle">
-            <input type="checkbox" id="optSound">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
+  <!-- Actions (primary — kept near the top, always visible) -->
+  <div class="action-row">
+    <button class="btn-start" id="btnStart">
+      <span aria-hidden="true">▶</span> Start
+    </button>
+    <button class="btn-stop" id="btnStop" disabled>
+      <span aria-hidden="true">■</span> Stop
+    </button>
+  </div>
+
+  <!-- Keyword detection (collapsible) -->
+  <div class="section">
+    <button class="section-toggle" id="toggleKeyword" aria-expanded="false" aria-controls="panelKeyword">
+      Keyword Detection
+      <span class="section-chevron" aria-hidden="true">▶</span>
+    </button>
+    <div class="collapse-panel" id="panelKeyword">
+      <div class="keyword-wrap">
+        <div class="keyword-input-row">
+          <span class="keyword-icon" aria-hidden="true">🔍</span>
+          <input class="keyword-input" type="text" id="optKeyword" placeholder="Word, phrase, or comma-separated list…" aria-label="Keyword to detect">
         </div>
-        <div class="kw-opt">
-          <span class="kw-opt-label">⏹ Stop on found</span>
-          <label class="toggle">
-            <input type="checkbox" id="optStopOnKeyword">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
+        <div class="keyword-opts">
+          <div class="kw-opt">
+            <span class="kw-opt-label">🔔 Sound alert</span>
+            <label class="toggle">
+              <input type="checkbox" id="optSound">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="kw-opt">
+            <span class="kw-opt-label">⏹ Stop on found</span>
+            <label class="toggle">
+              <input type="checkbox" id="optStopOnKeyword">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
+        <div class="kw-flags">
+          <label class="kw-flag"><input type="checkbox" id="optKwCase"> Case-sensitive</label>
+          <label class="kw-flag"><input type="checkbox" id="optKwWhole"> Whole word</label>
+          <label class="kw-flag"><input type="checkbox" id="optKwRegex"> Regex</label>
+          <label class="kw-flag"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
+          <label class="kw-flag"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
+        </div>
+        <div class="kw-regex-hint" id="kwRegexHint">Invalid or unsafe regular expression.</div>
       </div>
-      <div class="kw-flags">
-        <label class="kw-flag"><input type="checkbox" id="optKwCase"> Case-sensitive</label>
-        <label class="kw-flag"><input type="checkbox" id="optKwWhole"> Whole word</label>
-        <label class="kw-flag"><input type="checkbox" id="optKwRegex"> Regex</label>
-        <label class="kw-flag"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
-        <label class="kw-flag"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
-      </div>
-      <div class="kw-regex-hint" id="kwRegexHint">Invalid or unsafe regular expression.</div>
     </div>
   </div>
 
-  <!-- Options -->
-  <div>
-    <div class="section-head">Options</div>
-    <div class="opts-grid">
+  <!-- Options (collapsible, grouped into clusters) -->
+  <div class="section">
+    <button class="section-toggle" id="toggleOptions" aria-expanded="false" aria-controls="panelOptions">
+      Options
+      <span class="section-count">9</span>
+      <span class="section-chevron" aria-hidden="true">▶</span>
+    </button>
+    <div class="collapse-panel" id="panelOptions">
 
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Hard Refresh</div>
-          <div class="opt-sub">Bypass cache</div>
+      <div class="cluster-head">Refresh behavior</div>
+      <div class="opts-grid">
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Hard Refresh</div>
+            <div class="opt-sub">Bypass the cache</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optHardRefresh">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optHardRefresh">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
+
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Overlay</div>
+            <div class="opt-sub">On-page countdown</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optCountdown" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Random</div>
+            <div class="opt-sub">Randomize interval</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optRandom">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Keep scroll</div>
+            <div class="opt-sub">Restore position</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optPreserveScroll">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Overlay</div>
-          <div class="opt-sub">Show countdown</div>
+      <div class="cluster-head">Change detection</div>
+      <div class="opts-grid">
+        <div class="opt-card" id="cardMonitor">
+          <div>
+            <div class="opt-label">Monitor</div>
+            <div class="opt-sub" id="subMonitor">Watch for any change</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optMonitor">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optCountdown" checked>
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
 
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Notify</div>
-          <div class="opt-sub">On each refresh</div>
+        <div class="opt-card" id="cardNoise">
+          <div>
+            <div class="opt-label">Ignore noise</div>
+            <div class="opt-sub">Skip clocks &amp; counters</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optNoiseTolerant">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optNotify">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
 
-      <div class="opt-card" id="cardMonitor">
-        <div>
-          <div class="opt-label">Monitor</div>
-          <div class="opt-sub" id="subMonitor">Detect changes</div>
+        <div class="opt-card" id="cardStopOnChange">
+          <div>
+            <div class="opt-label">Stop on change</div>
+            <div class="opt-sub">Stop when it changes</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optStopOnChange">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optMonitor">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
       </div>
+      <div class="lock-note" id="keywordLockNote">Disabled while a keyword is set — the keyword drives alerts instead.</div>
 
-      <div class="opt-card" id="cardNoise">
-        <div>
-          <div class="opt-label">Ignore noise</div>
-          <div class="opt-sub">Skip clocks/counters</div>
+      <div class="cluster-head">On events</div>
+      <div class="opts-grid">
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Notify</div>
+            <div class="opt-sub">On each refresh</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optNotify">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optNoiseTolerant">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
 
-      <div class="opt-card" id="cardStopOnChange">
-        <div>
-          <div class="opt-label">Stop on change</div>
-          <div class="opt-sub">If page changes</div>
+        <div class="opt-card">
+          <div>
+            <div class="opt-label">Stop on Click</div>
+            <div class="opt-sub">When you click page</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="optStopOnClick">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="optStopOnChange">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Stop on Click</div>
-          <div class="opt-sub">When you click page</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="optStopOnClick">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Keep scroll</div>
-          <div class="opt-sub">Restore position</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="optPreserveScroll">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="opt-card">
-        <div>
-          <div class="opt-label">Random</div>
-          <div class="opt-sub">Random interval</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="optRandom">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
       </div>
 
     </div>
   </div>
 
-  <!-- Advanced -->
-  <div>
-    <div class="adv-toggle" id="advancedToggle" role="button" tabindex="0" aria-expanded="false">
-      <span class="adv-chevron">▶</span>
+  <!-- Advanced (collapsible) -->
+  <div class="section">
+    <button class="section-toggle" id="advancedToggle" aria-expanded="false" aria-controls="advancedPanel">
       Advanced
-    </div>
-    <div class="adv-panel" id="advancedPanel">
+      <span class="section-chevron" aria-hidden="true">▶</span>
+    </button>
+    <div class="collapse-panel" id="advancedPanel">
       <div class="field-row">
         <div class="field-label">STOP AFTER X REFRESHES (0 = unlimited)</div>
         <input class="field-input" type="number" id="optStopAfter" min="0" value="0" placeholder="0">
@@ -834,36 +810,28 @@
           </div>
         </div>
       </div>
-      <div class="field-label" style="margin-top:10px;margin-bottom:6px;">SOUND ALERT</div>
-      <div class="two-col">
-        <div class="field-row">
-          <div class="field-label">TONE</div>
-          <select class="field-input" id="optSoundTone">
-            <option value="beep">Beep</option>
-            <option value="chime">Chime</option>
-            <option value="alarm">Alarm</option>
-          </select>
+      <div id="soundRow" style="display:none;">
+        <div class="field-label" style="margin-top:10px;margin-bottom:6px;">SOUND ALERT</div>
+        <div class="two-col">
+          <div class="field-row">
+            <div class="field-label">TONE</div>
+            <select class="field-input" id="optSoundTone">
+              <option value="beep">Beep</option>
+              <option value="chime">Chime</option>
+              <option value="alarm">Alarm</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <div class="field-label">REPEAT (1–5)</div>
+            <input class="field-input" type="number" id="optSoundRepeat" min="1" max="5" value="1">
+          </div>
         </div>
-        <div class="field-row">
-          <div class="field-label">REPEAT (1–5)</div>
-          <input class="field-input" type="number" id="optSoundRepeat" min="1" max="5" value="1">
+        <div class="field-row" style="margin-top:8px;">
+          <div class="field-label">VOLUME</div>
+          <input type="range" id="optSoundVolume" min="0" max="100" value="90" style="width:100%;" aria-label="Sound alert volume">
         </div>
-      </div>
-      <div class="field-row" style="margin-top:8px;">
-        <div class="field-label">VOLUME</div>
-        <input type="range" id="optSoundVolume" min="0" max="100" value="90" style="width:100%;">
       </div>
     </div>
-  </div>
-
-  <!-- Actions -->
-  <div class="action-row">
-    <button class="btn-start" id="btnStart">
-      <span>▶</span> Start
-    </button>
-    <button class="btn-stop" id="btnStop" disabled>
-      <span>■</span> Stop
-    </button>
   </div>
 
 </div>

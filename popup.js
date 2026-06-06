@@ -54,17 +54,21 @@ function bindEvents() {
   document.getElementById('btnStart').addEventListener('click', startRefresh);
   document.getElementById('btnStop').addEventListener('click', stopRefresh);
 
-  // Advanced toggle
-  document.getElementById('advancedToggle').addEventListener('click', () => {
-    const toggle = document.getElementById('advancedToggle');
-    const panel  = document.getElementById('advancedPanel');
-    const open = toggle.classList.toggle('open');
-    panel.classList.toggle('open');
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // Collapsible sections (progressive disclosure). Each .section-toggle is a
+  // native <button> that controls the panel named in its aria-controls, so
+  // Enter/Space activation comes for free.
+  document.querySelectorAll('.section-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.getAttribute('aria-controls'));
+      const open = btn.getAttribute('aria-expanded') !== 'true';
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.classList.toggle('open', open);
+      if (panel) panel.classList.toggle('open', open);
+    });
   });
 
   // Keyboard activation for the non-native controls (Enter / Space).
-  ['advancedToggle', 'manageLink', 'optionsLink'].forEach(id => {
+  ['manageLink', 'optionsLink'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('keydown', (e) => {
@@ -72,10 +76,11 @@ function bindEvents() {
     });
   });
 
-  // Monitor / random conditionals
+  // Monitor / random / sound conditionals
   document.getElementById('optMonitor').addEventListener('change', updateConditionalRows);
   document.getElementById('optRandom').addEventListener('change', updateConditionalRows);
   document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
+  document.getElementById('optSound').addEventListener('change', updateConditionalRows);
 
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
@@ -140,6 +145,10 @@ function updateConditionalRows() {
   const noise = document.getElementById('optNoiseTolerant').checked;
   const noiseRow = document.getElementById('noiseRow');
   if (noiseRow) noiseRow.style.display = noise ? '' : 'none';
+  // Sound tone/repeat/volume only matter when the sound alert is enabled.
+  const sound = document.getElementById('optSound').checked;
+  const soundRow = document.getElementById('soundRow');
+  if (soundRow) soundRow.style.display = sound ? '' : 'none';
 }
 
 // When a keyword is set, the background uses the keyword as the sole signal and
@@ -156,7 +165,9 @@ function updateKeywordLock() {
     if (input) input.disabled = hasKeyword;
   });
   const sub = document.getElementById('subMonitor');
-  if (sub) sub.textContent = hasKeyword ? 'Ignored — keyword set' : 'Detect changes';
+  if (sub) sub.textContent = hasKeyword ? 'Ignored — keyword set' : 'Watch for any change';
+  const note = document.getElementById('keywordLockNote');
+  if (note) note.classList.toggle('show', hasKeyword);
 }
 
 // Called whenever the interval selection changes.
