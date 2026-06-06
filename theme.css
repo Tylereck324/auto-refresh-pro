@@ -1,0 +1,225 @@
+/* ============================================================================
+   Auto Refresh Pro — shared theme
+   Single source of truth for design tokens + shared components across the
+   popup, Settings (options.html), and Manage (manage.html) surfaces.
+
+   The injected overlay (content.js) cannot link this file (it renders into
+   arbitrary host pages and must stay style-isolated); its inline styles are
+   kept in hex-parity with the tokens below by hand.
+
+   Load order: link this file in <head> BEFORE each page's inline <style> so
+   page-specific layout rules can override these shared defaults.
+
+   No remote @font-face/@import — privacy/offline/no-FOUT. The font stacks
+   below are system-first; the named webfonts are aspirational and fall back
+   to platform fonts today.
+   ========================================================================= */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* ── Surfaces ── */
+  --bg:       #0a0c10;
+  --card:     #111318;
+  --card2:    #191c23;
+  --border:   #252830;
+  --border2:  #2e3138;
+
+  /* ── Accent ── */
+  --accent:   #4f9eff;
+  --accent-2: #a78bfa;
+  --accent-g: linear-gradient(135deg, #4f9eff 0%, #a78bfa 100%);
+
+  /* ── Status ── */
+  --green:    #34d399;
+  --red:      #f87171;
+  --yellow:   #fbbf24;
+
+  /* ── Text ──
+     --text2 lightened from the old #828b9a to #99a2b2 so secondary/small
+     text clears WCAG AA (4.5:1) on --bg. */
+  --text:     #e2e8f0;
+  --text2:    #99a2b2;
+  --text3:    #b3bac6;
+
+  /* ── Radius ── */
+  --radius:   10px;
+  --radius-s: 7px;
+  --radius-l: 12px;
+
+  /* ── Spacing scale ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* ── Type ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'DM Mono', Menlo, monospace;
+
+  /* ── Back-compat aliases ──
+     Settings/Manage were authored against a separate (GitHub-dark) token
+     vocabulary. Aliasing those names onto the unified palette lets those
+     pages adopt the new look by deleting their local :root, without
+     rewriting every rule. Prefer the canonical names above in new code. */
+  --surface:  var(--card);
+  --surface2: var(--card2);
+  --danger:   var(--red);
+  --success:  var(--green);
+  --accent2:  var(--green);
+}
+
+/* ── Body base (pages override width/layout in their inline <style>) ── */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Toggle (unified) ──
+   Single-span slider with a ::before thumb. Markup:
+     <label class="toggle">
+       <input type="checkbox" id="…">
+       <span class="toggle-slider"></span>
+     </label> */
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border2);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); }
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.toggle input:disabled + .toggle-slider { cursor: not-allowed; }
+
+/* ── Buttons ──
+   .btn base + visual variants. Layout (flex:1, width) stays per-page. */
+.btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s, transform 0.15s;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+.btn-primary { background: var(--accent-g); color: #fff; }
+.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+
+.btn-danger {
+  background: rgba(248,113,113,0.10);
+  color: var(--red);
+  border-color: rgba(248,113,113,0.25);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(248,113,113,0.18);
+  border-color: rgba(248,113,113,0.5);
+}
+
+.btn-ghost {
+  background: var(--card2);
+  color: var(--text);
+  border-color: var(--border2);
+}
+.btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+.btn-accent {
+  background: rgba(79,158,255,0.12);
+  color: var(--accent);
+  border-color: rgba(79,158,255,0.30);
+}
+.btn-accent:hover:not(:disabled) { background: rgba(79,158,255,0.20); }
+
+.btn-sm { padding: 6px 12px; font-size: 11px; border-radius: var(--radius-s); }
+
+/* ── Inputs (base; pages may set width/font) ── */
+.input {
+  background: var(--card2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 11px;
+  border-radius: var(--radius-s);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--accent); }
+.input::placeholder { color: var(--text2); }
+
+/* ── Keyboard focus rings (accessibility) ── */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.toggle input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Custom scrollbar (cohesion across surfaces) ── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #3a3e47; }
+
+/* ── Reduced motion (WCAG AA) ──
+   Honor the user's OS-level "reduce motion" preference everywhere. The
+   overlay (content.js) carries its own copy of this guard. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

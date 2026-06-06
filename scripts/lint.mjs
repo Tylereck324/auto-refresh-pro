@@ -62,6 +62,7 @@ function checkScriptRefs(file, re, label) {
 }
 for (const html of ['popup.html', 'options.html', 'manage.html', 'offscreen.html']) {
   checkScriptRefs(html, /<script\s+src="([^"]+)"/g, 'script-src');
+  checkScriptRefs(html, /<link\s+[^>]*href="([^"]+\.css)"/g, 'link-href');
 }
 checkScriptRefs('background.js', /importScripts\(['"]([^'"]+)['"]\)/g, 'importScripts');
 
