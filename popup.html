@@ -816,16 +816,8 @@
           <div class="field-row">
             <div class="field-label">TONE</div>
             <div style="display:flex;gap:6px;align-items:center;">
-              <select class="field-input" id="optSoundTone" style="flex:1;">
-                <option value="beep">Beep</option>
-                <option value="chime">Chime</option>
-                <option value="alarm">Alarm</option>
-                <option value="glass">Glass</option>
-                <option value="tink">Tink</option>
-                <option value="bottle">Bottle</option>
-                <option value="hero">Hero</option>
-                <option value="submarine">Submarine</option>
-              </select>
+              <!-- Options are populated from AlertSounds.TONES at load. -->
+              <select class="field-input" id="optSoundTone" style="flex:1;"></select>
               <button type="button" class="field-input" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound" style="flex:0 0 auto;cursor:pointer;">▶ Preview</button>
             </div>
           </div>

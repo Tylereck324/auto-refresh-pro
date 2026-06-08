@@ -241,16 +241,8 @@
         <div class="setting-sub">Which alert tone to play</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <select class="num-input" id="defSoundTone" aria-label="Default sound tone">
-          <option value="beep">Beep</option>
-          <option value="chime">Chime</option>
-          <option value="alarm">Alarm</option>
-          <option value="glass">Glass</option>
-          <option value="tink">Tink</option>
-          <option value="bottle">Bottle</option>
-          <option value="hero">Hero</option>
-          <option value="submarine">Submarine</option>
-        </select>
+        <!-- Options are populated from AlertSounds.TONES at load. -->
+        <select class="num-input" id="defSoundTone" aria-label="Default sound tone"></select>
         <button type="button" class="num-input" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound" style="cursor:pointer;">▶ Preview</button>
       </div>
     </div>

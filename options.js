@@ -227,8 +227,8 @@ function gatherAndSave() {
     notify: document.getElementById('defNotify').checked,
     sound: document.getElementById('defSound').checked,
     soundTone: document.getElementById('defSoundTone').value || 'beep',
-    soundRepeat: Math.min(5, Math.max(1, parseInt(document.getElementById('defSoundRepeat').value) || 1)),
-    soundVolume: Math.min(1, Math.max(0, (parseInt(document.getElementById('defSoundVolume').value, 10) || 90) / 100)),
+    soundRepeat: AlertSounds.clampRepeat(document.getElementById('defSoundRepeat').value),
+    soundVolume: AlertSounds.clampVolume(document.getElementById('defSoundVolume').value),
     defaultInterval: parseInt(document.getElementById('defInterval').value) || 30,
     presets: presets
   };
@@ -271,8 +271,9 @@ document.getElementById('defSoundVolume').addEventListener('input', syncVolumeRe
 // (this click is a user gesture) using the shared AlertSounds catalog.
 document.getElementById('btnPreviewSound').addEventListener('click', function () {
   const tone = document.getElementById('defSoundTone').value || 'beep';
-  const volume = Math.min(1, Math.max(0, (parseInt(document.getElementById('defSoundVolume').value, 10) || 90) / 100));
+  const volume = AlertSounds.clampVolume(document.getElementById('defSoundVolume').value);
   AlertSounds.playTone(tone, { volume: volume, repeat: 1 });
 });
 
+AlertSounds.populateSelect(document.getElementById('defSoundTone')); // before load() sets the value
 load();

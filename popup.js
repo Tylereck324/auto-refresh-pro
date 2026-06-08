@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentTabId = tab.id;
 
   renderPresets(DEFAULT_PRESETS); // immediate paint; loadSettings re-renders with custom presets
+  AlertSounds.populateSelect(document.getElementById('optSoundTone')); // before loadSettings sets the value
   loadSettings();
   await refreshStatus();
   bindEvents();
@@ -272,15 +273,10 @@ function gatherSettings() {
   };
 }
 
-// Volume slider is 0–100 in the UI but stored/sent as a 0–1 gain.
-function clampSoundVolume(raw) {
-  const pct = parseInt(raw, 10);
-  return Number.isFinite(pct) ? Math.min(1, Math.max(0, pct / 100)) : 0.9;
-}
-function clampSoundRepeat(raw) {
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1;
-}
+// Volume (0–100 UI → 0–1 gain) and repeat clamping live in the shared catalog
+// so the popup, options page, and offscreen player all agree on the bounds.
+const clampSoundVolume = AlertSounds.clampVolume;
+const clampSoundRepeat = AlertSounds.clampRepeat;
 // "Min change %" is 0–100 in the UI but stored/sent as a 0–1 fraction.
 function clampFraction(raw) {
   const pct = parseInt(raw, 10);

@@ -48,24 +48,58 @@
       : path;
   }
 
-  // Pre-rendered alert tones. `lenMs` is the approximate clip length so a
-  // multi-repeat can space the plays without overlapping. File-backed tones use
-  // their real (afinfo-measured) durations, rounded up a little for headroom.
+  // A tone's `uri` is resolved lazily on first access and then cached, so merely
+  // loading this script (e.g. when the popup or options page opens) never pays
+  // the WAV synthesis cost — that only happens once Preview or an alert fires.
+  // `build` synthesizes a tone; `file` points at a bundled asset.
+  function makeTone({ label, lenMs, build, file }) {
+    let uri;
+    return {
+      label, lenMs,
+      get uri() {
+        if (uri === undefined) uri = build ? buildWav(build) : asset(file);
+        return uri;
+      },
+    };
+  }
+
+  // Alert tones. `lenMs` is the approximate clip length so a multi-repeat can
+  // space the plays without overlapping. File-backed tones use their real
+  // (afinfo-measured) durations, rounded up a little for headroom.
   const TONES = {
-    beep:  { uri: buildWav({ hz: 1000, beats: 3, beepMs: 120, gapMs: 80 }), lenMs: 600,  label: 'Beep' },
-    chime: { uri: buildWav({ hz: 1568, beats: 2, beepMs: 180, gapMs: 90 }), lenMs: 540,  label: 'Chime' },
-    alarm: { uri: buildWav({ hz: 760,  beats: 5, beepMs: 110, gapMs: 70 }), lenMs: 900,  label: 'Alarm' },
-    glass:     { uri: asset('sounds/glass.wav'),     lenMs: 1700, label: 'Glass' },
-    tink:      { uri: asset('sounds/tink.wav'),      lenMs: 600,  label: 'Tink' },
-    bottle:    { uri: asset('sounds/bottle.wav'),    lenMs: 820,  label: 'Bottle' },
-    hero:      { uri: asset('sounds/hero.wav'),      lenMs: 1100, label: 'Hero' },
-    submarine: { uri: asset('sounds/submarine.wav'), lenMs: 1550, label: 'Submarine' },
+    beep:  makeTone({ label: 'Beep',  lenMs: 600, build: { hz: 1000, beats: 3, beepMs: 120, gapMs: 80 } }),
+    chime: makeTone({ label: 'Chime', lenMs: 540, build: { hz: 1568, beats: 2, beepMs: 180, gapMs: 90 } }),
+    alarm: makeTone({ label: 'Alarm', lenMs: 900, build: { hz: 760,  beats: 5, beepMs: 110, gapMs: 70 } }),
+    glass:     makeTone({ label: 'Glass',     lenMs: 1700, file: 'sounds/glass.wav' }),
+    tink:      makeTone({ label: 'Tink',      lenMs: 600,  file: 'sounds/tink.wav' }),
+    bottle:    makeTone({ label: 'Bottle',    lenMs: 820,  file: 'sounds/bottle.wav' }),
+    hero:      makeTone({ label: 'Hero',      lenMs: 1100, file: 'sounds/hero.wav' }),
+    submarine: makeTone({ label: 'Submarine', lenMs: 1550, file: 'sounds/submarine.wav' }),
   };
 
   const clamp = (n, lo, hi, dflt) => {
     const num = typeof n === 'number' ? n : parseFloat(n);
     return Number.isFinite(num) ? Math.min(hi, Math.max(lo, num)) : dflt;
   };
+
+  // UI helpers shared by the popup and options pages, so the tone list and the
+  // 0–100 → 0–1 volume / 1–5 repeat conversions live in exactly one place.
+
+  // Fill a <select> with one <option> per tone, labelled from the catalog.
+  function populateSelect(select) {
+    if (!select) return;
+    select.innerHTML = '';
+    for (const id in TONES) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = TONES[id].label;
+      select.appendChild(opt);
+    }
+  }
+
+  // Volume slider is 0–100 in the UI but stored/sent as a 0–1 gain.
+  const clampVolume = (raw) => clamp(parseInt(raw, 10) / 100, 0, 1, 0.9);
+  const clampRepeat = (raw) => clamp(parseInt(raw, 10), 1, 5, 1);
 
   // Play a tone, optionally repeated. Returns immediately; repeats are spaced by
   // the clip length so they don't overlap. `repeat` is clamped to 1–5 here too,
@@ -84,5 +118,5 @@
     for (let i = 1; i < repeat; i++) setTimeout(playOnce, i * (tone.lenMs + 60));
   }
 
-  global.AlertSounds = { TONES, playTone, clamp, buildWav };
+  global.AlertSounds = { TONES, playTone, populateSelect, clampVolume, clampRepeat };
 })(typeof self !== 'undefined' ? self : this);
