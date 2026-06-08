@@ -75,6 +75,34 @@ test('sanitizeUrlRules drops unsafe patterns and rebuilds settings', () => {
   assert.equal(rules[1].settings.kwRegex, false); // ReDoS pattern downgraded to literal
 });
 
+test('sanitizeRuleSettings carries bounded sound + noise sub-settings', () => {
+  const out = V.sanitizeRuleSettings({
+    interval: 5000,
+    sound: true, soundTone: 'chime', soundVolume: 0.5, soundRepeat: 3, beepUntilAck: true,
+    monitorMode: true, noiseTolerant: true, collapseDigits: false, minChangedFraction: 0.25,
+    preserveScroll: true,
+  });
+  assert.equal(out.soundTone, 'chime');
+  assert.equal(out.soundVolume, 0.5);
+  assert.equal(out.soundRepeat, 3);
+  assert.equal(out.beepUntilAck, true);
+  assert.equal(out.noiseTolerant, true);
+  assert.equal(out.collapseDigits, false);
+  assert.equal(out.minChangedFraction, 0.25);
+  assert.equal(out.preserveScroll, true);
+});
+
+test('sanitizeRuleSettings bounds out-of-range / garbage sound values', () => {
+  const out = V.sanitizeRuleSettings({
+    soundVolume: 99, soundRepeat: 1000, minChangedFraction: -5, soundTone: 12345,
+  });
+  assert.equal(out.soundVolume, 1);     // clamped to [0,1]
+  assert.equal(out.soundRepeat, 5);     // clamped to [1,5]
+  assert.equal(out.minChangedFraction, 0); // clamped to [0,1]
+  assert.equal(out.soundTone, 'beep');  // non-string → default
+  assert.equal(out.collapseDigits, true); // absent → defaults on
+});
+
 test('sanitizeUrlRules enforces the rule count cap', () => {
   const many = Array.from({ length: V.MAX_URL_RULES + 20 }, () => ({ pattern: 'https://x.com/*' }));
   assert.equal(V.sanitizeUrlRules(many).length, V.MAX_URL_RULES);

@@ -286,6 +286,11 @@
     let keyword = typeof s.keyword === 'string' ? s.keyword.slice(0, MAX_KEYWORD_LEN) : '';
     let kwRegex = !!s.kwRegex;
     if (kwRegex && !isSafeRegex(keyword)) kwRegex = false;
+    // Bound a numeric field to [lo, hi], falling back to dflt for garbage.
+    const num = (v, lo, hi, dflt) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+    };
     return {
       interval,
       hardRefresh: !!s.hardRefresh,
@@ -302,6 +307,19 @@
       kwInverse: !!s.kwInverse,
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
+      // Sound sub-settings — carried (bounded) so a rule with sound enabled plays
+      // the chosen tone/volume rather than silently falling back to defaults.
+      // soundTone is left as a string; the player maps unknown tones to 'beep'.
+      soundTone: typeof s.soundTone === 'string' ? s.soundTone.slice(0, 24) : 'beep',
+      soundVolume: num(s.soundVolume, 0, 1, 0.9),
+      soundRepeat: Math.round(num(s.soundRepeat, 1, 5, 1)),
+      beepUntilAck: !!s.beepUntilAck,
+      // Noise-tolerance sub-settings for the change monitor (otherwise off for
+      // rule-started jobs even when monitorMode is set).
+      noiseTolerant: !!s.noiseTolerant,
+      collapseDigits: s.collapseDigits !== false,
+      minChangedFraction: num(s.minChangedFraction, 0, 1, 0),
+      preserveScroll: !!s.preserveScroll,
       currentInterval: interval,
     };
   }

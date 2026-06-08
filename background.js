@@ -11,26 +11,68 @@ importScripts('keyword-match.js');
 importScripts('normalize.js');
 // Pure notification-id encode/decode (ARPNotif) for click-to-focus-tab.
 importScripts('notif-id.js');
+// Pure post-restart job-rebuild + navigate-away helpers (ARPRehydrate).
+importScripts('rehydrate.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
 const activeJobs = {};
 
+// chrome.alarms clamps any delay below this to the floor in packed builds, so a
+// true sub-30s refresh can't be driven by alarms. Intervals below it use a
+// self-rescheduling setTimeout loop instead (see scheduleNext).
+const ALARM_MIN_MS = 30000;
+
+// Schedule a job's next refresh with the right mechanism for its interval:
+//  • >= ALARM_MIN_MS → chrome.alarms (survives worker termination cleanly).
+//  • <  ALARM_MIN_MS → a self-rescheduling setTimeout. Alarms would clamp these
+//    to ~30s; the frequent chrome.tabs.reload activity (an API call every <30s)
+//    keeps the worker alive between ticks. A backstop alarm at the floor still
+//    resumes the loop if the worker is killed anyway (sleep/suspend) — fireRefresh
+//    re-establishes the fast loop on the next wake.
+function scheduleNext(tabId, delayMs) {
+  const job = activeJobs[tabId];
+  if (!job) return;
+  clearTimerLoop(job);
+  if (delayMs >= ALARM_MIN_MS) {
+    chrome.alarms.create(job.alarmName, { delayInMinutes: delayMs / 60000 });
+  } else {
+    job._timer = setTimeout(() => fireRefresh(tabId), delayMs);
+    // Backstop only — continually pushed forward, so it fires only if the loop dies.
+    chrome.alarms.create(job.alarmName, { delayInMinutes: ALARM_MIN_MS / 60000 });
+  }
+}
+
+function clearTimerLoop(job) {
+  if (job && job._timer) { clearTimeout(job._timer); job._timer = null; }
+}
+
 // ── Offscreen audio ────────────────────────────────────────────────────────
 // Service workers can't play audio directly. We use an offscreen document
 // (Chrome 116+) which has full audio access and no gesture-policy restrictions.
 
+// Serializes offscreen-document creation. hasDocument()→createDocument() isn't
+// atomic, so two near-simultaneous alerts could both see "no document" and the
+// second createDocument would throw ("only a single offscreen document"),
+// dropping that beep. A shared in-flight promise collapses concurrent callers
+// onto one creation.
+let creatingOffscreen = null;
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument().catch(() => false)) return;
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['AUDIO_PLAYBACK'],
+      justification: 'Play keyword-detected alert beep'
+    }).finally(() => { creatingOffscreen = null; });
+  }
+  await creatingOffscreen;
+}
+
 async function playBeep(opts = {}) {
   const { volume = 0.9, tone = 'beep', repeat = 1 } = opts;
   try {
-    const existing = await chrome.offscreen.hasDocument().catch(() => false);
-    if (!existing) {
-      await chrome.offscreen.createDocument({
-        url: 'offscreen.html',
-        reasons: ['AUDIO_PLAYBACK'],
-        justification: 'Play keyword-detected alert beep'
-      });
-    }
+    await ensureOffscreen();
     return await deliverBeep({ volume, tone, repeat });
   } catch (e) {
     console.warn('Offscreen audio failed:', e);
@@ -59,10 +101,22 @@ function buildMatcher(settings) {
 // is both kept in this warm-path map and encoded in the notification id (so a
 // click still works after a service-worker restart wipes the map).
 const notifTabMap = {};
+// Entries are normally cleared on click/close (onClicked/onClosed). This caps the
+// map in case a notification is dismissed without firing onClosed, so it can't
+// grow unbounded over a long session. The tab id is still recoverable from the
+// notification id itself (ARPNotif.parseNotifTabId), so eviction only loses the
+// warm-path lookup, not correctness.
+const MAX_NOTIF_ENTRIES = 100;
+
+// Minimum gap between per-refresh notifications, so a fast interval can't spam.
+const REFRESH_NOTIFY_MIN_GAP_MS = 30000;
 
 function notify(prefix, tabId, options) {
   const id = ARPNotif.buildNotifId(prefix, tabId, Date.now());
   notifTabMap[id] = { tabId };
+  // Evict oldest (insertion-ordered keys) once over the cap.
+  const ids = Object.keys(notifTabMap);
+  if (ids.length > MAX_NOTIF_ENTRIES) delete notifTabMap[ids[0]];
   chrome.notifications.create(id, options);
   return id;
 }
@@ -96,7 +150,14 @@ function startAckBeeps(tabId) {
   const job = activeJobs[tabId];
   if (!job || !job.settings.sound || !job.settings.beepUntilAck) return;
   clearAckBeeps(tabId);
-  const intervalMs = Math.max(2000, (parseFloat(job.settings.beepAckIntervalSec) || 5) * 1000);
+  // Cap the tick below the MV3 idle-shutdown window: each tick does a sendMessage
+  // (playBeep), which keeps the worker alive only while ticks land < ~30s apart.
+  // Keeping the gap under ALARM_MIN_MS makes the bounded nag self-sustaining so it
+  // isn't cut short by worker termination between beeps.
+  const intervalMs = Math.min(
+    ALARM_MIN_MS - 5000,
+    Math.max(2000, (parseFloat(job.settings.beepAckIntervalSec) || 5) * 1000)
+  );
   const maxRepeats = Math.min(10, Math.max(1, parseInt(job.settings.beepRepeatMax) || 5));
   let count = 0;
   const tick = () => {
@@ -142,12 +203,30 @@ function deliverBeep(opts = {}, attempt = 0) {
 }
 
 // ── Alarm handler ──────────────────────────────────────────────────────────
-chrome.alarms.onAlarm.addListener(async (alarm) => {
+// Alarms drive long intervals directly and act as the wake-up backstop for the
+// short-interval setTimeout loop. Either way the work is the same: fireRefresh.
+chrome.alarms.onAlarm.addListener((alarm) => {
   if (!alarm.name.startsWith('refresh_')) return;
-  const tabId = parseInt(alarm.name.replace('refresh_', ''));
-  const job = activeJobs[tabId];
-  if (!job) return;
+  fireRefresh(parseInt(alarm.name.replace('refresh_', '')));
+});
 
+// Run one refresh cycle for a job and schedule the next. Invoked by the alarm
+// (long intervals + backstop) and by the setTimeout loop (short intervals).
+async function fireRefresh(tabId) {
+  // The worker may have been terminated since this was scheduled, wiping
+  // activeJobs. Rebuild from storage before giving up — otherwise the loop dies.
+  const job = activeJobs[tabId] || await rehydrateJob(tabId);
+  if (!job) return; // genuinely stopped, or the tab was closed while we slept
+
+  // Backstop dedup: if a setTimeout tick already refreshed within this interval,
+  // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
+  const now = Date.now();
+  const curInterval = job.settings.currentInterval || computeInterval(job.settings);
+  if (job._lastRefresh && (now - job._lastRefresh) < curInterval * 0.5) {
+    scheduleNext(tabId, Math.max(0, job.nextRefresh - now));
+    return;
+  }
+  job._lastRefresh = now;
   job.refreshCount = (job.refreshCount || 0) + 1;
 
   // Compute next interval (random or fixed)
@@ -174,10 +253,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
-  // Reschedule
+  // Reschedule (alarm or setTimeout, per interval)
   if (activeJobs[tabId]) {
-    chrome.alarms.create(alarm.name, { delayInMinutes: nextInterval / 60000 });
     activeJobs[tabId].nextRefresh = Date.now() + nextInterval;
+    await saveJobToStorage(tabId, activeJobs[tabId].settings); // persist count + deadline
+    scheduleNext(tabId, nextInterval);
     // Push the new deadline to all extension pages (popup) immediately so its
     // countdown resets in lockstep instead of waiting up to a second for its poll.
     broadcastStatus();
@@ -188,7 +268,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // sendCountdownStart will poll tab.status and retry until it's 'complete'.
   // It reads the job's absolute nextRefresh, so even a late delivery is correct.
   setTimeout(() => sendCountdownStart(tabId, 0), 300);
-});
+}
 
 async function doRefresh(tabId, job) {
   if (job.settings.hardRefresh) {
@@ -198,14 +278,20 @@ async function doRefresh(tabId, job) {
     await chrome.tabs.reload(tabId);
   }
 
-  // Notification (clickable → focuses this tab)
+  // Notification (clickable → focuses this tab). Throttled: at a short interval
+  // a per-refresh notification would spam (e.g. 12/min at 5s). Post at most once
+  // per REFRESH_NOTIFY_MIN_GAP_MS; the message still shows the cumulative count.
   if (job.settings.notify) {
-    notify('refresh', tabId, {
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Auto Refresh Pro',
-      message: `Page refreshed (${job.refreshCount} times)`
-    });
+    const now = Date.now();
+    if (!job._lastRefreshNotify || (now - job._lastRefreshNotify) >= REFRESH_NOTIFY_MIN_GAP_MS) {
+      job._lastRefreshNotify = now;
+      notify('refresh', tabId, {
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: 'Auto Refresh Pro',
+        message: `Page refreshed (${job.refreshCount} times)`
+      });
+    }
   }
   // NOTE: Sound is intentionally NOT played here.
   // Sound only fires when a keyword is detected or a page change is found.
@@ -361,10 +447,12 @@ async function startRefresh(tabId, settings) {
     alarmName: `refresh_${tabId}`,
     startUrl,
     previousContent: initialContent,  // null = no baseline yet, skip first cycle
-    _matcher: buildMatcher(settings)  // compiled once; reused every cycle
+    _matcher: buildMatcher(settings), // compiled once; reused every cycle
+    _lastRefresh: 0,                  // no refresh has fired yet
+    _timer: null,                     // short-interval setTimeout handle
   };
 
-  chrome.alarms.create(`refresh_${tabId}`, { delayInMinutes: interval / 60000 });
+  scheduleNext(tabId, interval);
 
   // Notify content script — retry until it responds, since the content script
   // may not be injected yet (tab still loading) when Start is pressed.
@@ -432,9 +520,12 @@ async function sendCountdownStart(tabId, attempt) {
 async function stopRefresh(tabId) {
   if (activeJobs[tabId]) {
     clearAckBeeps(tabId); // stop any repeat-until-ack loop before dropping the job
-    chrome.alarms.clear(`refresh_${tabId}`);
+    clearTimerLoop(activeJobs[tabId]); // stop the short-interval setTimeout loop
     delete activeJobs[tabId];
   }
+  // Always clear the alarm, even if memory was wiped by a restart — a stray
+  // alarm would otherwise rehydrate a job the user just stopped.
+  chrome.alarms.clear(`refresh_${tabId}`);
   chrome.tabs.sendMessage(tabId, { type: 'STOPPED' }).catch(() => {});
   await removeJobFromStorage(tabId);
   broadcastStatus();
@@ -444,7 +535,14 @@ async function stopRefresh(tabId) {
 async function saveJobToStorage(tabId, settings) {
   const data = await chrome.storage.local.get('activeJobs');
   const jobs = data.activeJobs || {};
-  jobs[tabId] = { settings, savedAt: Date.now() };
+  const job = activeJobs[tabId];
+  jobs[tabId] = {
+    settings,
+    refreshCount: (job && job.refreshCount) || 0,
+    nextRefresh: (job && job.nextRefresh) || (Date.now() + computeInterval(settings)),
+    startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
+    savedAt: Date.now(),
+  };
   await chrome.storage.local.set({ activeJobs: jobs });
 }
 
@@ -453,6 +551,51 @@ async function removeJobFromStorage(tabId) {
   const jobs = data.activeJobs || {};
   delete jobs[tabId];
   await chrome.storage.local.set({ activeJobs: jobs });
+}
+
+// ── Rehydrate after a service-worker restart ────────────────────────────────
+// MV3 terminates idle workers, wiping the in-memory activeJobs map while each
+// per-job alarm persists. These rebuild a job's runtime state from what
+// saveJobToStorage persisted, so the refresh loop (and the UI) survive a restart
+// rather than dying silently the first time the worker idles out.
+async function rehydrateJob(tabId, prefetched) {
+  let stored = prefetched;
+  if (stored === undefined) {
+    const data = await chrome.storage.local.get('activeJobs');
+    stored = (data.activeJobs || {})[tabId];
+  }
+  if (!stored || !stored.settings) return null;
+
+  // The tab may have been closed while the worker slept (onRemoved never fired
+  // to clean up). If it's gone, drop the orphan + its alarm and don't reschedule.
+  let startUrl = stored.startUrl || null; // prefer the persisted original baseline
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!startUrl) startUrl = tab.url || null; // legacy entries without a stored URL
+  } catch (e) {
+    await removeJobFromStorage(tabId);
+    chrome.alarms.clear(`refresh_${tabId}`);
+    return null;
+  }
+
+  activeJobs[tabId] = ARPRehydrate.buildRehydratedJob(stored, tabId, {
+    startUrl,
+    matcher: buildMatcher(stored.settings),
+    now: Date.now(),
+    fallbackInterval: computeInterval(stored.settings),
+  });
+  return activeJobs[tabId];
+}
+
+// Refill every persisted job not currently in memory. Safe to call repeatedly:
+// jobs already in memory are skipped, so a live alarm is never disturbed.
+async function rehydrateAll() {
+  const data = await chrome.storage.local.get('activeJobs');
+  const stored = data.activeJobs || {};
+  for (const tabIdStr of Object.keys(stored)) {
+    const tabId = parseInt(tabIdStr);
+    if (!activeJobs[tabId]) await rehydrateJob(tabId, stored[tabIdStr]);
+  }
 }
 
 // ── Startup: restore jobs ──────────────────────────────────────────────────
@@ -491,31 +634,24 @@ async function restoreJobs() {
 
 // ── Tab removal cleanup ────────────────────────────────────────────────────
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  if (activeJobs[tabId]) {
-    await stopRefresh(tabId);
+  if (activeJobs[tabId]) { await stopRefresh(tabId); return; }
+  // The worker may have restarted with an empty map. Clean any persisted orphan
+  // (and its backstop alarm) so a closed tab's job can't be rehydrated later.
+  const data = await chrome.storage.local.get('activeJobs');
+  if (data.activeJobs && data.activeJobs[tabId]) {
+    await removeJobFromStorage(tabId);
+    chrome.alarms.clear(`refresh_${tabId}`);
   }
 });
 
 // ── Stop refresh if user navigates away from the original URL ──────────────
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  const job = activeJobs[tabId];
-  if (!job || !changeInfo.url) return; // only care about URL changes
-
-  const newUrl  = changeInfo.url;
-  const origUrl = job.startUrl;
-  if (!origUrl) return;
-
-  // Compare origins + pathnames — ignore hash/query so normal page refreshes
-  // (which preserve the URL) don't accidentally trigger a stop.
-  try {
-    const orig = new URL(origUrl);
-    const next = new URL(newUrl);
-    const samePage = orig.origin === next.origin && orig.pathname === next.pathname;
-    if (!samePage) {
-      await stopRefresh(tabId);
-    }
-  } catch (e) {
-    // Unparseable URL (e.g. chrome://) — stop to be safe
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (!changeInfo.url) return; // only care about URL changes
+  // Rehydrate if the worker restarted, so a navigate-away is still caught and the
+  // comparison uses the persisted original URL — not the post-restart one.
+  const job = activeJobs[tabId] || await rehydrateJob(tabId);
+  if (!job || !job.startUrl) return;
+  if (ARPRehydrate.isNavigateAway(job.startUrl, changeInfo.url)) {
     await stopRefresh(tabId);
   }
 });
@@ -530,7 +666,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (activeJobs[tabId] || startingTabs.has(tabId)) return; // don't stomp an existing/in-flight job
   if (!ARPValidators.isSafeNavigableUrl(tab.url)) return;
 
-  const data = await chrome.storage.local.get('urlRules');
+  // One read for both keys (this handler already paid a storage.get for rules).
+  const data = await chrome.storage.local.get(['urlRules', 'activeJobs']);
+  // Don't stomp a job persisted before a worker restart — restore it instead.
+  const storedJob = (data.activeJobs || {})[tabId];
+  if (storedJob && await rehydrateJob(tabId, storedJob)) return;
+
   const rules = Array.isArray(data.urlRules) ? data.urlRules : [];
   if (rules.length === 0) return;
 
@@ -579,6 +720,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   (async () => {
+    await rehydrateAll(); // a restarted worker has an empty activeJobs; refill it
     switch (msg.type) {
       case 'START_REFRESH':
         await startRefresh(msg.tabId, msg.settings);
@@ -615,8 +757,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const job = activeJobs[updateTabId];
         if (!job) { sendResponse({ ok: false }); break; }
 
-        // Cancel existing alarm
-        chrome.alarms.clear(`refresh_${updateTabId}`);
+        // Drop any running short-interval loop before rescheduling
+        clearTimerLoop(job);
 
         // Merge new settings, keeping existing state
         const newInterval = computeInterval(msg.settings);
@@ -625,8 +767,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job.nextRefresh = Date.now() + newInterval;
         job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
 
-        // Create new alarm with new interval
-        chrome.alarms.create(`refresh_${updateTabId}`, { delayInMinutes: newInterval / 60000 });
+        // Reschedule with the right mechanism for the new interval
+        scheduleNext(updateTabId, newInterval);
 
         // Tell the content script to reset its countdown
         sendCountdownStart(updateTabId, 0);
