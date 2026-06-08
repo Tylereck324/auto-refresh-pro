@@ -1,11 +1,11 @@
 // popup.js
 //
 // The popup is a LAUNCHER, not a control panel. It owns the per-launch
-// decisions — interval, keyword detection, and change monitoring — plus
-// Start/Stop. Refresh-behavior preferences (hard refresh, overlay, notify,
-// random timing, keep-scroll, stop-on-click, stop-after, and the sound
-// tone/repeat/volume) live on the Settings page as `globalSettings` defaults
-// and are merged in at gather time below.
+// decisions — interval, randomize timing, stop-on-click, keyword detection,
+// and change monitoring — plus Start/Stop. The remaining refresh-behavior
+// preferences (hard refresh, overlay, notify, keep-scroll, stop-after, and the
+// sound tone/repeat/volume) live on the Settings page as `globalSettings`
+// defaults and are merged in at gather time below.
 
 let currentTabId = null;
 let selectedMs = 30000;
@@ -87,8 +87,10 @@ function bindEvents() {
     });
   });
 
-  // The change-sensitivity fields only matter when "Ignore noise" is on.
+  // The change-sensitivity fields only matter when "Ignore noise" is on, and the
+  // random range only matters when "Randomize interval" is on.
   document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
+  document.getElementById('optRandom').addEventListener('change', updateConditionalRows);
 
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
@@ -112,7 +114,8 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
-   'optNoiseTolerant','optCollapseDigits','optMinChange'
+   'optNoiseTolerant','optCollapseDigits','optMinChange',
+   'optRandom','optRandomMin','optRandomMax','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
@@ -148,6 +151,11 @@ function updateConditionalRows() {
   const noise = document.getElementById('optNoiseTolerant').checked;
   const noiseRow = document.getElementById('noiseRow');
   if (noiseRow) noiseRow.classList.toggle('hidden', !noise);
+
+  // The random range only matters when "Randomize interval" is on.
+  const random = document.getElementById('optRandom').checked;
+  const randomRow = document.getElementById('randomRow');
+  if (randomRow) randomRow.classList.toggle('hidden', !random);
 }
 
 // When a keyword is set, the background uses the keyword as the sole signal and
@@ -229,11 +237,10 @@ async function stopRefresh() {
 // from the Settings-page defaults (globalDefaults).
 function gatherSettings() {
   const g = globalDefaults || {};
-  // Random range comes from Settings (validated on save), but an imported
-  // globalSettings could be inverted/garbage — floor at 2s and swap so the
-  // background never gets a negative-width range.
-  let randomMinSec = Math.max(2, parseFloat(g.randomMin) || 5);
-  let randomMaxSec = Math.max(2, parseFloat(g.randomMax) || 60);
+  // Random range comes from the popup's own inputs — floor at 2s and swap an
+  // inverted range so the background never gets a negative-width range.
+  let randomMinSec = Math.max(2, parseFloat(document.getElementById('optRandomMin').value) || 5);
+  let randomMaxSec = Math.max(2, parseFloat(document.getElementById('optRandomMax').value) || 60);
   if (randomMinSec > randomMaxSec) { [randomMinSec, randomMaxSec] = [randomMaxSec, randomMinSec]; }
   return {
     interval: selectedMs,
@@ -242,15 +249,15 @@ function gatherSettings() {
     showCountdown: g.showCountdown !== false,
     notify: !!g.notify,
     preserveScroll: !!g.preserveScroll,
-    stopOnClick: !!g.stopOnClick,
     stopAfter: Math.max(0, parseInt(g.stopAfter) || 0),
-    randomTimer: !!g.random,
-    randomMin: randomMinSec * 1000,
-    randomMax: randomMaxSec * 1000,
     soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
     soundTone: g.soundTone || 'beep',
     soundRepeat: parseInt(g.soundRepeat) || 1,
     // ── Per-launch (popup) ──
+    randomTimer: document.getElementById('optRandom').checked,
+    randomMin: randomMinSec * 1000,
+    randomMax: randomMaxSec * 1000,
+    stopOnClick: document.getElementById('optStopOnClick').checked,
     sound: document.getElementById('optSound').checked,
     monitorMode: document.getElementById('optMonitor').checked,
     noiseTolerant: document.getElementById('optNoiseTolerant').checked,
@@ -395,6 +402,10 @@ function applyStatus(resp) {
 function saveSettings() {
   const settings = {
     selectedMs,
+    random: document.getElementById('optRandom').checked,
+    randomMin: parseInt(document.getElementById('optRandomMin').value) || 5,
+    randomMax: parseInt(document.getElementById('optRandomMax').value) || 60,
+    stopOnClick: document.getElementById('optStopOnClick').checked,
     sound: document.getElementById('optSound').checked,
     monitor: document.getElementById('optMonitor').checked,
     noiseTolerant: document.getElementById('optNoiseTolerant').checked,
@@ -457,9 +468,22 @@ function loadSettings() {
     if (g.defaultInterval) selectedMs = g.defaultInterval * 1000;
     setCheckbox('optSound', g.sound);
 
+    // Randomize + stop-on-click moved from Settings into the popup. Seed them
+    // from any previously-stored Settings values so an existing config carries
+    // over on first open; the last-used popup state below then takes precedence.
+    setCheckbox('optRandom', g.random);
+    if (g.randomMin) document.getElementById('optRandomMin').value = g.randomMin;
+    if (g.randomMax) document.getElementById('optRandomMax').value = g.randomMax;
+    setCheckbox('optStopOnClick', g.stopOnClick);
+
     // ── 3. Overlay the user's last-used popup state (takes precedence) ──
     if (s) {
       if (s.selectedMs) selectedMs = s.selectedMs;
+
+      if (s.random !== undefined) setCheckbox('optRandom', s.random);
+      if (s.randomMin) document.getElementById('optRandomMin').value = s.randomMin;
+      if (s.randomMax) document.getElementById('optRandomMax').value = s.randomMax;
+      if (s.stopOnClick !== undefined) setCheckbox('optStopOnClick', s.stopOnClick);
 
       setCheckbox('optSound', s.sound);
       setCheckbox('optMonitor', s.monitor);

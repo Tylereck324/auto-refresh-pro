@@ -801,8 +801,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await stopRefresh(toggleTabId);
         } else {
           // Compose the job the same way the popup does: per-launch state from
-          // popupSettings (s), refresh-behavior preferences from globalSettings
-          // (g). Keep the two in sync with popup.js gatherSettings().
+          // popupSettings (s) — including randomize timing and stop-on-click —
+          // and the remaining refresh-behavior defaults from globalSettings (g).
+          // For the moved settings, fall back to g when popupSettings has no
+          // value yet, so an un-migrated config still applies. Keep the two in
+          // sync with popup.js gatherSettings().
           const data = await chrome.storage.local.get(['popupSettings', 'globalSettings']);
           const s = data.popupSettings || {};
           const g = data.globalSettings || {};
@@ -814,14 +817,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             noiseTolerant: s.noiseTolerant || false,
             collapseDigits: s.collapseDigits !== false,
             minChangedFraction: parseFloat(s.minChangedFraction) || 0,
-            randomTimer: !!g.random,
-            randomMin: (parseFloat(g.randomMin) || 5) * 1000,
-            randomMax: (parseFloat(g.randomMax) || 60) * 1000,
+            randomTimer: !!(s.random !== undefined ? s.random : g.random),
+            randomMin: (parseFloat(s.randomMin || g.randomMin) || 5) * 1000,
+            randomMax: (parseFloat(s.randomMax || g.randomMax) || 60) * 1000,
             stopAfter: parseInt(g.stopAfter) || 0, keyword: s.keyword || '',
             kwCaseSensitive: s.kwCaseSensitive || false, kwWholeWord: s.kwWholeWord || false,
             kwRegex: s.kwRegex || false, kwInverse: s.kwInverse || false,
             stopOnKeyword: s.stopOnKeyword || false, stopOnChange: s.stopOnChange || false,
-            stopOnClick: !!g.stopOnClick,
+            stopOnClick: !!(s.stopOnClick !== undefined ? s.stopOnClick : g.stopOnClick),
             preserveScroll: !!g.preserveScroll,
             soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
             soundTone: g.soundTone || 'beep',
