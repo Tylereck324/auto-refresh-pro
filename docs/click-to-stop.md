@@ -1,7 +1,7 @@
 # Feature Spec: Click-to-Stop ("Stop when I click the page")
 
-> Status: Designed, not yet implemented
-> Last updated: 2026-06-05
+> Status: Implemented — the toggle lives in the popup's Refresh Behavior section
+> Last updated: 2026-06-08
 
 Let the user stop an active refresh job by clicking anywhere on the page that's
 currently refreshing. Opt-in, per-job.
@@ -9,8 +9,8 @@ currently refreshing. Opt-in, per-job.
 ## Behavior
 
 - **Opt-in, per-job** stop-condition, **defaults off**. Lives in the popup's
-  Advanced panel beside the other "Stop on…" toggles (`optStopOnKeyword`,
-  `optStopOnChange`, `optStopAfter`).
+  Refresh Behavior section (`optStopOnClick`), a per-launch decision alongside
+  Randomize interval.
 - When enabled, a **left-click anywhere in the top document** stops that tab's
   refresh job.
 - **Pass-through:** the click is never cancelled — clicking a link still
@@ -48,7 +48,7 @@ currently refreshing. Opt-in, per-job.
   message handler, so hotkey-started jobs honor it.
 
 ### `popup.html` / `popup.js`
-- New `id="optStopOnClick"` checkbox under the existing Stop toggles.
+- `id="optStopOnClick"` toggle in the Refresh Behavior section.
 - Wire into:
   - `bindEvents()` save-on-change array
   - `gatherSettings()` → `stopOnClick: document.getElementById('optStopOnClick').checked`

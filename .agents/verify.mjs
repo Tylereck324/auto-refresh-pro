@@ -323,33 +323,27 @@ await ext.goto(extUrl('options.html'), { waitUntil: 'domcontentloaded' });
 // ════════════════════════════════════════════════════════════════════════
 // M2 — random range is validated (inverted min/max gets swapped, floored 2s)
 // ════════════════════════════════════════════════════════════════════════
-// Random config moved to the Settings page; its range is validated on save
-// there (options.js gatherAndSave), stored in seconds.
+// Randomize config now lives in the popup's Refresh Behavior section; the range
+// is floored/swapped in popup.js gatherSettings when composing job settings.
 {
   const p = await browser.newPage();
-  await p.setViewport({ width: 760, height: 900 });
-  await p.goto(extUrl('options.html'), { waitUntil: 'networkidle0' });
+  await p.setViewport({ width: 420, height: 900 });
+  await p.goto(extUrl('popup.html'), { waitUntil: 'networkidle0' });
   await sleep(500);
-  await p.evaluate(() => {
-    document.getElementById('defRandom').checked = true;
-    const min = document.getElementById('defRandomMin');
-    const max = document.getElementById('defRandomMax');
-    min.value = '60'; // intentionally inverted
-    max.value = '5';
-    min.dispatchEvent(new Event('input', { bubbles: true }));
-    max.dispatchEvent(new Event('input', { bubbles: true }));
+  const gathered = await p.evaluate(() => {
+    document.getElementById('optRandom').checked = true;
+    document.getElementById('optRandomMin').value = '60'; // intentionally inverted
+    document.getElementById('optRandomMax').value = '5';
+    return gatherSettings(); // global in the popup's classic script
   });
-  await sleep(700); // debounced auto-save (350ms) + storage write
-  const stored = await p.evaluate(() => new Promise(res =>
-    chrome.storage.local.get('globalSettings', d => res(d.globalSettings || {}))
-  ));
   results.M2 = {
-    randomMinSec: stored.randomMin,
-    randomMaxSec: stored.randomMax,
-    minLEmax: stored.randomMin <= stored.randomMax,
-    flooredAt2s: stored.randomMin >= 2 && stored.randomMax >= 2,
+    randomMinMs: gathered.randomMin,
+    randomMaxMs: gathered.randomMax,
+    randomOn: gathered.randomTimer === true,
+    minLEmax: gathered.randomMin <= gathered.randomMax,
+    flooredAt2s: gathered.randomMin >= 2000 && gathered.randomMax >= 2000,
   };
-  log('M2: inverted 60/5 ->', stored.randomMin, '/', stored.randomMax, '| min<=max =', results.M2.minLEmax);
+  log('M2: inverted 60/5 ->', gathered.randomMin, '/', gathered.randomMax, 'ms | min<=max =', results.M2.minLEmax);
   await p.close();
 }
 

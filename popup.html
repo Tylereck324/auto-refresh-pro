@@ -457,6 +457,10 @@
 
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
+  /* Random-range row: two equal mono inputs with a "to" separator between. */
+  .range-row { display: flex; align-items: center; gap: 8px; }
+  .range-sep { font-size: 11px; color: var(--text2); flex-shrink: 0; }
+
   /* Utility — wins over component display rules (.btn-stop sets display:flex
      with equal specificity but later source order), so hiding always sticks. */
   .hidden { display: none !important; }
@@ -636,6 +640,50 @@
     </button>
   </div>
 
+  <!-- Refresh behavior (collapsible). Per-launch timing/stop preferences that
+       apply to the job started from this popup. The remaining behavior defaults
+       (hard refresh, overlay, notify, keep-scroll, stop-after, sound) stay on
+       the Settings page. -->
+  <div class="section">
+    <button class="section-toggle" id="toggleBehavior" aria-expanded="false" aria-controls="panelBehavior">
+      Refresh Behavior
+      <span class="section-chevron" aria-hidden="true">▶</span>
+    </button>
+    <div class="collapse-panel" id="panelBehavior">
+      <div class="opt-card" id="cardRandom">
+        <div>
+          <div class="opt-label">Randomize interval</div>
+          <div class="opt-sub">Vary each wait — looks less robotic</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optRandom" aria-label="Randomize interval">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <!-- Random range — shown only while Randomize is on. -->
+      <div id="randomRow" class="hidden">
+        <div class="field-label field-subhead">RANDOM RANGE (SECONDS)</div>
+        <div class="range-row">
+          <input class="custom-input" type="number" id="optRandomMin" min="2" value="5" aria-label="Random range minimum seconds">
+          <span class="range-sep">to</span>
+          <input class="custom-input" type="number" id="optRandomMax" min="2" value="60" aria-label="Random range maximum seconds">
+        </div>
+      </div>
+
+      <div class="opt-card" id="cardStopOnClick">
+        <div>
+          <div class="opt-label">Stop on page click</div>
+          <div class="opt-sub">Clicking the page stops auto refresh</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optStopOnClick" aria-label="Stop on page click">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <!-- Keyword detection (collapsible) -->
   <div class="section">
     <button class="section-toggle" id="toggleKeyword" aria-expanded="false" aria-controls="panelKeyword">
@@ -676,9 +724,10 @@
     </div>
   </div>
 
-  <!-- Change detection (collapsible). Refresh-behavior preferences (hard
-       refresh, overlay, random, keep-scroll, notify, stop-on-click, stop-after,
-       sound config) now live on the Settings page — the popup is a launcher. -->
+  <!-- Change detection (collapsible). The remaining refresh-behavior defaults
+       (hard refresh, overlay, notify, keep-scroll, stop-after, sound config)
+       live on the Settings page; randomize + stop-on-click are per-launch and
+       sit in the Refresh Behavior section above. -->
   <div class="section">
     <button class="section-toggle" id="toggleChange" aria-expanded="false" aria-controls="panelChange">
       Change Detection

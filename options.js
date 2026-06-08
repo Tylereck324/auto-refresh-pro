@@ -188,12 +188,9 @@ function load() {
     syncVolumeReadout();
     if (s.defaultInterval) document.getElementById('defInterval').value = s.defaultInterval;
 
-    // Refresh-behavior defaults (moved here from the popup).
-    setCheck('defRandom', s.random);
-    if (s.randomMin) document.getElementById('defRandomMin').value = s.randomMin;
-    if (s.randomMax) document.getElementById('defRandomMax').value = s.randomMax;
+    // Refresh-behavior defaults. (Randomize + stop-on-click are per-launch and
+    // live in the popup; only the global defaults remain here.)
     setCheck('defPreserveScroll', s.preserveScroll);
-    setCheck('defStopOnClick', s.stopOnClick);
     if (s.stopAfter !== undefined) document.getElementById('defStopAfter').value = s.stopAfter;
 
     // Presets. An empty array is truthy, so `s.presets || defaultPresets` would
@@ -232,12 +229,6 @@ function gatherAndSave() {
   // length — so importing/having ≠8 presets doesn't drop or fabricate rows.
   const presets = readPresets(document, presetCount);
 
-  // Random range: floor at 2s and swap if min > max so a job never gets an
-  // inverted/negative-width range (mirrors the old popup gather logic).
-  let randomMin = Math.max(2, parseInt(document.getElementById('defRandomMin').value) || 5);
-  let randomMax = Math.max(2, parseInt(document.getElementById('defRandomMax').value) || 60);
-  if (randomMin > randomMax) { [randomMin, randomMax] = [randomMax, randomMin]; }
-
   const settings = {
     hardRefresh: document.getElementById('defHardRefresh').checked,
     showCountdown: document.getElementById('defCountdown').checked,
@@ -247,12 +238,8 @@ function gatherAndSave() {
     soundRepeat: AlertSounds.clampRepeat(document.getElementById('defSoundRepeat').value),
     soundVolume: AlertSounds.clampVolume(document.getElementById('defSoundVolume').value),
     defaultInterval: parseInt(document.getElementById('defInterval').value) || 30,
-    // Refresh-behavior defaults (moved here from the popup).
-    random: document.getElementById('defRandom').checked,
-    randomMin: randomMin,
-    randomMax: randomMax,
+    // Refresh-behavior defaults. (Randomize + stop-on-click moved to the popup.)
     preserveScroll: document.getElementById('defPreserveScroll').checked,
-    stopOnClick: document.getElementById('defStopOnClick').checked,
     stopAfter: Math.max(0, parseInt(document.getElementById('defStopAfter').value) || 0),
     presets: presets
   };
@@ -289,12 +276,12 @@ function save() {
 
 // Static default controls — attach once.
 ['defHardRefresh', 'defCountdown', 'defNotify', 'defSound', 'defSoundTone',
- 'defRandom', 'defPreserveScroll', 'defStopOnClick'].forEach(function(id) {
+ 'defPreserveScroll'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', save);
 });
 ['defInterval', 'defSoundRepeat', 'defSoundVolume',
- 'defRandomMin', 'defRandomMax', 'defStopAfter'].forEach(function(id) {
+ 'defStopAfter'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', save);
 });

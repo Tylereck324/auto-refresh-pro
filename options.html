@@ -289,42 +289,17 @@
   </div>
 
   <!-- ── REFRESH BEHAVIOR ──
-       These were previously per-launch toggles crammed into the popup. They are
-       preferences, so they live here as defaults and apply to every job started
-       from the popup or the hotkey. -->
+       Defaults that apply to every job started from the popup or the hotkey.
+       (Randomize interval and Stop on page click are per-launch decisions and
+       live in the popup's Refresh Behavior section instead.) -->
   <div class="card">
     <div class="card-title">Refresh Behavior</div>
-    <div class="setting-row">
-      <div>
-        <div class="setting-label">Randomize Interval</div>
-        <div class="setting-sub">Vary each wait within a range (looks less robotic)</div>
-      </div>
-      <label class="toggle"><input type="checkbox" id="defRandom" aria-label="Randomize interval"><span class="toggle-slider"></span></label>
-    </div>
-    <div class="setting-row">
-      <div>
-        <div class="setting-label">Random Range</div>
-        <div class="setting-sub">Shortest / longest interval when randomizing (seconds)</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input class="num-input" type="number" id="defRandomMin" value="5" min="2" aria-label="Random range minimum seconds">
-        <span style="color:var(--text2);font-size:12px;">to</span>
-        <input class="num-input" type="number" id="defRandomMax" value="60" min="2" aria-label="Random range maximum seconds">
-      </div>
-    </div>
     <div class="setting-row">
       <div>
         <div class="setting-label">Keep Scroll Position</div>
         <div class="setting-sub">Restore the page's scroll position after each refresh</div>
       </div>
       <label class="toggle"><input type="checkbox" id="defPreserveScroll" aria-label="Keep scroll position"><span class="toggle-slider"></span></label>
-    </div>
-    <div class="setting-row">
-      <div>
-        <div class="setting-label">Stop on Page Click</div>
-        <div class="setting-sub">Clicking anywhere on the page stops auto refresh</div>
-      </div>
-      <label class="toggle"><input type="checkbox" id="defStopOnClick" aria-label="Stop on page click"><span class="toggle-slider"></span></label>
     </div>
     <div class="setting-row">
       <div>
