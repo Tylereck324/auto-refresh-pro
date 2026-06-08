@@ -786,28 +786,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (activeJobs[toggleTabId]) {
           await stopRefresh(toggleTabId);
         } else {
-          const hkData = await chrome.storage.local.get('popupSettings');
-          const s = hkData.popupSettings || {};
-          const interval = s.selectedMs || 30000;
+          // Compose the job the same way the popup does: per-launch state from
+          // popupSettings (s), refresh-behavior preferences from globalSettings
+          // (g). Keep the two in sync with popup.js gatherSettings().
+          const data = await chrome.storage.local.get(['popupSettings', 'globalSettings']);
+          const s = data.popupSettings || {};
+          const g = data.globalSettings || {};
+          const interval = s.selectedMs || (g.defaultInterval ? g.defaultInterval * 1000 : 30000);
           await startRefresh(toggleTabId, {
-            interval, hardRefresh: s.hardRefresh || false,
-            showCountdown: s.showCountdown !== false, notify: s.notify || false,
+            interval, hardRefresh: !!g.hardRefresh,
+            showCountdown: g.showCountdown !== false, notify: !!g.notify,
             sound: s.sound || false, monitorMode: s.monitor || false,
             noiseTolerant: s.noiseTolerant || false,
             collapseDigits: s.collapseDigits !== false,
             minChangedFraction: parseFloat(s.minChangedFraction) || 0,
-            randomTimer: s.random || false,
-            randomMin: (parseFloat(s.randomMin) || 5) * 1000,
-            randomMax: (parseFloat(s.randomMax) || 60) * 1000,
-            stopAfter: parseInt(s.stopAfter) || 0, keyword: s.keyword || '',
+            randomTimer: !!g.random,
+            randomMin: (parseFloat(g.randomMin) || 5) * 1000,
+            randomMax: (parseFloat(g.randomMax) || 60) * 1000,
+            stopAfter: parseInt(g.stopAfter) || 0, keyword: s.keyword || '',
             kwCaseSensitive: s.kwCaseSensitive || false, kwWholeWord: s.kwWholeWord || false,
             kwRegex: s.kwRegex || false, kwInverse: s.kwInverse || false,
             stopOnKeyword: s.stopOnKeyword || false, stopOnChange: s.stopOnChange || false,
-            stopOnClick: s.stopOnClick || false,
-            preserveScroll: s.preserveScroll || false,
-            soundVolume: typeof s.soundVolume === 'number' ? s.soundVolume : 0.9,
-            soundTone: s.soundTone || 'beep',
-            soundRepeat: parseInt(s.soundRepeat) || 1,
+            stopOnClick: !!g.stopOnClick,
+            preserveScroll: !!g.preserveScroll,
+            soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
+            soundTone: g.soundTone || 'beep',
+            soundRepeat: parseInt(g.soundRepeat) || 1,
             beepUntilAck: s.beepUntilAck || false,
             beepAckIntervalSec: parseFloat(s.beepAckIntervalSec) || 5,
             beepRepeatMax: parseInt(s.beepRepeatMax) || 5,

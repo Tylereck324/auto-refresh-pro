@@ -12,7 +12,8 @@
   .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
   .logo-icon { width: 28px; height: 28px; background: var(--accent-g); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
   .container { max-width: 600px; margin: 32px auto; padding: 0 24px 48px; }
-  .page-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
+  /* Weight/size from the shared .h-page tier in theme.css; layout only here. */
+  .page-title { margin-bottom: 24px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 20px; margin-bottom: 16px; }
   .card-title { font-size: 11px; font-weight: 600; margin-bottom: 16px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 16px; }
@@ -25,7 +26,7 @@
   .preset-item input:focus { border-color: var(--accent); }
   .preset-label { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--text2); }
   .autosave-note { margin-top: 16px; text-align: center; font-size: 12px; color: var(--text2); }
-  .success-msg { display: none; color: var(--accent2); font-weight: 600; }
+  .success-msg { display: none; color: var(--success); font-weight: 600; }
 
   /* ── Keybinding recorder ── */
   .hotkey-section { display: flex; flex-direction: column; gap: 12px; }
@@ -109,7 +110,7 @@
   .btn-record.recording { background: rgba(88,166,255,0.25); }
   .btn-record.confirm {
     background: rgba(63,185,80,0.15);
-    color: var(--accent2);
+    color: var(--success);
     border-color: rgba(63,185,80,0.4);
   }
   .btn-record.confirm:hover { background: rgba(63,185,80,0.25); }
@@ -176,7 +177,7 @@
 </header>
 
 <div class="container">
-  <div class="page-title">Extension Settings</div>
+  <div class="page-title h-page">Extension Settings</div>
 
   <!-- ── HOTKEY ── -->
   <div class="card">
@@ -271,6 +272,53 @@
         <div class="setting-sub">Pre-selected interval when opening popup (seconds)</div>
       </div>
       <input class="num-input" type="number" id="defInterval" value="30" min="2" aria-label="Default interval in seconds">
+    </div>
+  </div>
+
+  <!-- ── REFRESH BEHAVIOR ──
+       These were previously per-launch toggles crammed into the popup. They are
+       preferences, so they live here as defaults and apply to every job started
+       from the popup or the hotkey. -->
+  <div class="card">
+    <div class="card-title">Refresh Behavior</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Randomize Interval</div>
+        <div class="setting-sub">Vary each wait within a range (looks less robotic)</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defRandom" aria-label="Randomize interval"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Random Range</div>
+        <div class="setting-sub">Shortest / longest interval when randomizing (seconds)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input class="num-input" type="number" id="defRandomMin" value="5" min="2" aria-label="Random range minimum seconds">
+        <span style="color:var(--text2);font-size:12px;">to</span>
+        <input class="num-input" type="number" id="defRandomMax" value="60" min="2" aria-label="Random range maximum seconds">
+      </div>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Keep Scroll Position</div>
+        <div class="setting-sub">Restore the page's scroll position after each refresh</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defPreserveScroll" aria-label="Keep scroll position"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Stop on Page Click</div>
+        <div class="setting-sub">Clicking anywhere on the page stops auto refresh</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="defStopOnClick" aria-label="Stop on page click"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Stop After N Refreshes</div>
+        <div class="setting-sub">Automatically stop after this many refreshes (0 = unlimited)</div>
+      </div>
+      <input class="num-input" type="number" id="defStopAfter" value="0" min="0" aria-label="Stop after N refreshes">
     </div>
   </div>
 

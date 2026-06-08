@@ -73,7 +73,11 @@ await shot('popup.html', 'popup-idle', { width: 360, height: 640, full: true });
     // Resilient so this same harness can also run against older popup markup
     // (for before/after captures) where these elements don't exist.
     const click = (id) => { const el = document.getElementById(id); if (el) el.click(); };
-    click('toggleOptions'); click('toggleKeyword'); click('advancedToggle');
+    // toggleOptions/advancedToggle only exist in the older (pre-launcher)
+    // markup; toggleChange is the current change-detection panel. click() no-ops
+    // on any that are absent, so this works for both before/after captures.
+    click('toggleKeyword'); click('toggleChange');
+    click('toggleOptions'); click('advancedToggle');
     const kw = document.getElementById('optKeyword');
     if (kw) { kw.value = 'in stock'; kw.dispatchEvent(new Event('input', { bubbles: true })); }
     const snd = document.getElementById('optSound');

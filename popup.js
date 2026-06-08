@@ -1,8 +1,19 @@
 // popup.js
+//
+// The popup is a LAUNCHER, not a control panel. It owns the per-launch
+// decisions — interval, keyword detection, and change monitoring — plus
+// Start/Stop. Refresh-behavior preferences (hard refresh, overlay, notify,
+// random timing, keep-scroll, stop-on-click, stop-after, and the sound
+// tone/repeat/volume) live on the Settings page as `globalSettings` defaults
+// and are merged in at gather time below.
 
 let currentTabId = null;
 let selectedMs = 30000;
 let isActive = false;
+
+// Settings-page defaults (globalSettings). Loaded once in loadSettings and read
+// by gatherSettings for the preferences the popup no longer exposes directly.
+let globalDefaults = {};
 
 // Built-in fallback presets, mirrors options.js. Overridden by the user's
 // custom presets from the Settings page (globalSettings.presets) when present.
@@ -27,7 +38,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentTabId = tab.id;
 
   renderPresets(DEFAULT_PRESETS); // immediate paint; loadSettings re-renders with custom presets
-  AlertSounds.populateSelect(document.getElementById('optSoundTone')); // before loadSettings sets the value
   loadSettings();
   await refreshStatus();
   bindEvents();
@@ -77,19 +87,8 @@ function bindEvents() {
     });
   });
 
-  // Monitor / random / sound conditionals
-  document.getElementById('optMonitor').addEventListener('change', updateConditionalRows);
-  document.getElementById('optRandom').addEventListener('change', updateConditionalRows);
+  // The change-sensitivity fields only matter when "Ignore noise" is on.
   document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
-  document.getElementById('optSound').addEventListener('change', updateConditionalRows);
-
-  // Live volume percentage readout next to the slider.
-  document.getElementById('optSoundVolume').addEventListener('input', syncVolumeReadout);
-
-  // Preview the currently selected tone at the chosen volume. Plays locally in
-  // the popup (this click is a user gesture, so autoplay is allowed) — no
-  // offscreen round-trip — using the same AlertSounds catalog the alert uses.
-  document.getElementById('btnPreviewSound').addEventListener('click', previewSound);
 
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
@@ -110,16 +109,14 @@ function bindEvents() {
     chrome.tabs.create({ url: chrome.runtime.getURL('manage.html') });
   });
 
-  // Save settings on any toggle change
-  ['optHardRefresh','optCountdown','optNotify','optSound','optMonitor','optRandom',
-   'optStopAfter','optKeyword','optStopOnKeyword','optStopOnChange','optStopOnClick','optPreserveScroll','optRandomMin','optRandomMax',
-   'optSoundTone','optSoundRepeat','optSoundVolume',
+  // Save the per-launch popup state on any change.
+  ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
    'optNoiseTolerant','optCollapseDigits','optMinChange'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
-    if (el && el.type === 'text') el.addEventListener('input', saveSettings);
+    if (el && (el.type === 'text' || el.type === 'number')) el.addEventListener('input', saveSettings);
   });
 }
 
@@ -147,17 +144,10 @@ function applyCustomInterval() {
 }
 
 function updateConditionalRows() {
-  const random = document.getElementById('optRandom').checked;
-  const randomRangeRow = document.getElementById('randomRangeRow');
-  if (randomRangeRow) randomRangeRow.classList.toggle('hidden', !random);
   // The change-sensitivity fields only matter when "Ignore noise" is on.
   const noise = document.getElementById('optNoiseTolerant').checked;
   const noiseRow = document.getElementById('noiseRow');
   if (noiseRow) noiseRow.classList.toggle('hidden', !noise);
-  // Sound tone/repeat/volume only matter when the sound alert is enabled.
-  const sound = document.getElementById('optSound').checked;
-  const soundRow = document.getElementById('soundRow');
-  if (soundRow) soundRow.classList.toggle('hidden', !sound);
 }
 
 // When a keyword is set, the background uses the keyword as the sole signal and
@@ -234,28 +224,38 @@ async function stopRefresh() {
 }
 
 // ── Settings gather ─────────────────────────────────────────────────────────
+// Compose the full job settings the background expects: the per-launch fields
+// from the popup's own controls, plus the refresh-behavior preferences pulled
+// from the Settings-page defaults (globalDefaults).
 function gatherSettings() {
-  const randomTimer = document.getElementById('optRandom').checked;
-  // Validate the random range: floor at 2s, and swap if min > max so the
-  // interval computation never gets an inverted/negative-width range.
-  let randomMinSec = Math.max(2, parseFloat(document.getElementById('optRandomMin').value) || 5);
-  let randomMaxSec = Math.max(2, parseFloat(document.getElementById('optRandomMax').value) || 60);
+  const g = globalDefaults || {};
+  // Random range comes from Settings (validated on save), but an imported
+  // globalSettings could be inverted/garbage — floor at 2s and swap so the
+  // background never gets a negative-width range.
+  let randomMinSec = Math.max(2, parseFloat(g.randomMin) || 5);
+  let randomMaxSec = Math.max(2, parseFloat(g.randomMax) || 60);
   if (randomMinSec > randomMaxSec) { [randomMinSec, randomMaxSec] = [randomMaxSec, randomMinSec]; }
-
   return {
     interval: selectedMs,
-    hardRefresh: document.getElementById('optHardRefresh').checked,
-    showCountdown: document.getElementById('optCountdown').checked,
-    notify: document.getElementById('optNotify').checked,
+    // ── Preferences (Settings page) ──
+    hardRefresh: !!g.hardRefresh,
+    showCountdown: g.showCountdown !== false,
+    notify: !!g.notify,
+    preserveScroll: !!g.preserveScroll,
+    stopOnClick: !!g.stopOnClick,
+    stopAfter: Math.max(0, parseInt(g.stopAfter) || 0),
+    randomTimer: !!g.random,
+    randomMin: randomMinSec * 1000,
+    randomMax: randomMaxSec * 1000,
+    soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
+    soundTone: g.soundTone || 'beep',
+    soundRepeat: parseInt(g.soundRepeat) || 1,
+    // ── Per-launch (popup) ──
     sound: document.getElementById('optSound').checked,
     monitorMode: document.getElementById('optMonitor').checked,
     noiseTolerant: document.getElementById('optNoiseTolerant').checked,
     collapseDigits: document.getElementById('optCollapseDigits').checked,
     minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
-    randomTimer,
-    randomMin: randomMinSec * 1000,
-    randomMax: randomMaxSec * 1000,
-    stopAfter: parseInt(document.getElementById('optStopAfter').value) || 0,
     keyword: document.getElementById('optKeyword').value.trim(),
     kwCaseSensitive: document.getElementById('optKwCase').checked,
     kwWholeWord: document.getElementById('optKwWhole').checked,
@@ -263,20 +263,11 @@ function gatherSettings() {
     kwInverse: document.getElementById('optKwInverse').checked,
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
-    stopOnClick: document.getElementById('optStopOnClick').checked,
-    preserveScroll: document.getElementById('optPreserveScroll').checked,
-    soundVolume: clampSoundVolume(document.getElementById('optSoundVolume').value),
-    soundTone: document.getElementById('optSoundTone').value || 'beep',
-    soundRepeat: clampSoundRepeat(document.getElementById('optSoundRepeat').value),
     beepUntilAck: document.getElementById('optBeepUntilAck').checked,
     currentInterval: selectedMs
   };
 }
 
-// Volume (0–100 UI → 0–1 gain) and repeat clamping live in the shared catalog
-// so the popup, options page, and offscreen player all agree on the bounds.
-const clampSoundVolume = AlertSounds.clampVolume;
-const clampSoundRepeat = AlertSounds.clampRepeat;
 // "Min change %" is 0–100 in the UI but stored/sent as a 0–1 fraction.
 function clampFraction(raw) {
   const pct = parseInt(raw, 10);
@@ -295,8 +286,13 @@ function setActiveUI(active) {
   if (label) { label.className = 'status-label'  + (active ? ' active'   : '');
                label.textContent = active ? 'ACTIVE' : 'IDLE'; }
   if (hero)  { hero.className  = 'hero'          + (active ? ' visible'  : ''); }
+  // Show exactly one action button so it always reflects the real state:
+  // Start when idle, Stop when running. (A disabled-looking faint button is
+  // ambiguous; hiding the inapplicable one removes the guesswork.)
   btnStart.disabled = active;
   btnStop.disabled  = !active;
+  btnStart.classList.toggle('hidden', active);
+  btnStop.classList.toggle('hidden', !active);
 }
 
 // Point the countdown at an absolute deadline and start rendering it.
@@ -392,19 +388,18 @@ function applyStatus(resp) {
 }
 
 // ── Persist settings ─────────────────────────────────────────────────────────
+// popupSettings is the popup's sticky per-launch state. It only holds the
+// fields the popup still owns; refresh-behavior preferences live in
+// globalSettings (Settings page) and are merged back in at gather time, both
+// here and in the background's hotkey-toggle handler.
 function saveSettings() {
   const settings = {
     selectedMs,
-    hardRefresh: document.getElementById('optHardRefresh').checked,
-    showCountdown: document.getElementById('optCountdown').checked,
-    notify: document.getElementById('optNotify').checked,
     sound: document.getElementById('optSound').checked,
     monitor: document.getElementById('optMonitor').checked,
     noiseTolerant: document.getElementById('optNoiseTolerant').checked,
     collapseDigits: document.getElementById('optCollapseDigits').checked,
     minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
-    random: document.getElementById('optRandom').checked,
-    stopAfter: document.getElementById('optStopAfter').value,
     keyword: document.getElementById('optKeyword').value,
     kwCaseSensitive: document.getElementById('optKwCase').checked,
     kwWholeWord: document.getElementById('optKwWhole').checked,
@@ -412,13 +407,6 @@ function saveSettings() {
     kwInverse: document.getElementById('optKwInverse').checked,
     stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
     stopOnChange: document.getElementById('optStopOnChange').checked,
-    stopOnClick: document.getElementById('optStopOnClick').checked,
-    preserveScroll: document.getElementById('optPreserveScroll').checked,
-    randomMin: document.getElementById('optRandomMin').value,
-    randomMax: document.getElementById('optRandomMax').value,
-    soundVolume: clampSoundVolume(document.getElementById('optSoundVolume').value),
-    soundTone: document.getElementById('optSoundTone').value || 'beep',
-    soundRepeat: clampSoundRepeat(document.getElementById('optSoundRepeat').value),
     beepUntilAck: document.getElementById('optBeepUntilAck').checked,
   };
   chrome.storage.local.set({ popupSettings: settings });
@@ -458,27 +446,21 @@ function highlightSelectedPreset() {
 function loadSettings() {
   chrome.storage.local.get(['popupSettings', 'globalSettings'], ({ popupSettings: s, globalSettings: g }) => {
     g = g || {};
+    globalDefaults = g; // read by gatherSettings for the moved-to-Settings prefs
 
     // ── 1. Custom presets from the Settings page (or built-in defaults) ──
     renderPresets(g.presets);
 
     // ── 2. Seed from the Settings-page defaults ──
-    // These apply on first use and act as the baseline; the user's last-used
-    // popup state (popupSettings) below takes precedence when present.
+    // The default interval and the sound on/off default apply on first use; the
+    // user's last-used popup state below takes precedence when present.
     if (g.defaultInterval) selectedMs = g.defaultInterval * 1000;
-    setCheckbox('optHardRefresh', g.hardRefresh);
-    setCheckbox('optCountdown', g.showCountdown !== false);
-    setCheckbox('optNotify', g.notify);
     setCheckbox('optSound', g.sound);
-    setSoundControls(g);
 
     // ── 3. Overlay the user's last-used popup state (takes precedence) ──
     if (s) {
       if (s.selectedMs) selectedMs = s.selectedMs;
 
-      setCheckbox('optHardRefresh', s.hardRefresh);
-      setCheckbox('optCountdown', s.showCountdown !== false);
-      setCheckbox('optNotify', s.notify);
       setCheckbox('optSound', s.sound);
       setCheckbox('optMonitor', s.monitor);
       setCheckbox('optNoiseTolerant', s.noiseTolerant);
@@ -486,22 +468,15 @@ function loadSettings() {
       if (typeof s.minChangedFraction === 'number') {
         document.getElementById('optMinChange').value = Math.round(s.minChangedFraction * 100);
       }
-      setCheckbox('optRandom', s.random);
       setCheckbox('optStopOnKeyword', s.stopOnKeyword);
       setCheckbox('optStopOnChange', s.stopOnChange);
-      setCheckbox('optStopOnClick', s.stopOnClick);
-      setCheckbox('optPreserveScroll', s.preserveScroll);
       setCheckbox('optKwCase', s.kwCaseSensitive);
       setCheckbox('optKwWhole', s.kwWholeWord);
       setCheckbox('optKwRegex', s.kwRegex);
       setCheckbox('optKwInverse', s.kwInverse);
       setCheckbox('optBeepUntilAck', s.beepUntilAck);
 
-      if (s.stopAfter !== undefined) document.getElementById('optStopAfter').value = s.stopAfter;
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
-      if (s.randomMin) document.getElementById('optRandomMin').value = s.randomMin;
-      if (s.randomMax) document.getElementById('optRandomMax').value = s.randomMax;
-      setSoundControls(s);
     }
 
     highlightSelectedPreset();
@@ -529,31 +504,4 @@ function validateKeywordRegex() {
   input.classList.toggle('invalid', bad);
   if (hint) hint.classList.toggle('show', bad);
   return !bad;
-}
-
-// Apply sound settings from either globalSettings (gain 0–1) or popupSettings.
-// Only writes a control when the source actually carries that field, so the
-// defaults→last-used layering in loadSettings is preserved.
-function setSoundControls(src) {
-  if (!src) return;
-  if (typeof src.soundVolume === 'number') {
-    document.getElementById('optSoundVolume').value = Math.round(src.soundVolume * 100);
-  }
-  if (src.soundTone) document.getElementById('optSoundTone').value = src.soundTone;
-  if (src.soundRepeat) document.getElementById('optSoundRepeat').value = src.soundRepeat;
-  syncVolumeReadout();
-}
-
-// Mirror the sound-volume slider value into its percentage readout.
-function syncVolumeReadout() {
-  const slider = document.getElementById('optSoundVolume');
-  const out = document.getElementById('optSoundVolumeVal');
-  if (slider && out) out.textContent = (parseInt(slider.value, 10) || 0) + '%';
-}
-
-// Preview the selected tone once, at the chosen volume.
-function previewSound() {
-  const tone   = document.getElementById('optSoundTone').value || 'beep';
-  const volume = clampSoundVolume(document.getElementById('optSoundVolume').value);
-  AlertSounds.playTone(tone, { volume: volume, repeat: 1 });
 }

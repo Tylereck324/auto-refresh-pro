@@ -11,10 +11,13 @@
   header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
   .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
   .logo-icon { width: 28px; height: 28px; background: var(--accent-g); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
-  .btn-danger { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font-sans); font-size: 12px; font-weight: 600; }
-  .btn-danger:hover { background: rgba(248,81,73,0.25); }
+  .btn-danger { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font-sans); font-size: 12px; font-weight: 600; transition: background 0.15s, opacity 0.15s; }
+  .btn-danger:hover:not(:disabled) { background: rgba(248,81,73,0.25); }
+  .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
   .container { max-width: 900px; margin: 32px auto; padding: 0 24px; }
-  .page-title { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  /* Weight/size come from the shared .h-page / .h-section heading tiers in
+     theme.css; these rules only add page layout. */
+  .page-title { margin-bottom: 8px; }
   .page-sub { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
   .tab-list { display: flex; flex-direction: column; gap: 12px; }
   .tab-card {
@@ -35,19 +38,22 @@
   .tab-url { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
   .tab-stats { display: flex; gap: 12px; flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text2); }
   .stat-pill { background: var(--surface2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }
-  .active-badge { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.3); }
+  .active-badge { background: rgba(63,185,80,0.15); color: var(--success); border: 1px solid rgba(63,185,80,0.3); }
   .tab-actions { display: flex; gap: 8px; flex-shrink: 0; }
   .btn-sm { padding: 6px 12px; border-radius: var(--radius-s); font-size: 11px; font-weight: 600; cursor: pointer; border: none; font-family: var(--font-sans); }
   .btn-sm-stop { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); }
   .btn-sm-stop:hover { background: rgba(248,81,73,0.25); }
   .btn-sm-go { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
   .btn-sm-go:hover { border-color: var(--accent); color: var(--accent); }
-  .empty-state { text-align: center; padding: 80px 0; color: var(--text2); }
-  .empty-icon { font-size: 48px; margin-bottom: 16px; }
-  .empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+  /* Contained card rather than a full-height void, so the config sections below
+     read as co-equal content instead of footnotes under a giant empty band. */
+  .empty-state { text-align: center; padding: 36px 20px; color: var(--text2);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; }
+  .empty-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 
   /* Auto-start section */
-  .section-title { font-size: 14px; font-weight: 600; margin: 32px 0 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .section-title { margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
   .autostart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 20px; }
   .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
   .form-row label { font-size: 11px; color: var(--text2); min-width: 60px; }
@@ -85,7 +91,7 @@
     z-index: 1000;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.success { color: var(--accent2); border-color: rgba(63,185,80,0.4); }
+  .toast.success { color: var(--success); border-color: rgba(63,185,80,0.4); }
   .toast.error { color: var(--danger); border-color: rgba(248,81,73,0.4); }
 </style>
 </head>
@@ -99,7 +105,7 @@
 </header>
 
 <div class="container">
-  <div class="page-title">Active Refresh Jobs</div>
+  <div class="page-title h-page">Active Refresh Jobs</div>
   <div class="page-sub">View and manage all tabs with auto refresh enabled.</div>
 
   <div class="tab-list" id="tabList">
@@ -111,7 +117,7 @@
   </div>
 
   <!-- Auto-Start URLs -->
-  <div class="section-title">Auto-Start URLs on Browser Open</div>
+  <div class="section-title h-section">Auto-Start URLs on Browser Open</div>
   <div class="autostart-card">
     <div class="form-row">
       <label>URL</label>
@@ -123,7 +129,7 @@
   </div>
 
   <!-- URL Rules -->
-  <div class="section-title">URL Rules (auto-start on matching pages)</div>
+  <div class="section-title h-section">URL Rules (auto-start on matching pages)</div>
   <div class="autostart-card">
     <div style="color:var(--text2);font-size:12px;margin-bottom:10px;">
       When a tab finishes loading a URL matching a pattern, refresh starts automatically.
@@ -139,7 +145,7 @@
   </div>
 
   <!-- Import/Export -->
-  <div class="section-title">Import / Export Settings</div>
+  <div class="section-title h-section">Import / Export Settings</div>
   <div class="autostart-card">
     <div style="color:var(--text2);font-size:12px;margin-bottom:10px;">Back up or restore your Auto Refresh Pro settings as a JSON file.</div>
     <div class="io-row">

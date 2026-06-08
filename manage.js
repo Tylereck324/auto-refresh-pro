@@ -35,6 +35,11 @@ async function loadJobs() {
   const tabIds = Object.keys(jobs).map(Number);
   const tabList = document.getElementById('tabList');
 
+  // "Stop All" only does something when jobs exist — disable it otherwise so it
+  // isn't a prominent destructive button that's actually a no-op.
+  const stopAllBtn = document.getElementById('stopAllBtn');
+  if (stopAllBtn) stopAllBtn.disabled = tabIds.length === 0;
+
   // Skip the DOM rebuild when nothing material changed since the last render.
   // The 3s poll would otherwise wipe out keyboard focus / hover on every tick.
   const sig = JSON.stringify(tabIds.map(id => [
