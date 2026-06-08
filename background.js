@@ -13,6 +13,9 @@ importScripts('normalize.js');
 importScripts('notif-id.js');
 // Pure post-restart job-rebuild + navigate-away helpers (ARPRehydrate).
 importScripts('rehydrate.js');
+// Async mutex (ARPSerialize.createMutex) used to serialize storage.activeJobs
+// read-modify-write so concurrent saves/removes can't drop a tab's entry.
+importScripts('serialize.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -532,25 +535,36 @@ async function stopRefresh(tabId) {
 }
 
 // ── Storage helpers ────────────────────────────────────────────────────────
+// Every activeJobs read-modify-write goes through this single mutex. Without it,
+// two concurrent saves (e.g. two tabs refreshing at once) interleave get→set and
+// the second write clobbers the first tab's entry — silently un-persisting a live
+// job so it's lost on the next worker restart. withJobsStore re-reads inside the
+// lock, so each mutation sees the previous one's result.
+const jobsStoreMutex = ARPSerialize.createMutex();
+function withJobsStore(mutate) {
+  return jobsStoreMutex(async () => {
+    const data = await chrome.storage.local.get('activeJobs');
+    const jobs = data.activeJobs || {};
+    await mutate(jobs);
+    await chrome.storage.local.set({ activeJobs: jobs });
+  });
+}
+
 async function saveJobToStorage(tabId, settings) {
-  const data = await chrome.storage.local.get('activeJobs');
-  const jobs = data.activeJobs || {};
-  const job = activeJobs[tabId];
-  jobs[tabId] = {
-    settings,
-    refreshCount: (job && job.refreshCount) || 0,
-    nextRefresh: (job && job.nextRefresh) || (Date.now() + computeInterval(settings)),
-    startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
-    savedAt: Date.now(),
-  };
-  await chrome.storage.local.set({ activeJobs: jobs });
+  await withJobsStore((jobs) => {
+    const job = activeJobs[tabId];
+    jobs[tabId] = {
+      settings,
+      refreshCount: (job && job.refreshCount) || 0,
+      nextRefresh: (job && job.nextRefresh) || (Date.now() + computeInterval(settings)),
+      startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
+      savedAt: Date.now(),
+    };
+  });
 }
 
 async function removeJobFromStorage(tabId) {
-  const data = await chrome.storage.local.get('activeJobs');
-  const jobs = data.activeJobs || {};
-  delete jobs[tabId];
-  await chrome.storage.local.set({ activeJobs: jobs });
+  await withJobsStore((jobs) => { delete jobs[tabId]; });
 }
 
 // ── Rehydrate after a service-worker restart ────────────────────────────────

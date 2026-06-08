@@ -224,6 +224,12 @@
       return src.length <= MAX_URL_LEN;
     }
     if (lower.startsWith('data:')) {
+      // Reject oversized data: URLs before decoding. base64 expands bytes ~4/3,
+      // so a payload that could ever be <= MAX_IMAGE_BYTES fits comfortably under
+      // this bound; anything larger is rejected up front rather than fully
+      // base64-decoded into a multi-MB buffer (a hostile favIconUrl is attacker-
+      // sized). The post-decode byte cap below still applies.
+      if (src.length > MAX_IMAGE_BYTES * 2) return false;
       const m = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(src);
       if (!m) return false;
       const mime = m[1].toLowerCase();
