@@ -20,7 +20,7 @@
   .tab-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-l);
     padding: 16px 20px;
     display: flex;
     align-items: center;
@@ -37,7 +37,7 @@
   .stat-pill { background: var(--surface2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }
   .active-badge { background: rgba(63,185,80,0.15); color: var(--accent2); border: 1px solid rgba(63,185,80,0.3); }
   .tab-actions { display: flex; gap: 8px; flex-shrink: 0; }
-  .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; border: none; font-family: var(--font-sans); }
+  .btn-sm { padding: 6px 12px; border-radius: var(--radius-s); font-size: 11px; font-weight: 600; cursor: pointer; border: none; font-family: var(--font-sans); }
   .btn-sm-stop { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); }
   .btn-sm-stop:hover { background: rgba(248,81,73,0.25); }
   .btn-sm-go { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
@@ -48,12 +48,12 @@
 
   /* Auto-start section */
   .section-title { font-size: 14px; font-weight: 600; margin: 32px 0 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-  .autostart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .autostart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 20px; }
   .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
   .form-row label { font-size: 11px; color: var(--text2); min-width: 60px; }
-  .form-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 7px 10px; border-radius: 6px; outline: none; flex: 1; min-width: 200px; }
+  .form-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 7px 10px; border-radius: var(--radius-s); outline: none; flex: 1; min-width: 200px; }
   .form-input:focus { border-color: var(--accent); }
-  .btn-add { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
+  .btn-add { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
   .btn-add:hover { background: rgba(88,166,255,0.25); }
   .autostart-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   .autostart-item { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
@@ -63,7 +63,7 @@
 
   /* Import/Export */
   .io-row { display: flex; gap: 10px; margin-top: 10px; }
-  .btn-io { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
+  .btn-io { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
   .btn-io:hover { border-color: var(--accent); color: var(--accent); }
 
   /* Toast */

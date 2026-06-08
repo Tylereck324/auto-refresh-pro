@@ -274,7 +274,7 @@
     background: var(--card2);
     border: 1px solid var(--border2);
     color: var(--text3);
-    font-family: 'Inter', sans-serif;
+    font-family: var(--font-mono);
     font-size: 12px;
     padding: 8px 10px;
     border-radius: var(--radius-s);
@@ -339,16 +339,17 @@
   .kw-opt-label { font-size: 11px; font-weight: 500; color: var(--text3); }
 
   .kw-flags {
-    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
     padding: 8px 12px; border-top: 1px solid var(--border);
   }
+  .kw-flag-wide { grid-column: 1 / -1; }
   .kw-flag { display: flex; align-items: center; gap: 5px; padding: 4px 0; font-size: 11px; color: var(--text3); cursor: pointer; }
   .kw-flag input { accent-color: var(--accent); }
   .kw-regex-hint {
-    padding: 0 12px 8px; font-size: 10px; color: #f87171; display: none;
+    padding: 0 12px 8px; font-size: 10px; color: var(--red); display: none;
   }
   .kw-regex-hint.show { display: block; }
-  .keyword-input.invalid { outline: 1px solid #f87171; }
+  .keyword-input.invalid { outline: 1px solid var(--red); }
 
   /* ── Options grid ── */
   .opts-grid {
@@ -467,6 +468,16 @@
   .field-input:focus { border-color: var(--accent); }
 
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .hidden { display: none; }
+
+  /* Sound-alert controls */
+  .field-subhead { margin: 10px 0 6px; }
+  .sound-tone-row { display: flex; gap: 6px; align-items: center; }
+  .sound-tone-row .field-input { flex: 1; min-width: 0; }
+  .label-row { display: flex; justify-content: space-between; align-items: center; }
+  .label-val { font-family: var(--font-mono); color: var(--text3); }
+  .field-row input[type="range"] { width: 100%; display: block; }
 
   /* ── Action buttons ── */
   .action-row {
@@ -646,7 +657,7 @@
           <label class="kw-flag"><input type="checkbox" id="optKwWhole"> Whole word</label>
           <label class="kw-flag"><input type="checkbox" id="optKwRegex"> Regex</label>
           <label class="kw-flag"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
-          <label class="kw-flag"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
+          <label class="kw-flag kw-flag-wide"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
         </div>
         <div class="kw-regex-hint" id="kwRegexHint">Invalid or unsafe regular expression.</div>
       </div>
@@ -785,8 +796,8 @@
         <div class="field-label">STOP AFTER X REFRESHES (0 = unlimited)</div>
         <input class="field-input" type="number" id="optStopAfter" min="0" value="0" placeholder="0">
       </div>
-      <div id="randomRangeRow" style="display:none;">
-        <div class="field-label" style="margin-bottom:6px;">RANDOM RANGE</div>
+      <div id="randomRangeRow" class="hidden">
+        <div class="field-label field-subhead">RANDOM RANGE</div>
         <div class="two-col">
           <div class="field-row">
             <div class="field-label">MIN (seconds)</div>
@@ -798,8 +809,8 @@
           </div>
         </div>
       </div>
-      <div id="noiseRow" style="display:none;">
-        <div class="field-label" style="margin-top:10px;margin-bottom:6px;">CHANGE SENSITIVITY (Monitor)</div>
+      <div id="noiseRow" class="hidden">
+        <div class="field-label field-subhead">CHANGE SENSITIVITY (Monitor)</div>
         <div class="two-col">
           <div class="field-row">
             <div class="field-label">MIN CHANGE %</div>
@@ -810,25 +821,25 @@
           </div>
         </div>
       </div>
-      <div id="soundRow" style="display:none;">
-        <div class="field-label" style="margin-top:10px;margin-bottom:6px;">SOUND ALERT</div>
-        <div class="two-col">
-          <div class="field-row">
-            <div class="field-label">TONE</div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <!-- Options are populated from AlertSounds.TONES at load. -->
-              <select class="field-input" id="optSoundTone" style="flex:1;"></select>
-              <button type="button" class="field-input" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound" style="flex:0 0 auto;cursor:pointer;">▶ Preview</button>
-            </div>
+      <div id="soundRow" class="hidden">
+        <div class="field-label field-subhead">SOUND ALERT</div>
+        <div class="field-row">
+          <div class="field-label">TONE</div>
+          <div class="sound-tone-row">
+            <!-- Options are populated from AlertSounds.TONES at load. -->
+            <select class="field-input" id="optSoundTone"></select>
+            <button type="button" class="btn btn-sm btn-accent" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound"><span aria-hidden="true">▶</span> Preview</button>
           </div>
+        </div>
+        <div class="two-col" style="margin-top:8px;">
           <div class="field-row">
             <div class="field-label">REPEAT (1–5)</div>
             <input class="field-input" type="number" id="optSoundRepeat" min="1" max="5" value="1">
           </div>
-        </div>
-        <div class="field-row" style="margin-top:8px;">
-          <div class="field-label" style="display:flex;justify-content:space-between;align-items:center;">VOLUME <span id="optSoundVolumeVal" style="font-family:var(--font-mono);color:var(--text3);">90%</span></div>
-          <input type="range" id="optSoundVolume" min="0" max="100" value="90" style="width:100%;" aria-label="Sound alert volume">
+          <div class="field-row">
+            <div class="field-label label-row">VOLUME <span id="optSoundVolumeVal" class="label-val">90%</span></div>
+            <input type="range" id="optSoundVolume" min="0" max="100" value="90" aria-label="Sound alert volume">
+          </div>
         </div>
       </div>
     </div>

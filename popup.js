@@ -149,15 +149,15 @@ function applyCustomInterval() {
 function updateConditionalRows() {
   const random = document.getElementById('optRandom').checked;
   const randomRangeRow = document.getElementById('randomRangeRow');
-  if (randomRangeRow) randomRangeRow.style.display = random ? '' : 'none';
+  if (randomRangeRow) randomRangeRow.classList.toggle('hidden', !random);
   // The change-sensitivity fields only matter when "Ignore noise" is on.
   const noise = document.getElementById('optNoiseTolerant').checked;
   const noiseRow = document.getElementById('noiseRow');
-  if (noiseRow) noiseRow.style.display = noise ? '' : 'none';
+  if (noiseRow) noiseRow.classList.toggle('hidden', !noise);
   // Sound tone/repeat/volume only matter when the sound alert is enabled.
   const sound = document.getElementById('optSound').checked;
   const soundRow = document.getElementById('soundRow');
-  if (soundRow) soundRow.style.display = sound ? '' : 'none';
+  if (soundRow) soundRow.classList.toggle('hidden', !sound);
 }
 
 // When a keyword is set, the background uses the keyword as the sole signal and

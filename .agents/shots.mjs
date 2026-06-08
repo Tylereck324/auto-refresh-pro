@@ -12,7 +12,9 @@ import { createRequire } from 'node:module';
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
 
-const REPO = '/Users/tylereck/Documents/auto-refresh-pro-repo';
+// Repo root holding manifest.json. Defaults to this script's parent dir so the
+// harness travels with the checkout; override with REPO=… for another tree.
+const REPO = process.env.REPO || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const LABEL = process.argv[2] || 'shots';
 const OUT = path.join(REPO, '.agents', 'proof', `shots-${LABEL}`);
 fs.mkdirSync(OUT, { recursive: true });
