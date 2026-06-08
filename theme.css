@@ -35,6 +35,17 @@
   --red:      #f87171;
   --yellow:   #fbbf24;
 
+  /* ── Channel components of the colours above ──
+     Single source of truth for the translucent tints used across surfaces
+     (button fills, badges, focus rings). Use rgba(var(--accent-rgb), .15)
+     instead of hand-written rgba so a tint can never drift from its token.
+     These replaced the legacy GitHub-dark literals (#58a6ff / #f85149 /
+     #3fb950) that Settings + Manage were authored against. */
+  --accent-rgb: 79, 158, 255;
+  --red-rgb:    248, 113, 113;
+  --green-rgb:  52, 211, 153;
+  --yellow-rgb: 251, 191, 36;
+
   /* ── Text ──
      --text2 lightened from the old #828b9a to #99a2b2 so secondary/small
      text clears WCAG AA (4.5:1) on --bg. */
@@ -264,4 +275,32 @@ a:focus-visible,
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── Forced colors / Windows High Contrast (WCAG 1.4.1, 1.4.11) ──
+   In forced-colors mode the OS overrides our colours: background *images*
+   (including gradients) are dropped and every colour collapses to the system
+   palette. Controls that lean on a gradient/translucent fill with no border
+   then read as borderless floating text. Give those controls an explicit
+   system-colour boundary so they stay recognisable as buttons/switches.
+   `transparent` borders elsewhere are auto-promoted to a visible system colour,
+   so the gradient Start button (border:1px solid transparent) gains a frame
+   here for free — these rules cover the controls that need extra help. */
+@media (forced-colors: active) {
+  .btn-start, .btn-stop,
+  .btn-add, .btn-io, .btn-record, .btn-clear,
+  .btn-sm, .btn-sm-go, .btn-sm-stop {
+    border: 1px solid ButtonText;
+  }
+  .pill.active,
+  .section-toggle.open,
+  .tab-card.active { border-color: Highlight; }
+
+  /* Toggle: the on/off fills both collapse to the same system colour, so make
+     the state legible by colour (Highlight track when on) plus a bordered
+     thumb that flips between the track ends. */
+  .toggle-slider { border: 1px solid ButtonText; }
+  .toggle input:checked + .toggle-slider { background: Highlight; }
+  .toggle-slider::before { background: ButtonText; border: 1px solid ButtonText; }
+  .toggle input:checked + .toggle-slider::before { background: ButtonFace; }
 }

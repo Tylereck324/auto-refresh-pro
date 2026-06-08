@@ -119,7 +119,9 @@
         #__ar_lbl {
           flex:1;
           font-weight:700;
-          text-transform:uppercase; color:rgba(255,255,255,0.45);
+          /* 0.62 white over the ~#111317 overlay clears WCAG AA (≈7:1); the old
+             0.45 sat at ~4.5 and the sublabel/hint below were well under. */
+          text-transform:uppercase; color:rgba(255,255,255,0.62);
           white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
         }
         #__ar_stop {
@@ -150,7 +152,7 @@
         }
         #__ar_sublabel {
           font-weight:600;
-          color:rgba(255,255,255,0.3); text-transform:uppercase;
+          color:rgba(255,255,255,0.62); text-transform:uppercase;
         }
         #__ar_track {
           width:100%;
@@ -166,7 +168,7 @@
         }
         #__ar_hint {
           font-weight:500;
-          color:rgba(255,255,255,0.28);
+          color:rgba(255,255,255,0.55);
         }
         #__ar_resize {
           position:absolute; bottom:0; right:0;
@@ -309,6 +311,12 @@
       // Hint
       hint.style.fontSize = Math.max(7, Math.round(s * 0.038)) + 'px';
       hint.style.letterSpacing = '0.3px';
+
+      // At small sizes the sublabel/hint would shrink to ~7px (illegible) and
+      // crowd the timer, so drop them and let the countdown own the space. They
+      // return as the user grows the overlay back. Timer + progress bar stay.
+      sublabel.style.display = h < 104 ? 'none' : '';
+      hint.style.display     = h < 124 ? 'none' : '';
 
       // Border radius
       overlayEl.style.borderRadius = Math.max(10, Math.round(s * 0.07)) + 'px';
