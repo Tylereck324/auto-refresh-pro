@@ -11,8 +11,8 @@
   header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
   .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; color: #fff; }
   .logo-icon { width: 28px; height: 28px; background: var(--accent-g); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
-  .btn-danger { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font-sans); font-size: 12px; font-weight: 600; transition: background 0.15s, opacity 0.15s; }
-  .btn-danger:hover:not(:disabled) { background: rgba(248,81,73,0.25); }
+  .btn-danger { background: rgba(var(--red-rgb),0.15); color: var(--danger); border: 1px solid rgba(var(--red-rgb),0.3); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font-sans); font-size: 12px; font-weight: 600; transition: background 0.15s, opacity 0.15s; }
+  .btn-danger:hover:not(:disabled) { background: rgba(var(--red-rgb),0.25); }
   .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
   .container { max-width: 900px; margin: 32px auto; padding: 0 24px; }
   /* Weight/size come from the shared .h-page / .h-section heading tiers in
@@ -30,19 +30,19 @@
     gap: 16px;
     transition: border-color 0.15s;
   }
-  .tab-card:hover { border-color: #444c56; }
-  .tab-card.active { border-color: rgba(88,166,255,0.4); }
+  .tab-card:hover { border-color: var(--border2); }
+  .tab-card.active { border-color: rgba(var(--accent-rgb),0.4); }
   .tab-favicon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
   .tab-info { flex: 1; min-width: 0; }
   .tab-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tab-url { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
   .tab-stats { display: flex; gap: 12px; flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text2); }
   .stat-pill { background: var(--surface2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }
-  .active-badge { background: rgba(63,185,80,0.15); color: var(--success); border: 1px solid rgba(63,185,80,0.3); }
+  .active-badge { background: rgba(var(--green-rgb),0.15); color: var(--success); border: 1px solid rgba(var(--green-rgb),0.3); }
   .tab-actions { display: flex; gap: 8px; flex-shrink: 0; }
   .btn-sm { padding: 6px 12px; border-radius: var(--radius-s); font-size: 11px; font-weight: 600; cursor: pointer; border: none; font-family: var(--font-sans); }
-  .btn-sm-stop { background: rgba(248,81,73,0.15); color: var(--danger); border: 1px solid rgba(248,81,73,0.3); }
-  .btn-sm-stop:hover { background: rgba(248,81,73,0.25); }
+  .btn-sm-stop { background: rgba(var(--red-rgb),0.15); color: var(--danger); border: 1px solid rgba(var(--red-rgb),0.3); }
+  .btn-sm-stop:hover { background: rgba(var(--red-rgb),0.25); }
   .btn-sm-go { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
   .btn-sm-go:hover { border-color: var(--accent); color: var(--accent); }
   /* Contained card rather than a full-height void, so the config sections below
@@ -59,12 +59,13 @@
   .form-row label { font-size: 11px; color: var(--text2); min-width: 60px; }
   .form-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 7px 10px; border-radius: var(--radius-s); outline: none; flex: 1; min-width: 200px; }
   .form-input:focus { border-color: var(--accent); }
-  .btn-add { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
-  .btn-add:hover { background: rgba(88,166,255,0.25); }
+  .btn-add { background: rgba(var(--accent-rgb),0.15); color: var(--accent); border: 1px solid rgba(var(--accent-rgb),0.3); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
+  .btn-add:hover { background: rgba(var(--accent-rgb),0.25); }
   .autostart-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   .autostart-item { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
   .autostart-url { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .autostart-remove { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  /* 28px square clears the WCAG 2.5.8 target-size minimum (was ~20px). */
+  .autostart-remove { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-s); flex-shrink: 0; }
   .autostart-remove:hover { color: var(--danger); }
 
   /* Import/Export */
@@ -91,8 +92,32 @@
     z-index: 1000;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.success { color: var(--success); border-color: rgba(63,185,80,0.4); }
-  .toast.error { color: var(--danger); border-color: rgba(248,81,73,0.4); }
+  .toast.success { color: var(--success); border-color: rgba(var(--green-rgb),0.4); }
+  .toast.error { color: var(--danger); border-color: rgba(var(--red-rgb),0.4); }
+
+  /* ── Narrow viewport (split-screen, small windows, 200% zoom) ──
+     The job card was a single non-wrapping flex row: on a narrow width the
+     stats + the Go-to-Tab / Stop actions were pushed off the right edge, so a
+     running job couldn't be stopped. Re-flow the card into a grid that stacks
+     info → stats → actions, and let the header + forms wrap. */
+  @media (max-width: 640px) {
+    header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+    .container { margin-top: 20px; padding: 0 16px; }
+    .tab-card {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-areas: "fav info" "stats stats" "actions actions";
+      gap: 10px 12px;
+      align-items: center;
+    }
+    .tab-favicon { grid-area: fav; }
+    .tab-info { grid-area: info; }
+    .tab-stats { grid-area: stats; flex-wrap: wrap; }
+    .tab-actions { grid-area: actions; justify-content: flex-end; }
+    .tab-actions .btn-sm { flex: 1; max-width: 160px; }
+    .form-input { min-width: 0; }
+    .form-row label { min-width: 0; }
+  }
 </style>
 </head>
 <body>

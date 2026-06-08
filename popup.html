@@ -337,7 +337,9 @@
     padding: 8px 12px; border-top: 1px solid var(--border);
   }
   .kw-flag-wide { grid-column: 1 / -1; }
-  .kw-flag { display: flex; align-items: center; gap: 5px; padding: 4px 0; font-size: 11px; color: var(--text3); cursor: pointer; }
+  /* min-height 24px meets the WCAG 2.5.8 target size; the row is the label, so
+     the whole 24px strip is clickable, not just the 13px native box. */
+  .kw-flag { display: flex; align-items: center; gap: 5px; padding: 5px 0; min-height: 24px; font-size: 11px; color: var(--text3); cursor: pointer; }
   .kw-flag input { accent-color: var(--accent); }
   .kw-regex-hint {
     padding: 0 12px 8px; font-size: 10px; color: var(--red); display: none;
@@ -472,7 +474,10 @@
   .btn-start {
     flex: 1;
     padding: 11px;
-    border: none;
+    /* Transparent (not none) so forced-colors/High-Contrast promotes it to a
+       visible system border — otherwise the gradient drops out and the button
+       reads as borderless floating text. */
+    border: 1px solid transparent;
     border-radius: var(--radius);
     font-family: 'Inter', sans-serif;
     font-size: 13px;
@@ -518,22 +523,29 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 9px 16px;
+    padding: 5px 12px;
     border-top: 1px solid var(--border);
     background: var(--card);
   }
 
+  /* Padding gives each link a ≥24px hit area (WCAG 2.5.8); the negative-free
+     padding sits inside the footer's reduced vertical padding so the bar height
+     is unchanged. */
   .footer-link {
     font-size: 11px;
     font-weight: 500;
     color: var(--text2);
     cursor: pointer;
     text-decoration: none;
-    transition: color 0.15s;
+    transition: color 0.15s, background 0.15s;
     display: flex;
     align-items: center;
     gap: 4px;
+    padding: 7px 8px;
+    min-height: 24px;
+    border-radius: var(--radius-s);
   }
+  .footer-link:hover { background: var(--card2); }
 
   .footer-link:hover { color: var(--accent); }
 
@@ -541,6 +553,17 @@
     width: 1px;
     height: 12px;
     background: var(--border2);
+  }
+
+  /* ── Forced colors / High Contrast ──
+     The status dot and logo mark are pure colour fills; in forced-colors their
+     background collapses, so border them to stay visible. The active dot uses a
+     Highlight border to still read as "running". */
+  @media (forced-colors: active) {
+    .status-dot { border: 1px solid CanvasText; }
+    .status-dot.active { border-color: Highlight; }
+    .logo-mark { border: 1px solid CanvasText; }
+    .hero-bar-fill, .pill.active { forced-color-adjust: none; }
   }
 </style>
 </head>
@@ -588,7 +611,7 @@
     <div class="section-head h-group">Refresh Interval</div>
     <div class="pill-grid" id="pillGrid"></div>
     <div class="custom-row">
-      <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
+      <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2" aria-label="Custom interval amount">
       <select class="unit-select" id="customUnit" aria-label="Custom interval unit">
         <option value="1000">sec</option>
         <option value="60000">min</option>

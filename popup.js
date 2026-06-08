@@ -503,5 +503,13 @@ function validateKeywordRegex() {
     !(typeof ARPValidators !== 'undefined' && ARPValidators.isSafeRegex(val));
   input.classList.toggle('invalid', bad);
   if (hint) hint.classList.toggle('show', bad);
+  // Reflect the blocking error on the primary CTA so it isn't a dead click:
+  // a bad pattern disables Start (with an explanatory title). Only touch it
+  // while idle — setActiveUI owns the Start/Stop enabled state while running.
+  const btnStart = document.getElementById('btnStart');
+  if (btnStart && !isActive) {
+    btnStart.disabled = bad;
+    btnStart.title = bad ? 'Fix the invalid regex pattern to start' : '';
+  }
   return !bad;
 }
