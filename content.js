@@ -11,6 +11,10 @@
   let contextValid  = true;
   let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
   let preserveScrollEnabled = false; // when true, scroll position survives refreshes
+  // Shared drag/resize state, read by the document-level pointer listeners that
+  // are registered once (see below) rather than per overlay rebuild.
+  let dragState = null;
+  let resizeState = null;
 
 
 
@@ -349,75 +353,76 @@
     makeDraggable(overlayEl, dragBar);
   }
 
+  // Only wires the per-overlay mousedown (on the drag bar, removed with the
+  // overlay so it can't leak). The document-level move/up listeners are shared
+  // and registered once, after makeResizable.
   function makeDraggable(el, handle) {
-    let dragging = false;
-    let startMouseX, startMouseY, startElX, startElY;
-
     handle.addEventListener('mousedown', (e) => {
       // Skip if the click is on the stop button (or any descendant of it)
       if (e.target.closest && e.target.closest('[data-ar-stop]')) return;
       e.preventDefault();
-      dragging = true;
-      startMouseX = e.clientX;
-      startMouseY = e.clientY;
-      startElX = parseInt(el.style.left) || el.getBoundingClientRect().left;
-      startElY = parseInt(el.style.top)  || el.getBoundingClientRect().top;
-      el.style.cursor     = 'grabbing';
-      el.style.boxShadow  = '0 12px 50px rgba(0,0,0,0.85), 0 1px 0 rgba(255,255,255,0.08) inset';
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!dragging) return;
-      applyPos(startElX + e.clientX - startMouseX, startElY + e.clientY - startMouseY);
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      el.style.cursor    = 'grab';
-      el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
-      savePos(parseInt(el.style.left), parseInt(el.style.top));
+      dragState = {
+        el,
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startElX: parseInt(el.style.left) || el.getBoundingClientRect().left,
+        startElY: parseInt(el.style.top)  || el.getBoundingClientRect().top,
+      };
+      el.style.cursor    = 'grabbing';
+      el.style.boxShadow = '0 12px 50px rgba(0,0,0,0.85), 0 1px 0 rgba(255,255,255,0.08) inset';
     });
   }
 
   // ── Resize logic ─────────────────────────────────────────────────────────
+  // Like makeDraggable: only the per-overlay mousedown (on the resize handle) is
+  // wired here; the shared document move/up listeners below do the work.
   function makeResizable(el, handle, onResize) {
-    let resizing = false;
-    let startX, startY, startW, startH;
-
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      resizing = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      startW = el.offsetWidth;
-      startH = el.offsetHeight;
+      resizeState = {
+        el, onResize,
+        startX: e.clientX,
+        startY: e.clientY,
+        startW: el.offsetWidth,
+        startH: el.offsetHeight,
+      };
       document.body.style.cursor = 'se-resize';
     });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!resizing) return;
-      const newW = Math.max(140, startW + (e.clientX - startX));
-      const newH = Math.max(80, startH + (e.clientY - startY));
-      el.style.width  = newW + 'px';
-      el.style.height = newH + 'px';
-      if (onResize) onResize();
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (!resizing) return;
-      resizing = false;
-      document.body.style.cursor = '';
-      // Save size
-      safeStorageSet({
-        '__ar_overlay_size': {
-          w: el.offsetWidth,
-          h: el.offsetHeight
-        }
-      });
-    });
   }
+
+  // Single set of document-level pointer listeners for drag + resize, registered
+  // once at injection. Previously makeDraggable/makeResizable each added their own
+  // document mousemove/mouseup on every overlay rebuild, stacking duplicate
+  // listeners after repeated start/stop cycles on a static page. These act on the
+  // current overlay via the shared state set on mousedown above.
+  document.addEventListener('mousemove', (e) => {
+    if (dragState) {
+      applyPos(dragState.startElX + e.clientX - dragState.startMouseX,
+               dragState.startElY + e.clientY - dragState.startMouseY);
+    } else if (resizeState) {
+      const el = resizeState.el;
+      el.style.width  = Math.max(140, resizeState.startW + (e.clientX - resizeState.startX)) + 'px';
+      el.style.height = Math.max(80,  resizeState.startH + (e.clientY - resizeState.startY)) + 'px';
+      if (resizeState.onResize) resizeState.onResize();
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragState) {
+      const el = dragState.el;
+      el.style.cursor    = 'grab';
+      el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
+      savePos(parseInt(el.style.left), parseInt(el.style.top));
+      dragState = null;
+    }
+    if (resizeState) {
+      const el = resizeState.el;
+      document.body.style.cursor = '';
+      safeStorageSet({ '__ar_overlay_size': { w: el.offsetWidth, h: el.offsetHeight } });
+      resizeState = null;
+    }
+  });
 
   // ── Hide overlay ──────────────────────────────────────────────────────────
   function hideOverlay() {
