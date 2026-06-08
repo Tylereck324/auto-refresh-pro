@@ -330,7 +330,11 @@
     border-right: 1px solid var(--border);
   }
 
-  .kw-opt-label { font-size: 11px; font-weight: 500; color: var(--text3); }
+  .kw-opt-label { font-size: 11px; font-weight: 500; color: var(--text3); display: flex; align-items: center; gap: 6px; }
+  /* Monochrome inline icons (currentColor) replace full-colour emoji so the
+     keyword controls match the rest of the glyph set instead of clashing. */
+  .kw-opt-label svg, .keyword-icon svg { flex-shrink: 0; display: block; }
+  .keyword-icon { display: flex; align-items: center; }
 
   .kw-flags {
     display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px;
@@ -641,19 +645,19 @@
     <div class="collapse-panel" id="panelKeyword">
       <div class="keyword-wrap">
         <div class="keyword-input-row">
-          <span class="keyword-icon" aria-hidden="true">🔍</span>
+          <span class="keyword-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
           <input class="keyword-input" type="text" id="optKeyword" placeholder="Word, phrase, or comma-separated list…" aria-label="Keyword to detect">
         </div>
         <div class="keyword-opts">
           <div class="kw-opt">
-            <span class="kw-opt-label">🔔 Sound alert</span>
+            <span class="kw-opt-label"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>Sound alert</span>
             <label class="toggle">
               <input type="checkbox" id="optSound" aria-label="Sound alert when keyword found">
               <span class="toggle-slider"></span>
             </label>
           </div>
           <div class="kw-opt">
-            <span class="kw-opt-label">⏹ Stop on found</span>
+            <span class="kw-opt-label"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>Stop on found</span>
             <label class="toggle">
               <input type="checkbox" id="optStopOnKeyword" aria-label="Stop refreshing when keyword found">
               <span class="toggle-slider"></span>
@@ -661,11 +665,11 @@
           </div>
         </div>
         <div class="kw-flags">
-          <label class="kw-flag"><input type="checkbox" id="optKwCase"> Case-sensitive</label>
-          <label class="kw-flag"><input type="checkbox" id="optKwWhole"> Whole word</label>
-          <label class="kw-flag"><input type="checkbox" id="optKwRegex"> Regex</label>
-          <label class="kw-flag"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
-          <label class="kw-flag kw-flag-wide"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
+          <label class="kw-flag" title="Match exact upper/lower case (Cat ≠ cat)"><input type="checkbox" id="optKwCase"> Case-sensitive</label>
+          <label class="kw-flag" title="Match the whole word only, not parts of a longer word (cat, not category)"><input type="checkbox" id="optKwWhole"> Whole word</label>
+          <label class="kw-flag" title="Treat the text above as a regular expression"><input type="checkbox" id="optKwRegex"> Regex</label>
+          <label class="kw-flag" title="Inverse match: alert when the keyword disappears instead of when it appears"><input type="checkbox" id="optKwInverse"> Alert when gone</label>
+          <label class="kw-flag kw-flag-wide" title="Keep beeping after a match until you click the alert"><input type="checkbox" id="optBeepUntilAck"> Repeat beep until clicked</label>
         </div>
         <div class="kw-regex-hint" id="kwRegexHint">Invalid or unsafe regular expression.</div>
       </div>

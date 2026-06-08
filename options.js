@@ -262,10 +262,24 @@ function gatherAndSave() {
 
 function showSaved() {
   const msg = document.getElementById('successMsg');
-  if (!msg) return;
-  msg.style.display = 'inline';
-  clearTimeout(showSaved._t);
-  showSaved._t = setTimeout(function() { msg.style.display = 'none'; }, 1500);
+  if (msg) {
+    msg.style.display = 'inline';
+    clearTimeout(showSaved._t);
+    showSaved._t = setTimeout(function() { msg.style.display = 'none'; }, 1500);
+  }
+  // Also surface a toast: the inline note sits at the bottom of a long page, so
+  // a change made near the top would otherwise confirm off-screen.
+  showToast('✓ Saved');
+}
+
+let _toastTimer = null;
+function showToast(message, isError) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.className = 'toast show ' + (isError ? 'error' : 'success');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { toast.className = 'toast'; }, 1800);
 }
 
 function save() {

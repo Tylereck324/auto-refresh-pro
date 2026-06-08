@@ -265,6 +265,31 @@ a:focus-visible,
 }
 ::-webkit-scrollbar-thumb:hover { background: #3a3e47; }
 
+/* ── Toast (shared) ──
+   In-view, transient confirmation. Lives here so every full-page surface
+   (Manage, Settings) gives feedback the same way and in the same place,
+   instead of a status line stranded at the bottom of a long scroll. */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 1000;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.success { color: var(--success); border-color: rgba(var(--green-rgb),0.4); }
+.toast.error { color: var(--danger); border-color: rgba(var(--red-rgb),0.4); }
+
 /* ── Reduced motion (WCAG AA) ──
    Honor the user's OS-level "reduce motion" preference everywhere. The
    overlay (content.js) carries its own copy of this guard. */

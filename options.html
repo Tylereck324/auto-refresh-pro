@@ -15,7 +15,11 @@
   /* Weight/size from the shared .h-page tier in theme.css; layout only here. */
   .page-title { margin-bottom: 24px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); padding: 20px; margin-bottom: 16px; }
-  .card-title { font-size: 11px; font-weight: 600; margin-bottom: 16px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
+  /* Neutral (--text2) uppercase label, matching the popup's group-heading tier.
+     Accent is reserved for interactive / active elements (focused inputs,
+     toggle-on, Record, selected pill) so a static section header no longer
+     competes with them for "this is actionable" meaning. */
+  .card-title { font-size: 11px; font-weight: 700; margin-bottom: 16px; color: var(--text2); letter-spacing: 0.8px; text-transform: uppercase; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 16px; }
   .setting-row:last-child { border-bottom: none; }
   .setting-label { font-size: 13px; }
@@ -349,6 +353,8 @@
 
   <div class="autosave-note">Changes are saved automatically. <span class="success-msg" id="successMsg">✓ Saved</span></div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script src="sounds.js"></script>
 <script src="validators.js"></script>

@@ -73,27 +73,7 @@
   .btn-io { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
   .btn-io:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* Toast */
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%) translateY(20px);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 20px;
-    font-size: 13px;
-    font-weight: 600;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s, transform 0.2s;
-    z-index: 1000;
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast.success { color: var(--success); border-color: rgba(var(--green-rgb),0.4); }
-  .toast.error { color: var(--danger); border-color: rgba(var(--red-rgb),0.4); }
+  /* Toast styles are shared — see theme.css (.toast). */
 
   /* ── Narrow viewport (split-screen, small windows, 200% zoom) ──
      The job card was a single non-wrapping flex row: on a narrow width the
@@ -115,8 +95,15 @@
     .tab-stats { grid-area: stats; flex-wrap: wrap; }
     .tab-actions { grid-area: actions; justify-content: flex-end; }
     .tab-actions .btn-sm { flex: 1; max-width: 160px; }
-    .form-input { min-width: 0; }
+    /* Stack the add-rule forms vertically: a single non-wrapping row crushed
+       the URL/pattern field to a few px (unusable). Each control now takes the
+       full width on its own line. */
+    .form-row { flex-direction: column; align-items: stretch; gap: 8px; }
     .form-row label { min-width: 0; }
+    /* !important to beat the inline max-width on the interval inputs, which a
+       plain rule can't override. */
+    .form-row .form-input { min-width: 0 !important; max-width: none !important; width: 100%; }
+    .form-row .btn-add { width: 100%; }
   }
 </style>
 </head>
