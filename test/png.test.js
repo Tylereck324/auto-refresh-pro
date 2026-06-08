@@ -108,6 +108,14 @@ test('isSafeImageSrc rejects oversized inline image', () => {
   assert.equal(V.isSafeImageSrc(toDataUrl('image/png', big)), false);
 });
 
+test('isSafeImageSrc rejects an over-long data: URL up front (no full decode)', () => {
+  // A hostile favIconUrl can be arbitrarily large. The src length is rejected
+  // before base64-decoding, so we never allocate the multi-MB buffer. Use a
+  // valid PNG MIME + base64 alphabet so ONLY the length guard can reject it.
+  const oversizedB64 = 'A'.repeat(V.MAX_IMAGE_BYTES * 2 + 4);
+  assert.equal(V.isSafeImageSrc('data:image/png;base64,' + oversizedB64), false);
+});
+
 test('isSafeImageSrc rejects empty / non-string', () => {
   assert.equal(V.isSafeImageSrc(''), false);
   assert.equal(V.isSafeImageSrc(null), false);

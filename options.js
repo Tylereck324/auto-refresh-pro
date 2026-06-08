@@ -196,8 +196,11 @@ function load() {
     setCheck('defStopOnClick', s.stopOnClick);
     if (s.stopAfter !== undefined) document.getElementById('defStopAfter').value = s.stopAfter;
 
-    // Presets
-    const presets = s.presets || defaultPresets;
+    // Presets. An empty array is truthy, so `s.presets || defaultPresets` would
+    // leave the editor permanently blank after an import that cleared presets —
+    // and there's no "add preset" control to recover. Treat empty as "use the
+    // built-in defaults" so the editor is always populated and editable.
+    const presets = (Array.isArray(s.presets) && s.presets.length) ? s.presets : defaultPresets;
     presetCount = presets.length; // remember how many rows we render, so save reads them all
     const list = document.getElementById('presetsList');
     list.innerHTML = '';
