@@ -240,11 +240,19 @@
         <div class="setting-label">Sound Tone</div>
         <div class="setting-sub">Which alert tone to play</div>
       </div>
-      <select class="num-input" id="defSoundTone" aria-label="Default sound tone">
-        <option value="beep">Beep</option>
-        <option value="chime">Chime</option>
-        <option value="alarm">Alarm</option>
-      </select>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <select class="num-input" id="defSoundTone" aria-label="Default sound tone">
+          <option value="beep">Beep</option>
+          <option value="chime">Chime</option>
+          <option value="alarm">Alarm</option>
+          <option value="glass">Glass</option>
+          <option value="tink">Tink</option>
+          <option value="bottle">Bottle</option>
+          <option value="hero">Hero</option>
+          <option value="submarine">Submarine</option>
+        </select>
+        <button type="button" class="num-input" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound" style="cursor:pointer;">▶ Preview</button>
+      </div>
     </div>
     <div class="setting-row">
       <div>
@@ -291,6 +299,7 @@
   <div class="autosave-note">Changes are saved automatically. <span class="success-msg" id="successMsg">✓ Saved</span></div>
 </div>
 
+<script src="sounds.js"></script>
 <script src="validators.js"></script>
 <script src="preset-row.js"></script>
 <script src="options.js"></script>

@@ -815,11 +815,19 @@
         <div class="two-col">
           <div class="field-row">
             <div class="field-label">TONE</div>
-            <select class="field-input" id="optSoundTone">
-              <option value="beep">Beep</option>
-              <option value="chime">Chime</option>
-              <option value="alarm">Alarm</option>
-            </select>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <select class="field-input" id="optSoundTone" style="flex:1;">
+                <option value="beep">Beep</option>
+                <option value="chime">Chime</option>
+                <option value="alarm">Alarm</option>
+                <option value="glass">Glass</option>
+                <option value="tink">Tink</option>
+                <option value="bottle">Bottle</option>
+                <option value="hero">Hero</option>
+                <option value="submarine">Submarine</option>
+              </select>
+              <button type="button" class="field-input" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound" style="flex:0 0 auto;cursor:pointer;">▶ Preview</button>
+            </div>
           </div>
           <div class="field-row">
             <div class="field-label">REPEAT (1–5)</div>
@@ -843,6 +851,7 @@
   <a class="footer-link" id="optionsLink" role="button" tabindex="0">⚙ Settings</a>
 </footer>
 
+<script src="sounds.js"></script>
 <script src="validators.js"></script>
 <script src="popup.js"></script>
 </body>
