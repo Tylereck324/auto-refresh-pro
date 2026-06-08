@@ -122,20 +122,30 @@ async function withExtPage(file, fn) {
   await sleep(600); // let loadSettings render presets
   const data = await p.evaluate(() => ({
     pills: [...document.querySelectorAll('.pill')].map(b => b.textContent.trim()),
-    hardRefresh: document.getElementById('optHardRefresh').checked,
-    notify: document.getElementById('optNotify').checked,
     activePill: (document.querySelector('.pill.active') || {}).textContent || null,
   }));
   await p.screenshot({ path: path.join(OUT, 'C1-popup-custom-presets.png') });
+  await p.close();
+
+  // Refresh-behavior defaults (hard refresh, notify) now live on the Settings
+  // page — the popup is a launcher and no longer shows them. Verify them there.
+  const o = await browser.newPage();
+  await o.goto(extUrl('options.html'), { waitUntil: 'networkidle0' });
+  await sleep(400);
+  const defs = await o.evaluate(() => ({
+    hardRefresh: document.getElementById('defHardRefresh').checked,
+    notify: document.getElementById('defNotify').checked,
+  }));
+  await o.close();
+
   results.C1 = {
     pillsAreCustom: data.pills.every(l => l.startsWith('CUSTOM')),
     pills: data.pills,
-    defaultHardRefreshOn: data.hardRefresh,
-    defaultNotifyOn: data.notify,
+    defaultHardRefreshOn: defs.hardRefresh,
+    defaultNotifyOn: defs.notify,
   };
   log('C1: pills =', data.pills.join(', '));
-  log('C1: hardRefresh default ON =', data.hardRefresh, '| notify default ON =', data.notify);
-  await p.close();
+  log('C1: hardRefresh default ON =', defs.hardRefresh, '| notify default ON =', defs.notify);
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -313,24 +323,33 @@ await ext.goto(extUrl('options.html'), { waitUntil: 'domcontentloaded' });
 // ════════════════════════════════════════════════════════════════════════
 // M2 — random range is validated (inverted min/max gets swapped, floored 2s)
 // ════════════════════════════════════════════════════════════════════════
+// Random config moved to the Settings page; its range is validated on save
+// there (options.js gatherAndSave), stored in seconds.
 {
   const p = await browser.newPage();
-  await p.setViewport({ width: 360, height: 640 });
-  await p.goto(extUrl('popup.html'), { waitUntil: 'networkidle0' });
+  await p.setViewport({ width: 760, height: 900 });
+  await p.goto(extUrl('options.html'), { waitUntil: 'networkidle0' });
   await sleep(500);
-  const gathered = await p.evaluate(() => {
-    document.getElementById('optRandom').checked = true;
-    document.getElementById('optRandomMin').value = '60'; // intentionally inverted
-    document.getElementById('optRandomMax').value = '5';
-    return gatherSettings(); // global in popup.js
+  await p.evaluate(() => {
+    document.getElementById('defRandom').checked = true;
+    const min = document.getElementById('defRandomMin');
+    const max = document.getElementById('defRandomMax');
+    min.value = '60'; // intentionally inverted
+    max.value = '5';
+    min.dispatchEvent(new Event('input', { bubbles: true }));
+    max.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  await sleep(700); // debounced auto-save (350ms) + storage write
+  const stored = await p.evaluate(() => new Promise(res =>
+    chrome.storage.local.get('globalSettings', d => res(d.globalSettings || {}))
+  ));
   results.M2 = {
-    randomMinMs: gathered.randomMin,
-    randomMaxMs: gathered.randomMax,
-    minLEmax: gathered.randomMin <= gathered.randomMax,
-    flooredAt2s: gathered.randomMin >= 2000 && gathered.randomMax >= 2000,
+    randomMinSec: stored.randomMin,
+    randomMaxSec: stored.randomMax,
+    minLEmax: stored.randomMin <= stored.randomMax,
+    flooredAt2s: stored.randomMin >= 2 && stored.randomMax >= 2,
   };
-  log('M2: inverted 60/5 ->', gathered.randomMin, '/', gathered.randomMax, '| min<=max =', results.M2.minLEmax);
+  log('M2: inverted 60/5 ->', stored.randomMin, '/', stored.randomMax, '| min<=max =', results.M2.minLEmax);
   await p.close();
 }
 

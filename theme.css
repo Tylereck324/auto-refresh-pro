@@ -68,7 +68,9 @@
   --surface2: var(--card2);
   --danger:   var(--red);
   --success:  var(--green);
-  --accent2:  var(--green);
+  /* NOTE: there is intentionally no `--accent2`. It used to alias green, one
+     hyphen away from `--accent-2` (purple) — a trap. Use `--success` for the
+     green status colour and `--accent-2` for the purple accent. */
 }
 
 /* ── Body base (pages override width/layout in their inline <style>) ── */
@@ -79,6 +81,40 @@ body {
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
+
+/* ── Heading hierarchy (unified) ──
+   Three deliberate weights, used across every surface so a heading reads the
+   same rank on the popup, Settings, and Manage:
+     .h-page     primary    page title            22px / 600 / --text
+     .h-section  secondary  major section label   14px / 600 / --text, rule under
+     .h-group    tertiary   sub-group / cluster   10px / 700 / --text2, uppercase
+   Pages may add layout (margins) but should not redefine the weight/size. */
+.h-page {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.h-section {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.h-group {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+
+/* ── Checkboxes vs toggles (one documented rule) ──
+   Toggle switches (.toggle) = a feature that is ON or OFF on its own (Sound
+   alert, Monitor, Notify…). Native checkboxes = sub-modifiers that only refine
+   an already-chosen feature (Case-sensitive, Whole word, Regex, Ignore digits).
+   Keep that split: don't use a toggle for a modifier or a checkbox for a
+   standalone feature. Native checkboxes share the accent colour for cohesion. */
+input[type="checkbox"] { accent-color: var(--accent); }
 
 /* ── Toggle (unified) ──
    Single-span slider with a ::before thumb. Markup:

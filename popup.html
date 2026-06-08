@@ -191,15 +191,9 @@
     gap: 16px;
   }
 
-  /* ── Section ── */
-  .section-head {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    color: var(--text2);
-    margin-bottom: 8px;
-  }
+  /* ── Section ──
+     Weight/size come from the shared .h-group tier in theme.css. */
+  .section-head { margin-bottom: 8px; }
 
   /* ── Interval pills ── */
   .pill-grid {
@@ -401,7 +395,6 @@
   }
 
   .section-toggle:hover { border-color: var(--border2); }
-  .section-toggle .section-count { margin-left: auto; color: var(--text2); font-weight: 500; text-transform: none; letter-spacing: 0; }
   .section-toggle .section-chevron {
     margin-left: auto;
     font-size: 9px;
@@ -419,18 +412,7 @@
   }
   .collapse-panel.open { display: flex; }
 
-  /* Sub-groups inside the Options panel */
-  .cluster-head {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: var(--text2);
-    margin: 10px 0 2px;
-  }
-  .cluster-head:first-child { margin-top: 0; }
-
-  /* Inline explanation when a keyword locks the change-detection cluster */
+  /* Inline explanation when a keyword locks the change-detection controls */
   .lock-note {
     display: none;
     font-size: 10px;
@@ -469,7 +451,9 @@
 
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-  .hidden { display: none; }
+  /* Utility — wins over component display rules (.btn-stop sets display:flex
+     with equal specificity but later source order), so hiding always sticks. */
+  .hidden { display: none !important; }
 
   /* Sound-alert controls */
   .field-subhead { margin: 10px 0 6px; }
@@ -601,7 +585,7 @@
 
   <!-- Interval (always visible) -->
   <div>
-    <div class="section-head">Refresh Interval</div>
+    <div class="section-head h-group">Refresh Interval</div>
     <div class="pill-grid" id="pillGrid"></div>
     <div class="custom-row">
       <input class="custom-input" type="number" id="customValue" placeholder="Custom amount…" min="2">
@@ -614,12 +598,13 @@
     <div class="custom-hint" id="customHint">Minimum is 2 seconds — using 2s.</div>
   </div>
 
-  <!-- Actions (primary — kept near the top, always visible) -->
+  <!-- Actions (primary). Only one is shown at a time so the control always
+       reflects the real state: Start when idle, Stop when running. -->
   <div class="action-row">
     <button class="btn-start" id="btnStart">
       <span aria-hidden="true">▶</span> Start
     </button>
-    <button class="btn-stop" id="btnStop" disabled>
+    <button class="btn-stop hidden" id="btnStop" disabled>
       <span aria-hidden="true">■</span> Stop
     </button>
   </div>
@@ -664,63 +649,15 @@
     </div>
   </div>
 
-  <!-- Options (collapsible, grouped into clusters) -->
+  <!-- Change detection (collapsible). Refresh-behavior preferences (hard
+       refresh, overlay, random, keep-scroll, notify, stop-on-click, stop-after,
+       sound config) now live on the Settings page — the popup is a launcher. -->
   <div class="section">
-    <button class="section-toggle" id="toggleOptions" aria-expanded="false" aria-controls="panelOptions">
-      Options
-      <span class="section-count">9</span>
+    <button class="section-toggle" id="toggleChange" aria-expanded="false" aria-controls="panelChange">
+      Change Detection
       <span class="section-chevron" aria-hidden="true">▶</span>
     </button>
-    <div class="collapse-panel" id="panelOptions">
-
-      <div class="cluster-head">Refresh behavior</div>
-      <div class="opts-grid">
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Hard Refresh</div>
-            <div class="opt-sub">Bypass the cache</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optHardRefresh" aria-label="Hard refresh (bypass cache)">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Overlay</div>
-            <div class="opt-sub">On-page countdown</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optCountdown" checked aria-label="Show on-page countdown overlay">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Random</div>
-            <div class="opt-sub">Randomize interval</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optRandom" aria-label="Randomize interval">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Keep scroll</div>
-            <div class="opt-sub">Restore position</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optPreserveScroll" aria-label="Keep scroll position across refreshes">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-      </div>
-
-      <div class="cluster-head">Change detection</div>
+    <div class="collapse-panel" id="panelChange">
       <div class="opts-grid">
         <div class="opt-card" id="cardMonitor">
           <div>
@@ -757,60 +694,8 @@
       </div>
       <div class="lock-note" id="keywordLockNote">Disabled while a keyword is set — the keyword drives alerts instead.</div>
 
-      <div class="cluster-head">On events</div>
-      <div class="opts-grid">
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Notify</div>
-            <div class="opt-sub">On each refresh</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optNotify" aria-label="Notify on each refresh">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="opt-card">
-          <div>
-            <div class="opt-label">Stop on Click</div>
-            <div class="opt-sub">When you click page</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="optStopOnClick" aria-label="Stop when you click the page">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- Advanced (collapsible) -->
-  <div class="section">
-    <button class="section-toggle" id="advancedToggle" aria-expanded="false" aria-controls="advancedPanel">
-      Advanced
-      <span class="section-chevron" aria-hidden="true">▶</span>
-    </button>
-    <div class="collapse-panel" id="advancedPanel">
-      <div class="field-row">
-        <div class="field-label">STOP AFTER X REFRESHES (0 = unlimited)</div>
-        <input class="field-input" type="number" id="optStopAfter" min="0" value="0" placeholder="0">
-      </div>
-      <div id="randomRangeRow" class="hidden">
-        <div class="field-label field-subhead">RANDOM RANGE</div>
-        <div class="two-col">
-          <div class="field-row">
-            <div class="field-label">MIN (seconds)</div>
-            <input class="field-input" type="number" id="optRandomMin" min="2" value="5">
-          </div>
-          <div class="field-row">
-            <div class="field-label">MAX (seconds)</div>
-            <input class="field-input" type="number" id="optRandomMax" min="2" value="60">
-          </div>
-        </div>
-      </div>
       <div id="noiseRow" class="hidden">
-        <div class="field-label field-subhead">CHANGE SENSITIVITY (Monitor)</div>
+        <div class="field-label field-subhead">CHANGE SENSITIVITY</div>
         <div class="two-col">
           <div class="field-row">
             <div class="field-label">MIN CHANGE %</div>
@@ -821,27 +706,7 @@
           </div>
         </div>
       </div>
-      <div id="soundRow" class="hidden">
-        <div class="field-label field-subhead">SOUND ALERT</div>
-        <div class="field-row">
-          <div class="field-label">TONE</div>
-          <div class="sound-tone-row">
-            <!-- Options are populated from AlertSounds.TONES at load. -->
-            <select class="field-input" id="optSoundTone"></select>
-            <button type="button" class="btn btn-sm btn-accent" id="btnPreviewSound" title="Preview sound" aria-label="Preview sound"><span aria-hidden="true">▶</span> Preview</button>
-          </div>
-        </div>
-        <div class="two-col" style="margin-top:8px;">
-          <div class="field-row">
-            <div class="field-label">REPEAT (1–5)</div>
-            <input class="field-input" type="number" id="optSoundRepeat" min="1" max="5" value="1">
-          </div>
-          <div class="field-row">
-            <div class="field-label label-row">VOLUME <span id="optSoundVolumeVal" class="label-val">90%</span></div>
-            <input type="range" id="optSoundVolume" min="0" max="100" value="90" aria-label="Sound alert volume">
-          </div>
-        </div>
-      </div>
+
     </div>
   </div>
 
@@ -854,7 +719,6 @@
   <a class="footer-link" id="optionsLink" role="button" tabindex="0">⚙ Settings</a>
 </footer>
 
-<script src="sounds.js"></script>
 <script src="validators.js"></script>
 <script src="popup.js"></script>
 </body>

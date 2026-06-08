@@ -334,8 +334,12 @@
         if (saved) {
           applyPos(saved.x, saved.y);
         } else {
-          const w = overlayEl.offsetWidth || 160;
-          applyPos(Math.round((window.innerWidth - w) / 2), 18);
+          // Default to the bottom-right corner so the overlay never lands over
+          // the page's headline/top content. The user can still drag it anywhere
+          // (the chosen spot is then remembered via savePos).
+          const w = overlayEl.offsetWidth  || 160;
+          const h = overlayEl.offsetHeight || 100;
+          applyPos(window.innerWidth - w - 24, window.innerHeight - h - 24);
         }
         // Load saved size
         safeStorageGet('__ar_overlay_size', (sizeData) => {
