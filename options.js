@@ -267,4 +267,12 @@ function syncVolumeReadout() {
 }
 document.getElementById('defSoundVolume').addEventListener('input', syncVolumeReadout);
 
+// Preview the selected default tone once, at the chosen volume. Plays locally
+// (this click is a user gesture) using the shared AlertSounds catalog.
+document.getElementById('btnPreviewSound').addEventListener('click', function () {
+  const tone = document.getElementById('defSoundTone').value || 'beep';
+  const volume = Math.min(1, Math.max(0, (parseInt(document.getElementById('defSoundVolume').value, 10) || 90) / 100));
+  AlertSounds.playTone(tone, { volume: volume, repeat: 1 });
+});
+
 load();

@@ -85,6 +85,11 @@ function bindEvents() {
   // Live volume percentage readout next to the slider.
   document.getElementById('optSoundVolume').addEventListener('input', syncVolumeReadout);
 
+  // Preview the currently selected tone at the chosen volume. Plays locally in
+  // the popup (this click is a user gesture, so autoplay is allowed) — no
+  // offscreen round-trip — using the same AlertSounds catalog the alert uses.
+  document.getElementById('btnPreviewSound').addEventListener('click', previewSound);
+
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
   document.getElementById('optKeyword').addEventListener('input', updateKeywordLock);
@@ -548,4 +553,11 @@ function syncVolumeReadout() {
   const slider = document.getElementById('optSoundVolume');
   const out = document.getElementById('optSoundVolumeVal');
   if (slider && out) out.textContent = (parseInt(slider.value, 10) || 0) + '%';
+}
+
+// Preview the selected tone once, at the chosen volume.
+function previewSound() {
+  const tone   = document.getElementById('optSoundTone').value || 'beep';
+  const volume = clampSoundVolume(document.getElementById('optSoundVolume').value);
+  AlertSounds.playTone(tone, { volume: volume, repeat: 1 });
 }
