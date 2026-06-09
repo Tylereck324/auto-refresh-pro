@@ -71,18 +71,46 @@
     return raw.slice(0, MAX_KEYWORD_LEN);
   }
 
+  // The exponential shape the nested-quantifier check misses: a QUANTIFIED
+  // alternation group whose branches can match the same text, e.g. (a|a)+ ,
+  // (a|ab)* , and the common user idiom (.|\n)*keyword — none of which contain
+  // an inner quantifier. Branch overlap is approximated: an empty branch, an
+  // unescaped '.' in any branch (it overlaps every other branch), identical
+  // branches, or one branch a literal prefix of another. Only innermost
+  // (paren-free) groups are inspected — heuristic, not a proof.
+  function hasOverlappingAlternation(pattern) {
+    const group = /\((?:\?:)?([^()]*\|[^()]*)\)(?:[+*]|\{\d+,?\d*\})/g;
+    let m;
+    while ((m = group.exec(pattern)) !== null) {
+      const branches = m[1].split('|');
+      for (let i = 0; i < branches.length; i++) {
+        const a = branches[i];
+        if (a === '') return true;              // (x|)* — empty branch matches anywhere
+        if (/(^|[^\\])\./.test(a)) return true; // '.' overlaps any sibling branch
+        for (let j = i + 1; j < branches.length; j++) {
+          const b = branches[j];
+          if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function isSafeRegex(pattern) {
     if (typeof pattern !== 'string') return false;
     if (pattern.length === 0 || pattern.length > MAX_REGEX_LEN) return false;
     // Must compile at all.
     try { new RegExp(pattern); } catch (e) { return false; }
     // Reject classic ReDoS shapes: a quantifier applied to a group that itself
-    // contains a quantifier (nested quantifiers), e.g. (a+)+ , (a*)* , (.+)+ ,
-    // (?:a|aa)+ style overlap. Heuristic, not a proof.
+    // contains a quantifier (nested quantifiers), e.g. (a+)+ , (a*)* , (.+)+ .
+    // Heuristic, not a proof.
     if (/\([^)]*[+*][^)]*\)\s*[+*]/.test(pattern)) return false;
     if (/\([^)]*[+*][^)]*\)\s*\{\d+,?\d*\}/.test(pattern)) return false;
     // Reject an unbounded open-ended repetition of a group: (...)+{n,} / (...){n,}
     if (/\)\s*\{\d+,\}/.test(pattern)) return false;
+    // Reject quantified alternation groups with overlapping branches — the
+    // exponential family ((a|a)+x, (.|\n)*x) that has no nested quantifier.
+    if (hasOverlappingAlternation(pattern)) return false;
     // Cap total quantifier count — many stacked quantifiers compound backtracking.
     const quant = (pattern.match(/[+*?]|\{\d+,?\d*\}/g) || []).length;
     if (quant > 12) return false;
@@ -262,6 +290,25 @@
     return typeof v === 'object' && v !== null && !Array.isArray(v);
   }
 
+  // JSON.parse creates '__proto__' as an OWN data property (CreateDataProperty),
+  // so Object.entries/keys yield it — but a later plain assignment or
+  // Object.assign goes through the inherited Object.prototype.__proto__ SETTER,
+  // silently swapping the target's prototype instead of storing the key. Not
+  // currently exploitable here (storage.set persists own properties only), but
+  // one for...in or merge refactor away from real prototype pollution, so these
+  // keys are dropped at the import boundary.
+  const FORBIDDEN_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+  // Shallow copy that can't trip the __proto__ setter (see FORBIDDEN_KEYS).
+  function safeShallowCopy(obj) {
+    const out = {};
+    for (const k of Object.keys(obj)) {
+      if (FORBIDDEN_KEYS.includes(k)) continue;
+      out[k] = obj[k];
+    }
+    return out;
+  }
+
   function sanitizeAutoStartUrls(arr) {
     if (!Array.isArray(arr)) return [];
     const out = [];
@@ -382,6 +429,18 @@
     const errors = [];
     const out = {};
     for (const [key, val] of Object.entries(data)) {
+      if (FORBIDDEN_KEYS.includes(key)) {
+        continue; // prototype-pollution hazard — never store or assign these
+      }
+      if (key === 'activeJobs') {
+        // Runtime job state, not a setting — the worker rebuilds it. Importing
+        // it would let a crafted file plant per-tab job entries with arbitrary
+        // unsanitized settings that restoreJobs replays onto whatever tabs hold
+        // those (small, guessable) ids at the next browser startup. Honest
+        // exports no longer contain it; old/crafted files get it stripped.
+        errors.push('skipped runtime job state (activeJobs)');
+        continue;
+      }
       if (key === 'autoStartUrls') {
         const safe = sanitizeAutoStartUrls(val);
         if (Array.isArray(val) && safe.length !== val.length) {
@@ -390,7 +449,7 @@
         out.autoStartUrls = safe;
       } else if (key === 'globalSettings') {
         if (!isPlainObject(val)) { out.globalSettings = {}; continue; }
-        const gs = Object.assign({}, val);
+        const gs = safeShallowCopy(val);
         const presets = sanitizePresets(val.presets);
         if (presets) gs.presets = presets;
         out.globalSettings = gs;
@@ -407,7 +466,7 @@
         // dangerous field is a regex keyword: cap its length and drop regex mode
         // if the stored pattern fails the safety guard (it stays a literal).
         if (!isPlainObject(val)) { out.popupSettings = {}; continue; }
-        const ps = Object.assign({}, val);
+        const ps = safeShallowCopy(val);
         if (typeof ps.keyword === 'string') ps.keyword = sanitizeKeywordPattern(ps.keyword);
         if (ps.kwRegex && !isSafeRegex(ps.keyword)) {
           ps.kwRegex = false;

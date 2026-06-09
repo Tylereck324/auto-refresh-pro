@@ -24,19 +24,27 @@
   //   opts.now              — current epoch ms (for the nextRefresh fallback)
   //   opts.fallbackInterval — interval used when stored.nextRefresh is missing
   // refreshCount/nextRefresh come from storage so stopAfter and the countdown
-  // resume faithfully; previousContent is intentionally null (the baseline isn't
-  // persisted, so the first post-restart cycle just skips alerting once).
+  // resume faithfully. previousContent — the keyword/change-detection baseline —
+  // is restored too: for any interval past the MV3 idle timeout the worker dies
+  // between EVERY pair of cycles, so without it each cycle would start
+  // baseline-less and detection would never fire at long intervals. Non-string
+  // values (legacy entries, hand-edited storage) degrade to null = no baseline,
+  // which skips alerting for one cycle rather than corrupting comparisons.
   function buildRehydratedJob(stored, tabId, opts) {
     opts = opts || {};
     const now = typeof opts.now === 'number' ? opts.now : 0;
     const fallbackInterval = typeof opts.fallbackInterval === 'number' ? opts.fallbackInterval : 30000;
     return {
       settings: stored.settings,
-      refreshCount: stored.refreshCount || 0,
-      nextRefresh: stored.nextRefresh || (now + fallbackInterval),
+      // Coerce persisted numbers: a string refreshCount (hand-edited or legacy
+      // storage) would otherwise survive and turn `count + 1` into string
+      // concatenation ("5" → "51"), corrupting the display AND the stopAfter
+      // comparison; a string nextRefresh would feed NaN into the scheduler.
+      refreshCount: Number(stored.refreshCount) || 0,
+      nextRefresh: Number(stored.nextRefresh) || (now + fallbackInterval),
       alarmName: 'refresh_' + tabId,
       startUrl: opts.startUrl != null ? opts.startUrl : (stored.startUrl || null),
-      previousContent: null,
+      previousContent: typeof stored.previousContent === 'string' ? stored.previousContent : null,
       _matcher: opts.matcher,
       _lastRefresh: 0,
       _timer: null,

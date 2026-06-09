@@ -73,6 +73,50 @@ test('preserves unrelated keys (forward compatible)', () => {
   assert.deepEqual(value.somethingNew, { a: 1 });
 });
 
+test('strips activeJobs (runtime state) so an import cannot plant jobs', () => {
+  // A crafted file with per-tab job entries (small, guessable tab ids carrying
+  // unsanitized settings) must never reach storage: restoreJobs would replay
+  // them onto whatever tabs hold those ids at the next browser startup.
+  const { value, errors } = V.sanitizeImportedSettings({
+    globalSettings: { defaultInterval: 30 },
+    activeJobs: {
+      1: { settings: { interval: 1, hardRefresh: true, keyword: 'x'.repeat(99) } },
+      2: { settings: { interval: 2000 }, refreshCount: '5' },
+    },
+  });
+  assert.equal(value.activeJobs, undefined);
+  assert.ok(errors.some(e => /activeJobs/.test(e)));
+  // The legitimate keys still import.
+  assert.equal(value.globalSettings.defaultInterval, 30);
+});
+
+test('drops __proto__/constructor/prototype keys at every level it copies', () => {
+  // JSON.parse creates __proto__ as an OWN property; a later assignment of it
+  // goes through the Object.prototype.__proto__ setter. The sanitizer must not
+  // store or assign these keys.
+  const data = JSON.parse(
+    '{"__proto__": {"polluted": 1},' +
+    ' "constructor": {"x": 1},' +
+    ' "globalSettings": {"__proto__": {"polluted": 2}, "defaultInterval": 10},' +
+    ' "popupSettings": {"__proto__": {"polluted": 3}, "sound": true}}'
+  );
+  const { value } = V.sanitizeImportedSettings(data);
+  // Keys are gone (not own properties of the sanitized output)...
+  assert.equal(Object.prototype.hasOwnProperty.call(value, '__proto__'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(value, 'constructor'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(value.globalSettings, '__proto__'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(value.popupSettings, '__proto__'), false);
+  // ...no prototype got swapped on the outputs...
+  assert.equal(Object.getPrototypeOf(value), Object.prototype);
+  assert.equal(Object.getPrototypeOf(value.globalSettings), Object.prototype);
+  assert.equal(Object.getPrototypeOf(value.popupSettings), Object.prototype);
+  // ...and Object.prototype itself was never touched.
+  assert.equal({}.polluted, undefined);
+  // Legitimate sibling keys survive.
+  assert.equal(value.globalSettings.defaultInterval, 10);
+  assert.equal(value.popupSettings.sound, true);
+});
+
 test('drops malformed customHotkey, keeps well-formed', () => {
   assert.equal(V.sanitizeImportedSettings({ customHotkey: 'nope' }).value.customHotkey, null);
   const good = V.sanitizeImportedSettings({

@@ -66,7 +66,10 @@
       randomMin: randomMinSec * 1000,
       randomMax: randomMaxSec * 1000,
       stopOnClick: !!pref(s.stopOnClick, g.stopOnClick),
-      sound: !!s.sound,
+      // Sound gets the same legacy fallback as random/stopOnClick: the popup
+      // seeds its checkbox from g.sound, so a hotkey launch before the popup
+      // has ever saved popupSettings must read the same default, not false.
+      sound: !!pref(s.sound, g.sound),
       monitorMode: !!s.monitor,
       noiseTolerant: !!s.noiseTolerant,
       collapseDigits: s.collapseDigits !== false,

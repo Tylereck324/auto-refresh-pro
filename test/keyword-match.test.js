@@ -51,6 +51,39 @@ test('whole-word works with multiple terms', () => {
   assert.equal(m.test('dogma'), false);
 });
 
+test('whole-word matches non-ASCII keywords (ASCII-\\b regression)', () => {
+  // \b is ASCII-only, so these silently never matched before the unicode-aware
+  // lookaround boundaries: the matcher was ok:true and always returned false.
+  const accented = compileMatcher({ keyword: 'café', kwWholeWord: true });
+  assert.equal(accented.test('le café est bon'), true);
+  assert.equal(accented.test('cafétéria'), false); // still bounded by letters
+  const cjk = compileMatcher({ keyword: '在庫あり', kwWholeWord: true });
+  assert.equal(cjk.test('状態: 在庫あり です'), true);
+  const cyrillic = compileMatcher({ keyword: 'продано', kwWholeWord: true });
+  assert.equal(cyrillic.test('товар продано вчера'), true);
+  assert.equal(cyrillic.test('непродано'), false);
+});
+
+test('escaped comma is a literal, not a term separator', () => {
+  // "1,000 in stock" used to split into "1" + "000 in stock" — and "1" matches
+  // essentially any page. '\,' keeps the comma inside the term.
+  const m = compileMatcher({ keyword: '1\\,000 in stock' });
+  assert.equal(m.test('only 1,000 in stock today'), true);
+  assert.equal(m.test('only 1 left'), false);
+  // Unescaped commas still split into ANY-terms.
+  const multi = compileMatcher({ keyword: 'cat, dog\\, esq' });
+  assert.equal(multi.test('a cat'), true);
+  assert.equal(multi.test('dog, esq'), true);
+  assert.equal(multi.test('esq alone'), false);
+});
+
+test('whole-word handles terms ending in punctuation (C++)', () => {
+  // Old \b needed a WORD char after the final '+', so "C++ developer" failed.
+  const m = compileMatcher({ keyword: 'C++', kwWholeWord: true });
+  assert.equal(m.test('senior C++ developer'), true);
+  assert.equal(m.test('AC++ thing'), false); // still anchored on the left
+});
+
 // ── Case sensitivity ─────────────────────────────────────────────────────────
 test('case-sensitive keyword respects case', () => {
   const m = compileMatcher({ keyword: 'Sale', kwCaseSensitive: true });

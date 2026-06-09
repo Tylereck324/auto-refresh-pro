@@ -240,6 +240,12 @@ async function fireRefresh(tabId) {
   job._lastRefresh = now;
   job.refreshCount = (job.refreshCount || 0) + 1;
 
+  // Reschedule-epoch snapshot. The refresh below can take seconds (executeScript
+  // + reload); if the user submits UPDATE_INTERVAL in that window, its handler
+  // bumps _epoch and reschedules with the NEW interval — and this cycle must not
+  // overwrite that with the interval it computed before the await.
+  const epoch = job._epoch || 0;
+
   // Compute next interval (random or fixed)
   const nextInterval = computeInterval(job.settings);
   job.settings.currentInterval = nextInterval;
@@ -264,8 +270,11 @@ async function fireRefresh(tabId) {
     return;
   }
 
-  // Reschedule (alarm or setTimeout, per interval)
-  if (activeJobs[tabId]) {
+  // Reschedule (alarm or setTimeout, per interval) — unless an UPDATE_INTERVAL
+  // landed during the await above (epoch advanced): its reschedule is newer and
+  // already persisted/broadcast, so ours would drag the job back to the old
+  // timing for one full stale cycle.
+  if (activeJobs[tabId] && (activeJobs[tabId]._epoch || 0) === epoch) {
     activeJobs[tabId].nextRefresh = Date.now() + nextInterval;
     await saveJobToStorage(tabId, activeJobs[tabId].settings); // persist count + deadline
     scheduleNext(tabId, nextInterval);
@@ -322,12 +331,15 @@ function readPageText() {
   if (ov && parent) parent.insertBefore(ov, next);
   // Bound the returned text. innerText on an infinite-scroll / pathological page
   // can be many MB; that full payload is structure-cloned out of the page on
-  // every cycle and held resident in job.previousContent per active job. This
-  // cap sits far above any realistic page (the matchers already only scan the
-  // first 200k chars), so detection is unchanged for real content while a runaway
-  // page can't blow up the worker's serialization cost or memory. (Inlined as a
-  // literal: an executeScript func can't close over an outer const.)
-  const MAX_PAGE_TEXT = 2000000;
+  // every cycle, held resident in job.previousContent, and (for monitor jobs)
+  // persisted to storage as the cross-restart baseline. The cap matches the
+  // matchers' scan bounds (keyword-match MAX_REGEX_SCAN / normalize MAX_SCAN,
+  // both 200k), so detection is unchanged for any page those paths could see
+  // anyway, while a runaway page can't blow up worker memory, message
+  // serialization, or the per-cycle storage write. Change detection beyond the
+  // cap is out of scope by design. (Inlined as a literal: an executeScript func
+  // can't close over an outer const.)
+  const MAX_PAGE_TEXT = 200000;
   return text.length > MAX_PAGE_TEXT ? text.slice(0, MAX_PAGE_TEXT) : text;
 }
 
@@ -348,6 +360,18 @@ async function doMonitorRefresh(tabId, job) {
   const currentContent = (results && results[0] && results[0].result) || '';
   const prevContent = job.previousContent; // null/undefined = no baseline yet
 
+  // An empty read means the page hadn't rendered when executeScript landed (slow
+  // load at a short interval, mid-navigation) — it is not evidence about the
+  // page. Treating it as real would fire false alerts in both directions: the
+  // next full read looks like "keyword appeared"/"page changed", and in inverse
+  // mode the empty read itself looks like "keyword disappeared" (worse, stop-on-
+  // keyword/change would then kill the job). Same policy as startRefresh's
+  // initialContent guard: skip detection, keep the old baseline, just reload.
+  if (currentContent.length === 0) {
+    await doRefresh(tabId, job);
+    return;
+  }
+
   // A keyword takes precedence over generic change-monitoring. When one is set,
   // the keyword is the signal of interest, so we skip the page-change path
   // entirely below — otherwise every dynamic page (timestamps, ads, counters)
@@ -363,7 +387,16 @@ async function doMonitorRefresh(tabId, job) {
   const hasBaseline = prevContent !== null && prevContent !== undefined;
   if (hasKeyword) {
     const foundNow  = matcher.test(currentContent);
-    const foundPrev = hasBaseline && matcher.test(prevContent);
+    // foundPrev is last cycle's foundNow — reuse it instead of re-running the
+    // matcher over the (up to 200k-char) previous snapshot every cycle. Falls
+    // back to a real test when there's no cached verdict: first cycle after a
+    // worker restart (the baseline text IS persisted, the boolean isn't) or
+    // after UPDATE_INTERVAL rebuilt the matcher (which clears the cache —
+    // a new keyword must be re-judged against the old text).
+    const foundPrev = typeof job._prevFound === 'boolean'
+      ? job._prevFound
+      : (hasBaseline && matcher.test(prevContent));
+    job._prevFound = foundNow;
     const fired = ARPMonitor.computeKeywordFire({
       foundNow, foundPrev, hasBaseline, kwInverse: job.settings.kwInverse,
     });
@@ -415,7 +448,8 @@ async function doMonitorRefresh(tabId, job) {
     }
   }
 
-  // Save snapshot then reload
+  // Save snapshot then reload (non-empty — the empty-read guard above returned
+  // early, so '' can never become the baseline).
   job.previousContent = currentContent;
   await doRefresh(tabId, job);
 }
@@ -443,7 +477,11 @@ async function startRefresh(tabId, settings) {
   let initialContent = null;
   try {
     const tab = await chrome.tabs.get(tabId);
-    startUrl = tab.url || null;
+    // pendingUrl: an auto-start job is created right after chrome.tabs.create,
+    // while the tab is still loading — url is '' but pendingUrl has the target.
+    // Without the fallback such jobs get startUrl null, permanently disabling
+    // the navigate-away stop and the restart-time identity check (restoreJobs).
+    startUrl = tab.url || tab.pendingUrl || null;
   } catch (e) {}
 
   try {
@@ -569,6 +607,13 @@ function withJobsStore(mutate) {
 }
 
 async function saveJobToStorage(tabId, settings) {
+  // Persist the detection baseline for monitor/keyword jobs. Without it, every
+  // alarm-driven cycle at intervals past the MV3 idle timeout rehydrates with no
+  // baseline, monitor-decision refuses to fire, and detection silently never
+  // works. Plain refresh jobs skip it — no detection, no point paying the write.
+  // readPageText caps the snapshot at 200k chars, bounding this write.
+  const monitors = !!(settings && (settings.monitorMode ||
+    (typeof settings.keyword === 'string' && settings.keyword.trim())));
   await withJobsStore((jobs) => {
     const job = activeJobs[tabId];
     jobs[tabId] = {
@@ -576,6 +621,8 @@ async function saveJobToStorage(tabId, settings) {
       refreshCount: (job && job.refreshCount) || 0,
       nextRefresh: (job && job.nextRefresh) || (Date.now() + computeInterval(settings)),
       startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
+      previousContent: (monitors && job && typeof job.previousContent === 'string')
+        ? job.previousContent : null, // keyword/change baseline across restarts
       savedAt: Date.now(),
     };
   });
@@ -651,24 +698,57 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // ── Startup: restore jobs ──────────────────────────────────────────────────
-chrome.runtime.onStartup.addListener(restoreJobs);
-chrome.runtime.onInstalled.addListener(restoreJobs);
+// onStartup = browser launch: restore persisted jobs AND open auto-start URLs.
+// onInstalled also fires on every extension update/reload mid-session — restore
+// jobs there too (the update wiped the worker's memory and its alarms), but
+// NEVER auto-start: the user's auto-start tabs are already open, and opening
+// them again on each update would duplicate tabs and jobs.
+chrome.runtime.onStartup.addListener(() => restoreJobs({ autoStart: true }));
+chrome.runtime.onInstalled.addListener(() => restoreJobs({ autoStart: false }));
 
-async function restoreJobs() {
+async function restoreJobs(opts) {
+  const autoStart = !!(opts && opts.autoStart);
   const data = await chrome.storage.local.get(['activeJobs', 'autoStartUrls']);
   const jobs = data.activeJobs || {};
 
-  for (const [tabIdStr, job] of Object.entries(jobs)) {
+  for (const [tabIdStr, stored] of Object.entries(jobs)) {
     const tabId = parseInt(tabIdStr);
+    if (activeJobs[tabId]) continue; // already live (e.g. mid-session update race)
+
+    // Tab ids are session-scoped: after a browser restart this id may belong to
+    // a completely unrelated tab (they're small sequential integers). Blindly
+    // re-attaching would auto-reload — and for monitor jobs, read the text of —
+    // whatever page now holds the id, e.g. the user's banking tab. Re-attach
+    // only when the tab's URL still matches the job's persisted startUrl
+    // (origin + pathname, same comparison as the navigate-away stop); drop the
+    // entry otherwise, including legacy entries with no startUrl to verify.
+    let tab;
     try {
-      await chrome.tabs.get(tabId);
-      // Tab still exists, restart job
-      await startRefresh(tabId, job.settings);
+      tab = await chrome.tabs.get(tabId);
     } catch (e) {
-      // Tab gone, remove from storage
-      delete jobs[tabIdStr];
+      tab = null; // tab gone
+    }
+    const url = tab ? (tab.url || tab.pendingUrl || '') : '';
+    if (!tab || !stored.startUrl || ARPRehydrate.isNavigateAway(stored.startUrl, url)) {
+      await removeJobFromStorage(tabId);
+      chrome.alarms.clear(`refresh_${tabId}`);
+      continue;
+    }
+
+    // Same restore semantics as a mid-session worker restart: rehydrateJob
+    // preserves refreshCount/nextRefresh so "stop after N" resumes faithfully
+    // instead of resetting to 0 (which startRefresh would do). The persisted
+    // deadline is usually in the past after a browser relaunch; the small floor
+    // spreads the overdue refreshes out instead of firing them all at once.
+    const job = await rehydrateJob(tabId, stored);
+    if (job) {
+      scheduleNext(tabId, Math.max(1000, job.nextRefresh - Date.now()));
+      sendCountdownStart(tabId, 0);
     }
   }
+  broadcastStatus();
+
+  if (!autoStart) return;
 
   // Auto-start URLs. Only open entries whose URL is a safe http(s) navigation —
   // a poisoned storage value (e.g. an imported javascript:/file: URL) must never
@@ -699,6 +779,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 // ── Stop refresh if user navigates away from the original URL ──────────────
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (!changeInfo.url) return; // only care about URL changes
+  // Fast path: while the worker is warm and the store is known fresh, a tab with
+  // no in-memory job has no job at all — skip the rehydrate path entirely. This
+  // listener fires for every URL-changing navigation in EVERY tab, and without
+  // the gate each one paid a storage read just to learn "no job here".
+  if (jobsStoreFresh && !activeJobs[tabId]) return;
   // Rehydrate if the worker restarted, so a navigate-away is still caught and the
   // comparison uses the persisted original URL — not the post-restart one.
   const job = activeJobs[tabId] || await rehydrateJob(tabId);
@@ -771,21 +856,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse && sendResponse({ ok: false, error: 'untrusted sender' });
     return false;
   }
+  // A content script's sender carries its tab; bind such messages to THAT tab
+  // regardless of any msg.tabId. Our own content script never sends a foreign
+  // tabId, so this only constrains a forged message from a compromised page
+  // process (which can imitate a content-script sender, but cannot fake
+  // sender.tab) to controlling its own tab. The popup/options/manage pages have
+  // no sender.tab and keep using msg.tabId.
+  const senderTabId = sender.tab && sender.tab.id;
   (async () => {
     await rehydrateAll(); // a restarted worker has an empty activeJobs; refill it
     switch (msg.type) {
       case 'START_REFRESH':
-        await startRefresh(msg.tabId, msg.settings);
+        await startRefresh(senderTabId || msg.tabId, msg.settings);
         sendResponse({ ok: true });
         break;
       case 'STOP_REFRESH': {
-        const stopTabId = msg.tabId || (sender.tab && sender.tab.id);
+        const stopTabId = senderTabId || msg.tabId;
         if (stopTabId) await stopRefresh(stopTabId);
         sendResponse({ ok: true });
         break;
       }
       case 'GET_STATUS': {
-        const resolvedTabId = msg.tabId || (sender.tab && sender.tab.id);
+        const resolvedTabId = senderTabId || msg.tabId;
         sendResponse({
           jobs: serializeJobs(),
           job: resolvedTabId && activeJobs[resolvedTabId] ? {
@@ -805,7 +897,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'UPDATE_INTERVAL': {
         // Restart the alarm with the new interval, preserving the existing job state
         // (refresh count, previousContent baseline, startUrl — just update the timing)
-        const updateTabId = msg.tabId;
+        const updateTabId = senderTabId || msg.tabId;
         const job = activeJobs[updateTabId];
         if (!job) { sendResponse({ ok: false }); break; }
 
@@ -818,6 +910,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job.settings = { ...job.settings, ...msg.settings };
         job.nextRefresh = Date.now() + newInterval;
         job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
+        job._prevFound = undefined; // cached verdict is for the OLD matcher — re-judge
+        job._epoch = (job._epoch || 0) + 1; // invalidate any in-flight cycle's reschedule
 
         // Reschedule with the right mechanism for the new interval
         scheduleNext(updateTabId, newInterval);
@@ -851,7 +945,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'GET_ALL_JOBS':
         sendResponse({ jobs: serializeJobs() });
         break;
+      default:
+        // Unknown type: respond instead of leaving the caller's port hanging
+        // until the worker dies ("message port closed").
+        sendResponse({ ok: false, error: 'unknown message type' });
     }
-  })();
+  })().catch((e) => {
+    // Without this, any rejection above (a chrome.* call failing mid-handler)
+    // is an unhandled promise AND the caller never gets a response — its
+    // callback/promise just hangs. Always settle the channel.
+    console.warn('Message handler error', msg && msg.type, e);
+    try { sendResponse({ ok: false, error: String(e && e.message || e) }); } catch (_) {}
+  });
   return true; // Keep channel open for async
 });

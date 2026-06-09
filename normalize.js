@@ -27,9 +27,17 @@
   function normalize(text, opts) {
     opts = opts || {};
     if (typeof text !== 'string') return '';
-    let s = text.length > MAX_SCAN ? text.slice(0, MAX_SCAN) : text;
+    // At-cap inputs (this slice, or readPageText's upstream cap) get their last
+    // token dropped: a length change EARLIER in the document (a counter ticking
+    // 99→100) shifts every later character, so the cut lands mid-token in a
+    // different place each snapshot — and that boundary noise alone would read
+    // as a change, defeating collapseDigits for >cap pages.
+    const truncated = text.length >= MAX_SCAN;
+    let s = truncated ? text.slice(0, MAX_SCAN) : text;
     if (opts.collapseDigits) s = s.replace(/\d+/g, '0');
-    return s.replace(/\s+/g, ' ').trim();
+    s = s.replace(/\s+/g, ' ').trim();
+    if (truncated) s = s.replace(/ [^ ]*$/, '');
+    return s;
   }
 
   function tokenSet(s) {
@@ -41,6 +49,13 @@
   // Jaccard distance over word tokens: |symmetric difference| / |union|, in
   // [0,1]. O(n) in the token count — deliberately not an O(n^2) edit distance.
   // Two empty inputs are identical (0).
+  //
+  // KNOWN BLIND SPOT (accepted): sets ignore order and multiplicity, so a pure
+  // reordering ("A B C" → "C B A") or a repetition-count change ("error" →
+  // "error error error") is distance 0 and won't clear a non-zero threshold.
+  // That's the right call for the noise-suppression goal (ad/listing shuffles
+  // shouldn't alert), but it means "the same words rearranged" never counts as
+  // a change when minChangedFraction > 0.
   function changedFraction(a, b) {
     const A = tokenSet(typeof a === 'string' ? a : '');
     const B = tokenSet(typeof b === 'string' ? b : '');

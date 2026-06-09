@@ -4,12 +4,10 @@
   "version": "1.0.0",
   "description": "Auto refresh pages with custom intervals, page monitoring, keyword detection, and more.",
   "permissions": [
-    "tabs",
     "storage",
     "alarms",
     "notifications",
     "scripting",
-    "activeTab",
     "offscreen"
   ],
   "host_permissions": [

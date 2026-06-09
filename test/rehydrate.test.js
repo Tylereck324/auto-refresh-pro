@@ -20,9 +20,44 @@ test('buildRehydratedJob carries persisted count, deadline, and startUrl', () =>
   assert.equal(job.startUrl, 'https://a.com/x');
   assert.equal(job.alarmName, 'refresh_42');
   assert.equal(job._matcher, MATCHER);
-  assert.equal(job.previousContent, null); // baseline not persisted
+  assert.equal(job.previousContent, null); // no persisted baseline → start clean
   assert.equal(job._lastRefresh, 0);
   assert.equal(job._timer, null);
+});
+
+// The detection baseline must survive a worker restart: at intervals past the
+// MV3 idle timeout the worker dies between EVERY pair of cycles, so a baseline
+// that resets to null on rehydrate means keyword/change alerts never fire.
+test('buildRehydratedJob restores the persisted detection baseline', () => {
+  const job = R.buildRehydratedJob(
+    { settings: { keyword: 'in stock' }, previousContent: 'sold out everywhere' },
+    1,
+    { matcher: MATCHER, now: 0 }
+  );
+  assert.equal(job.previousContent, 'sold out everywhere');
+});
+
+test('buildRehydratedJob degrades a non-string baseline to null (no corruption)', () => {
+  for (const bad of [42, { text: 'x' }, ['x'], true, null, undefined]) {
+    const job = R.buildRehydratedJob(
+      { settings: {}, previousContent: bad },
+      1,
+      { matcher: MATCHER, now: 0 }
+    );
+    assert.equal(job.previousContent, null, `previousContent=${JSON.stringify(bad)} should rehydrate as null`);
+  }
+});
+
+test('an empty-string baseline is preserved as a baseline, not dropped', () => {
+  // '' is a valid string; the write side (saveJobToStorage) never persists ''
+  // because doMonitorRefresh skips empty reads, but if it appears in storage it
+  // must not crash and must remain a string so hasBaseline semantics stay sane.
+  const job = R.buildRehydratedJob(
+    { settings: {}, previousContent: '' },
+    1,
+    { matcher: MATCHER, now: 0 }
+  );
+  assert.equal(job.previousContent, '');
 });
 
 test('buildRehydratedJob fills sane defaults for a sparse entry', () => {

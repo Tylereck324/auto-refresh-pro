@@ -11,6 +11,15 @@ let currentTabId = null;
 let selectedMs = 30000;
 let isActive = false;
 
+// Grace window (epoch ms) during which a broadcast that CONTRADICTS the
+// optimistic Start/Stop state is treated as stale and ignored. The background
+// inserts/removes the job asynchronously, and other tabs' jobs broadcast the
+// full map every cycle — without this, those snapshots flicker the UI and a
+// confused second click can restart the job (resetting its refresh count).
+// A broadcast that CONFIRMS the state clears the window early.
+let optimisticUntil = 0;
+const OPTIMISTIC_GRACE_MS = 2000;
+
 // Settings-page defaults (globalSettings). Loaded once in loadSettings and read
 // by gatherSettings for the preferences the popup no longer exposes directly.
 let globalDefaults = {};
@@ -88,10 +97,18 @@ function bindEvents() {
     });
   });
 
-  // The change-sensitivity fields only matter when "Ignore noise" is on, and the
-  // random range only matters when "Randomize interval" is on.
+  // The change-sensitivity fields only matter when "Ignore noise" is on.
   document.getElementById('optNoiseTolerant').addEventListener('change', updateConditionalRows);
-  document.getElementById('optRandom').addEventListener('change', updateConditionalRows);
+  // Toggling "Randomize interval" syncs the random range row, persists, and
+  // restarts a running job into the new mode; editing the range does the same
+  // (debounced). Both handle their own persistence, so optRandom/optRandomMin/
+  // optRandomMax are omitted from the plain saveSettings list below.
+  document.getElementById('optRandom').addEventListener('change', applyRandomToggle);
+  ['optRandomMin', 'optRandomMax'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('change', applyRandomRangeDebounced);
+    el.addEventListener('input', applyRandomRangeDebounced);
+  });
 
   // A keyword takes precedence over generic change-monitoring (the background
   // ignores Monitor while a keyword is set), so lock those controls to match.
@@ -115,17 +132,41 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
-   'optNoiseTolerant','optCollapseDigits','optMinChange',
-   'optRandom','optRandomMin','optRandomMax','optStopOnClick'
+   'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
-    if (el && (el.type === 'text' || el.type === 'number')) el.addEventListener('input', saveSettings);
+    // Per-keystroke events get a debounced save — one storage write per pause
+    // in typing instead of one per character. 'change' still saves immediately.
+    if (el && (el.type === 'text' || el.type === 'number')) el.addEventListener('input', saveSettingsDebounced);
   });
+}
+
+// Trailing-edge debounce for live-apply paths driven by per-keystroke input
+// events. Restarting a running job per keystroke is destructive: typing "25"
+// first applies "2", and two seconds is enough for the job to reload the page
+// under the user mid-edit.
+function debounce(fn, ms) {
+  let t = null;
+  const debounced = function () {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => { t = null; fn(); }, ms);
+  };
+  // For callers that supersede a pending edit with an immediate action (e.g. a
+  // preset click while a custom-row apply is still pending) — without this the
+  // stale apply would fire ~500ms after the deliberate one.
+  debounced.cancel = function () {
+    if (t) { clearTimeout(t); t = null; }
+  };
+  return debounced;
 }
 
 // Read the custom interval row, clamp to the 2s minimum, and surface a hint
 // when the typed value was below that floor (instead of clamping silently).
+// The visual feedback (pill deselection, invalid hint, selectedMs) is immediate;
+// only the persist + running-job restart is debounced, so intermediate values
+// never reach the job (see debounce above).
+const applyIntervalChangeDebounced = debounce(applyIntervalChange, 500);
 function applyCustomInterval() {
   const input = document.getElementById('customValue');
   const hint  = document.getElementById('customHint');
@@ -144,7 +185,17 @@ function applyCustomInterval() {
   selectedMs = Math.max(2000, raw);
   input.classList.toggle('invalid', clamped);
   if (hint) hint.classList.toggle('show', clamped);
-  applyIntervalChange();
+  applyIntervalChangeDebounced();
+}
+
+// Turn random mode off and sync the dependent UI (hides the random range row).
+// No-op when random is already off, so selecting an interval with random off
+// leaves everything untouched. Callers persist the change via saveSettings().
+function disableRandomMode() {
+  const random = document.getElementById('optRandom');
+  if (!random || !random.checked) return;
+  random.checked = false;
+  updateConditionalRows();
 }
 
 function updateConditionalRows() {
@@ -182,19 +233,72 @@ function updateKeywordLock() {
 // If a job is already running, sends UPDATE_INTERVAL to restart it immediately
 // with the new duration and resets the popup countdown.
 function applyIntervalChange() {
+  // Picking an explicit interval (a preset pill or the custom row) is a request
+  // for a fixed timer, which is mutually exclusive with the random range — under
+  // random mode the chosen interval is ignored entirely (compose-settings.js).
+  // So selecting one turns random mode off; when a job is running, the restart
+  // below then applies the new fixed interval immediately.
+  disableRandomMode();
   saveSettings();
-  if (!isActive || !currentTabId) return;
+  restartActiveJob(selectedMs);
+}
 
+// Optimistic countdown placeholder while switching into/within random mode: the
+// range floor, clamped to the job's real 2s minimum so the placeholder can't
+// show a duration the background would never roll. The background re-rolls
+// within the range and its STATUS_UPDATE push supplies the real deadline.
+function randomPlaceholderMs() {
+  const min = parseFloat(document.getElementById('optRandomMin').value) || 5;
+  return Math.max(2000, min * 1000);
+}
+
+// Toggling "Randomize interval" is the mirror of the preset/custom path: sync the
+// dependent UI, persist, and — when a job is running — restart it so the new mode
+// takes effect immediately (fixed ⇄ random) instead of only on the next Start.
+function applyRandomToggle() {
+  updateConditionalRows();
+  saveSettings();
+  const randomOn = document.getElementById('optRandom').checked;
+  restartActiveJob(randomOn ? randomPlaceholderMs() : selectedMs);
+}
+
+// Editing the random range is part of the same live-apply contract as the
+// toggle above it: persist, and when random mode drives a running job, restart
+// it so the new bounds take effect now rather than on the next Start. Debounced
+// — these are number inputs edited per keystroke (see debounce above).
+const applyRandomRangeDebounced = debounce(applyRandomRange, 500);
+function applyRandomRange() {
+  saveSettings();
+  if (document.getElementById('optRandom').checked) {
+    restartActiveJob(randomPlaceholderMs());
+  }
+}
+
+// Push the current popup settings to the running job and optimistically reset the
+// countdown to optimisticMs for instant feedback. No-op when idle. The background
+// recomputes the authoritative deadline (random mode re-rolls within the range)
+// and its STATUS_UPDATE push corrects the placeholder.
+function restartActiveJob(optimisticMs) {
+  if (!isActive || !currentTabId) return;
+  // Same gate as Start: UPDATE_INTERVAL ships the WHOLE settings object, so an
+  // invalid/unsafe regex typed mid-run must not ride along with an interval
+  // change — the background would refuse the matcher and the running job's
+  // keyword detection would silently die while the popup still shows it armed.
+  // The job keeps its last-good settings until the pattern is fixed.
+  if (!validateKeywordRegex()) return;
   const settings = gatherSettings();
   chrome.runtime.sendMessage({
     type: 'UPDATE_INTERVAL',
     tabId: currentTabId,
     settings
+  }, (resp) => {
+    // The job may have vanished between our isActive check and the background
+    // handling the message (stop-on-keyword fired, tab closed). Without this,
+    // the optimistic countdown below keeps ticking for a job that isn't there
+    // until the next broadcast happens to correct it. Re-sync immediately.
+    if (chrome.runtime.lastError || !resp || resp.ok === false) refreshStatus();
   });
-
-  // Optimistically reset the countdown to the new duration for instant feedback.
-  // The background's STATUS_UPDATE push will correct it (e.g. under random mode).
-  setDeadline(Date.now() + selectedMs, selectedMs);
+  setDeadline(Date.now() + optimisticMs, optimisticMs);
 }
 
 // ── Start / Stop ────────────────────────────────────────────────────────────
@@ -216,6 +320,7 @@ async function startRefresh() {
   });
 
   isActive = true;
+  optimisticUntil = Date.now() + OPTIMISTIC_GRACE_MS;
   setActiveUI(true);
   // Optimistic deadline; corrected by the background's STATUS_UPDATE push.
   const total = settings.currentInterval || settings.interval;
@@ -227,6 +332,7 @@ async function stopRefresh() {
   if (!currentTabId) return;
   chrome.runtime.sendMessage({ type: 'STOP_REFRESH', tabId: currentTabId });
   isActive = false;
+  optimisticUntil = Date.now() + OPTIMISTIC_GRACE_MS;
   setActiveUI(false);
   stopRenderLoop();
   jobDeadline = 0;
@@ -239,8 +345,19 @@ async function stopRefresh() {
 // range swap. The background's hotkey-toggle path calls the same constructor, so
 // popup- and hotkey-launched jobs can't drift.
 function gatherSettings() {
+  const s = readPopupState();
+  s.keyword = s.keyword.trim(); // stored raw; the job/matcher wants it trimmed
+  return ARPCompose.composeJobSettings(s, globalDefaults);
+}
+
+// Single reader for the popup's per-launch controls — both the persisted
+// popupSettings (saveSettings) and a launched job (gatherSettings) derive from
+// this one shape. They used to read the DOM independently and drifted (parseInt
+// vs parseFloat on the random range, trimmed vs raw keyword), so a job and the
+// reopened popup disagreed about the same fields.
+function readPopupState() {
   const el = (id) => document.getElementById(id);
-  const s = {
+  return {
     selectedMs,
     random: el('optRandom').checked,
     randomMin: parseFloat(el('optRandomMin').value) || 5,
@@ -251,7 +368,7 @@ function gatherSettings() {
     noiseTolerant: el('optNoiseTolerant').checked,
     collapseDigits: el('optCollapseDigits').checked,
     minChangedFraction: clampFraction(el('optMinChange').value),
-    keyword: el('optKeyword').value.trim(),
+    keyword: el('optKeyword').value,
     kwCaseSensitive: el('optKwCase').checked,
     kwWholeWord: el('optKwWhole').checked,
     kwRegex: el('optKwRegex').checked,
@@ -260,7 +377,6 @@ function gatherSettings() {
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
   };
-  return ARPCompose.composeJobSettings(s, globalDefaults);
 }
 
 // "Min change %" is 0–100 in the UI but stored/sent as a 0–1 fraction.
@@ -369,16 +485,30 @@ function applyStatus(resp) {
 
   if (job) {
     if (!isActive) {
+      // A broadcast says this tab has a job while the UI shows idle. Right
+      // after an optimistic Stop that's just a stale snapshot from before the
+      // background processed it — flipping back would flicker Stop→Start→Stop
+      // (and invite a double-click that restarts the job). Hold the optimistic
+      // state through the grace window; the post-stop broadcast settles it.
+      if (Date.now() < optimisticUntil) return;
       isActive = true;
       setActiveUI(true);
     }
+    optimisticUntil = 0; // state confirmed by the background
     const total = (job.settings && (job.settings.currentInterval || job.settings.interval)) || jobTotal;
     setDeadline(job.nextRefresh, total);
   } else if (isActive) {
+    // Mirror case: UI optimistically active, broadcast has no job for this tab.
+    // START_REFRESH inserts into activeJobs only after async work (tabs.get +
+    // executeScript), so another tab's job broadcasting in that window — which
+    // a fast job does every cycle — would briefly revert the UI to idle.
+    if (Date.now() < optimisticUntil) return;
     isActive = false;
     setActiveUI(false);
     stopRenderLoop();
     jobDeadline = 0;
+  } else {
+    optimisticUntil = 0; // idle confirmed
   }
 }
 
@@ -388,28 +518,9 @@ function applyStatus(resp) {
 // globalSettings (Settings page) and are merged back in at gather time, both
 // here and in the background's hotkey-toggle handler.
 function saveSettings() {
-  const settings = {
-    selectedMs,
-    random: document.getElementById('optRandom').checked,
-    randomMin: parseInt(document.getElementById('optRandomMin').value) || 5,
-    randomMax: parseInt(document.getElementById('optRandomMax').value) || 60,
-    stopOnClick: document.getElementById('optStopOnClick').checked,
-    sound: document.getElementById('optSound').checked,
-    monitor: document.getElementById('optMonitor').checked,
-    noiseTolerant: document.getElementById('optNoiseTolerant').checked,
-    collapseDigits: document.getElementById('optCollapseDigits').checked,
-    minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
-    keyword: document.getElementById('optKeyword').value,
-    kwCaseSensitive: document.getElementById('optKwCase').checked,
-    kwWholeWord: document.getElementById('optKwWhole').checked,
-    kwRegex: document.getElementById('optKwRegex').checked,
-    kwInverse: document.getElementById('optKwInverse').checked,
-    stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
-    stopOnChange: document.getElementById('optStopOnChange').checked,
-    beepUntilAck: document.getElementById('optBeepUntilAck').checked,
-  };
-  chrome.storage.local.set({ popupSettings: settings });
+  chrome.storage.local.set({ popupSettings: readPopupState() });
 }
+const saveSettingsDebounced = debounce(saveSettings, 300);
 
 // Render the interval preset pills and bind their click handlers. Called once
 // immediately with the built-in defaults (avoids an empty-grid flash) and again
@@ -428,7 +539,15 @@ function renderPresets(presets) {
       document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       selectedMs = parseInt(btn.dataset.ms);
-      document.getElementById('customValue').value = '';
+      // Clear the custom row INCLUDING its validation state — setting .value
+      // programmatically fires no input event, so a leftover "minimum is 2s"
+      // hint/red border from a sub-2s entry would otherwise stick around.
+      const customValue = document.getElementById('customValue');
+      customValue.value = '';
+      customValue.classList.remove('invalid');
+      const customHint = document.getElementById('customHint');
+      if (customHint) customHint.classList.remove('show');
+      applyIntervalChangeDebounced.cancel(); // a pending custom-row apply is superseded
       applyIntervalChange();
     });
     grid.appendChild(btn);

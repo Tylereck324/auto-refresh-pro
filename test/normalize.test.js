@@ -20,6 +20,26 @@ test('normalize coerces non-strings to empty', () => {
   assert.equal(normalize(undefined), '');
 });
 
+test('at-cap truncation: an early counter tick does not read as a change', () => {
+  const { MAX_SCAN } = require('../normalize.js');
+  // A length change EARLY in an over-cap document ("99" → "100") shifts every
+  // later character, so the cap cuts mid-token in a different place — without
+  // dropping the boundary token, that cut noise alone flagged a change even
+  // with collapseDigits on. Pad with spaces (collapsed away) so the cut lands
+  // mid-token, the common case a 1-char shift produces.
+  const build = (prefix) => {
+    let pad = '';
+    while ((MAX_SCAN - (prefix.length + pad.length)) % 5 !== 3) pad += ' ';
+    return prefix + pad + 'word '.repeat(Math.ceil(MAX_SCAN / 5) + 10);
+  };
+  const prev = build('id 99 ');
+  const curr = build('id 100 ');
+  assert.equal(
+    isMeaningfulChange(prev, curr, { collapseDigits: true, minChangedFraction: 0 }),
+    false
+  );
+});
+
 // ── changedFraction ──────────────────────────────────────────────────────────
 test('changedFraction is 0 for identical token sets, 1 for disjoint', () => {
   assert.equal(changedFraction('a b c', 'a b c'), 0);

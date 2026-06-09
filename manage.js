@@ -12,24 +12,32 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-let toastTimer = null;
-function showToast(message, isError) {
-  const toast = document.getElementById('toast');
-  toast.textContent = message;
-  toast.className = 'toast show ' + (isError ? 'error' : 'success');
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.className = 'toast'; }, 2500);
-}
+// showToast comes from the shared toast.js (loaded before this script).
 
 // ── Load active jobs ─────────────────────────────────────────────────────
+// Invocations overlap freely (8s poll + post-action refreshes + cold-start
+// retries); only the NEWEST may touch the DOM. Each call takes a generation
+// ticket and bails after every await if a newer call has started — without
+// this, an older call's render could land after a newer one's and leave stale
+// data stuck on screen (the sig check would then skip every later rebuild).
+loadJobs._gen = 0;
+loadJobs._retries = 0;
 async function loadJobs() {
+  const gen = ++loadJobs._gen;
   // A waking (cold-start) service worker can miss the first message and reply
   // with no response. Treat that as transient: keep the current view and retry
-  // shortly, rather than flashing the empty state.
+  // shortly, rather than flashing the empty state. Capped to consecutive
+  // failures so an unresponsive worker can't stack unbounded retry chains on
+  // top of the poll (a later success resets the budget).
   const resp = await new Promise(resolve =>
     chrome.runtime.sendMessage({ type: 'GET_ALL_JOBS' }, r => resolve(chrome.runtime.lastError ? null : r))
   );
-  if (!resp) { setTimeout(loadJobs, 400); return; }
+  if (gen !== loadJobs._gen) return; // superseded while awaiting — newer call owns the DOM
+  if (!resp) {
+    if (loadJobs._retries < 5) { loadJobs._retries++; setTimeout(loadJobs, 400); }
+    return;
+  }
+  loadJobs._retries = 0;
   const jobs = resp.jobs || {};
 
   const tabIds = Object.keys(jobs).map(Number);
@@ -47,14 +55,16 @@ async function loadJobs() {
     jobs[id].settings.currentInterval || jobs[id].settings.interval,
   ]));
   if (sig === loadJobs._sig) return;
-  loadJobs._sig = sig;
 
   if (tabIds.length === 0) {
+    loadJobs._sig = sig;
     tabList.innerHTML = `<div class="empty-state"><div class="empty-icon">⏸</div><div class="empty-title">No active refresh jobs</div><div>Open a tab and start auto refresh from the extension popup.</div></div>`;
     return;
   }
 
   const tabs = await Promise.all(tabIds.map(id => chrome.tabs.get(id).catch(() => null)));
+  if (gen !== loadJobs._gen) return; // superseded during tabs.get — don't commit or render stale data
+  loadJobs._sig = sig; // committed only with the render it describes
   tabList.innerHTML = '';
 
   tabs.forEach((tab, i) => {
@@ -121,16 +131,22 @@ async function loadAutoStart() {
     div.innerHTML = `
       <span class="autostart-url">${escapeHtml(item.url)}</span>
       <span style="color:var(--text2);font-size:11px;">${item.intervalSec ? escapeHtml(item.intervalSec) + 's' : 'no refresh'}</span>
-      <button class="autostart-remove" data-idx="${escapeHtml(i)}" aria-label="Remove ${escapeHtml(item.url)}" title="Remove">✕</button>
+      <button class="autostart-remove" data-url="${escapeHtml(item.url)}" aria-label="Remove ${escapeHtml(item.url)}" title="Remove">✕</button>
     `;
     list.appendChild(div);
   });
 
+  // Remove by VALUE, not render-time index: the array can change between render
+  // and click (a second Manage window, an import landing, a double-click racing
+  // the re-render), and a stale index deletes the wrong entry.
   list.querySelectorAll('.autostart-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
       const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
-      autoStartUrls.splice(parseInt(btn.dataset.idx), 1);
-      await chrome.storage.local.set({ autoStartUrls });
+      const idx = autoStartUrls.findIndex(item => item && item.url === btn.dataset.url);
+      if (idx !== -1) {
+        autoStartUrls.splice(idx, 1);
+        await chrome.storage.local.set({ autoStartUrls });
+      }
       loadAutoStart();
     });
   });
@@ -138,7 +154,11 @@ async function loadAutoStart() {
 
 document.getElementById('addAutoStart').addEventListener('click', async () => {
   const url = document.getElementById('asUrl').value.trim();
-  const sec = parseInt(document.getElementById('asInterval').value) || 0;
+  // Mirror sanitizeAutoStartUrls: below the 2s floor means "no refresh" (the
+  // HTML min="2" doesn't constrain typed input). Storing a sub-floor value
+  // used to silently flip to no-refresh on an export→import round-trip.
+  const raw = parseInt(document.getElementById('asInterval').value) || 0;
+  const sec = raw >= 2 ? raw : 0;
   if (!url) return;
   // Only persist http(s) URLs — these are later auto-opened via chrome.tabs.create
   // on browser startup, so a javascript:/file:/data: entry must never be stored.
@@ -173,26 +193,31 @@ async function loadRules() {
       <span class="autostart-url">${escapeHtml(rule.pattern)}</span>
       <span style="color:var(--text2);font-size:11px;">${escapeHtml(sec)}s</span>
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);">
-        <input type="checkbox" class="rule-enabled" data-idx="${escapeHtml(i)}" ${rule.enabled === false ? '' : 'checked'}> on
+        <input type="checkbox" class="rule-enabled" data-pattern="${escapeHtml(rule.pattern)}" ${rule.enabled === false ? '' : 'checked'}> on
       </label>
-      <button class="autostart-remove rule-remove" data-idx="${escapeHtml(i)}" aria-label="Remove ${escapeHtml(rule.pattern)}" title="Remove">✕</button>
+      <button class="autostart-remove rule-remove" data-pattern="${escapeHtml(rule.pattern)}" aria-label="Remove ${escapeHtml(rule.pattern)}" title="Remove">✕</button>
     `;
     list.appendChild(div);
   });
 
+  // Remove/toggle by VALUE, not render-time index (same rationale as the
+  // auto-start list above — a stale index hits the wrong rule).
   list.querySelectorAll('.rule-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
       const { urlRules = [] } = await chrome.storage.local.get('urlRules');
-      urlRules.splice(parseInt(btn.dataset.idx), 1);
-      await chrome.storage.local.set({ urlRules });
+      const idx = urlRules.findIndex(r => r && r.pattern === btn.dataset.pattern);
+      if (idx !== -1) {
+        urlRules.splice(idx, 1);
+        await chrome.storage.local.set({ urlRules });
+      }
       loadRules();
     });
   });
   list.querySelectorAll('.rule-enabled').forEach(box => {
     box.addEventListener('change', async () => {
       const { urlRules = [] } = await chrome.storage.local.get('urlRules');
-      const idx = parseInt(box.dataset.idx);
-      if (urlRules[idx]) urlRules[idx].enabled = box.checked;
+      const rule = urlRules.find(r => r && r.pattern === box.dataset.pattern);
+      if (rule) rule.enabled = box.checked;
       await chrome.storage.local.set({ urlRules });
     });
   });
@@ -231,6 +256,11 @@ document.getElementById('stopAllBtn').addEventListener('click', async () => {
 // ── Export ───────────────────────────────────────────────────────────────
 document.getElementById('exportBtn').addEventListener('click', async () => {
   const data = await chrome.storage.local.get(null);
+  // Exports are settings backups, not session dumps. activeJobs is runtime job
+  // state keyed by session-scoped tab ids — meaningless on another machine/
+  // session, and the import side strips it anyway (a replayed entry would
+  // attach a refresh job to whatever tab holds that id after a restart).
+  delete data.activeJobs;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

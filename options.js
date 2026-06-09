@@ -178,7 +178,16 @@ function load() {
     setCheck('defCountdown', s.showCountdown !== false);
     setCheck('defNotify', s.notify);
     setCheck('defSound', s.sound);
-    if (s.soundTone) document.getElementById('defSoundTone').value = s.soundTone;
+    // A tone this version doesn't know (imported from a newer version) leaves
+    // the <select> unselected (''), and the next auto-save used to silently
+    // persist 'beep' over it. Remember the raw value so saves keep it intact
+    // until the user deliberately picks a different tone.
+    unknownSoundTone = null;
+    if (s.soundTone) {
+      const toneSel = document.getElementById('defSoundTone');
+      toneSel.value = s.soundTone;
+      if (toneSel.value !== s.soundTone) unknownSoundTone = s.soundTone;
+    }
     document.getElementById('defSoundRepeat').value = s.soundRepeat || 1;
     document.getElementById('defSoundVolume').value =
       typeof s.soundVolume === 'number' ? Math.round(s.soundVolume * 100) : 90;
@@ -219,6 +228,7 @@ function load() {
 let saveTimer = null;
 let loaded = false;
 let presetCount = defaultPresets.length; // number of preset rows currently rendered
+let unknownSoundTone = null; // a newer version's tone we must not clobber (see load)
 
 function gatherAndSave() {
   if (!loaded) return; // don't persist before the initial load populates the form
@@ -231,18 +241,42 @@ function gatherAndSave() {
     showCountdown: document.getElementById('defCountdown').checked,
     notify: document.getElementById('defNotify').checked,
     sound: document.getElementById('defSound').checked,
-    soundTone: document.getElementById('defSoundTone').value || 'beep',
+    soundTone: document.getElementById('defSoundTone').value || unknownSoundTone || 'beep',
     soundRepeat: AlertSounds.clampRepeat(document.getElementById('defSoundRepeat').value),
     soundVolume: AlertSounds.clampVolume(document.getElementById('defSoundVolume').value),
-    defaultInterval: parseInt(document.getElementById('defInterval').value) || 30,
+    // Clamp to the 2s job floor — HTML min="2" doesn't constrain typed input,
+    // and a stored negative would surface as a "-5s" pre-selection in the popup.
+    defaultInterval: Math.max(2, parseInt(document.getElementById('defInterval').value) || 30),
     // Refresh-behavior defaults. (Randomize + stop-on-click moved to the popup.)
     preserveScroll: document.getElementById('defPreserveScroll').checked,
     stopAfter: Math.max(0, parseInt(document.getElementById('defStopAfter').value) || 0),
     presets: presets
   };
 
-  chrome.storage.local.set({ globalSettings: settings, customHotkey: currentHotkey || null }, showSaved);
+  // MERGE into the stored object, never replace it. globalSettings also carries
+  // keys this form doesn't own: forward-compat keys a newer version's import
+  // deliberately preserved (sanitizeImportedSettings) and legacy per-launch
+  // values (g.random / g.stopOnClick) that compose-settings.js still reads as
+  // fallbacks for un-migrated popup state. Rebuilding from the fixed key list
+  // above used to erase all of those on the first toggle flip.
+  chrome.storage.local.get(['globalSettings'], function(data) {
+    const merged = Object.assign({}, data.globalSettings, settings);
+    chrome.storage.local.set({ globalSettings: merged, customHotkey: currentHotkey || null }, showSaved);
+  });
 }
+
+// Re-sync the form when storage changes underneath it — e.g. the user imports a
+// settings file on the Manage page while this page sits open in another tab;
+// the next toggle here would otherwise persist the whole stale form over the
+// import. Only while hidden: when visible, the form is what the user is
+// actively editing (and our own debounced saves fire onChanged too — reloading
+// then would rebuild the preset rows under the user's cursor mid-keystroke).
+chrome.storage.onChanged.addListener(function(changes, area) {
+  if (area !== 'local') return;
+  if (!changes.globalSettings && !changes.customHotkey) return;
+  if (!document.hidden) return;
+  load();
+});
 
 function showSaved() {
   const msg = document.getElementById('successMsg');
@@ -256,15 +290,7 @@ function showSaved() {
   showToast('✓ Saved');
 }
 
-let _toastTimer = null;
-function showToast(message, isError) {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.className = 'toast show ' + (isError ? 'error' : 'success');
-  if (_toastTimer) clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(function() { toast.className = 'toast'; }, 1800);
-}
+// showToast comes from the shared toast.js (loaded before this script).
 
 function save() {
   clearTimeout(saveTimer);

@@ -52,6 +52,13 @@
     contextValid = false;
     stopTick();
     if (overlayEl) { overlayEl.remove(); overlayEl = null; }
+    // Unwire the document-level drag/resize listeners — the overlay they serve
+    // is gone for good (extension reloaded/updated), so leaving them attached
+    // would churn on every pointer move for the page's remaining lifetime.
+    dragState = null;
+    resizeState = null;
+    if (pointerListenersAbort) { pointerListenersAbort.abort(); pointerListenersAbort = null; }
+    pointerListenersWired = false;
   }
 
   // ── Position helpers ──────────────────────────────────────────────────────
@@ -417,14 +424,37 @@
   // common no-job page from carrying a document-level mousemove listener that
   // fires on every pointer move for the page's whole lifetime.
   let pointerListenersWired = false;
+  let pointerListenersAbort = null; // lets handleContextInvalidated unwire them
+  function endPointerInteraction() {
+    if (dragState) {
+      const el = dragState.el;
+      el.style.cursor    = 'grab';
+      el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
+      savePos(parseInt(el.style.left), parseInt(el.style.top));
+      dragState = null;
+    }
+    if (resizeState) {
+      const el = resizeState.el;
+      document.body.style.cursor = '';
+      safeStorageSet({ '__ar_overlay_size': { w: el.offsetWidth, h: el.offsetHeight } });
+      resizeState = null;
+    }
+  }
   function wireGlobalPointerListeners() {
     if (pointerListenersWired) return;
     pointerListenersWired = true;
+    pointerListenersAbort = new AbortController();
+    const signal = pointerListenersAbort.signal;
     document.addEventListener('mousemove', (e) => {
+      if (!dragState && !resizeState) return;
+      // The button was released OUTSIDE the window (we never got that mouseup),
+      // so the first move back in arrives with no buttons down. Without this the
+      // overlay would glue itself to the cursor until the next click.
+      if (e.buttons === 0) { endPointerInteraction(); return; }
       if (dragState) {
         applyPos(dragState.startElX + e.clientX - dragState.startMouseX,
                  dragState.startElY + e.clientY - dragState.startMouseY);
-      } else if (resizeState) {
+      } else {
         const el = resizeState.el;
         const w = Math.max(140, resizeState.startW + (e.clientX - resizeState.startX));
         const h = Math.max(80,  resizeState.startH + (e.clientY - resizeState.startY));
@@ -434,23 +464,9 @@
         // (which would force a reflow right after the writes above).
         if (resizeState.onResize) resizeState.onResize(w, h);
       }
-    });
+    }, { signal });
 
-    document.addEventListener('mouseup', () => {
-      if (dragState) {
-        const el = dragState.el;
-        el.style.cursor    = 'grab';
-        el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
-        savePos(parseInt(el.style.left), parseInt(el.style.top));
-        dragState = null;
-      }
-      if (resizeState) {
-        const el = resizeState.el;
-        document.body.style.cursor = '';
-        safeStorageSet({ '__ar_overlay_size': { w: el.offsetWidth, h: el.offsetHeight } });
-        resizeState = null;
-      }
-    });
+    document.addEventListener('mouseup', endPointerInteraction, { signal });
   }
 
   // ── Hide overlay ──────────────────────────────────────────────────────────
@@ -507,12 +523,18 @@
   // before unload and restore it once the new page's sync confirms the feature is
   // on. Listeners are armed only while enabled, to avoid touching sessionStorage
   // on unrelated pages.
-  const SCROLL_KEY = '__ar_scroll_' + location.pathname + location.search;
+  // Computed at CALL time, not injection time: an SPA pushState that changes
+  // the query string doesn't re-inject this script, so a key frozen at injection
+  // would write under the old URL while the post-reload script reads under the
+  // new one — silently missing the restore.
+  function scrollKey() {
+    return '__ar_scroll_' + location.pathname + location.search;
+  }
   let scrollListenersArmed = false;
 
   function captureScroll() {
     if (!preserveScrollEnabled) return;
-    try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY || window.pageYOffset || 0)); } catch (e) {}
+    try { sessionStorage.setItem(scrollKey(), String(window.scrollY || window.pageYOffset || 0)); } catch (e) {}
   }
 
   function armScrollCapture() {
@@ -532,7 +554,7 @@
   function restoreScroll() {
     if (scrollRestored || !preserveScrollEnabled) return;
     let saved;
-    try { saved = sessionStorage.getItem(SCROLL_KEY); } catch (e) { return; }
+    try { saved = sessionStorage.getItem(scrollKey()); } catch (e) { return; }
     if (saved == null) return;
     scrollRestored = true;
     const y = parseInt(saved, 10);
@@ -540,7 +562,7 @@
     const apply = () => { try { window.scrollTo(0, y); } catch (e) {} };
     apply();
     requestAnimationFrame(apply);
-    setTimeout(() => { apply(); try { sessionStorage.removeItem(SCROLL_KEY); } catch (e) {} }, 400);
+    setTimeout(() => { apply(); try { sessionStorage.removeItem(scrollKey()); } catch (e) {} }, 400);
   }
 
   // Call when a settings payload (COUNTDOWN_START / GET_STATUS) tells us whether
@@ -648,8 +670,21 @@
     if (h) h.textContent = hintLabel();
   }
 
+  // True when the keystroke is going into an editable target — the hotkey must
+  // not fire there. The default Alt+R is how macOS types '®' (and Alt-combos
+  // type accented characters on many layouts); swallowing it inside a form
+  // field would both eat the character AND start a job that reloads the page
+  // under the user's unsaved input.
+  function isEditableTarget(t) {
+    if (!t) return false;
+    if (t.isContentEditable) return true;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+
   document.addEventListener('keydown', (e) => {
     if (!contextValid) return;
+    if (isEditableTarget(e.target)) return;
     if (matchesHotkey(e, activeHotkey())) {
       e.preventDefault();
       safeMessage({ type: 'HOTKEY_TOGGLE' });

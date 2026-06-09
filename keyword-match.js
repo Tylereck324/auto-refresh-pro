@@ -14,13 +14,16 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  // Upper bound on text scanned by a compiled regex per cycle. A page's innerText
-  // can be large; bounding the input caps the worst-case cost of a pathological
-  // (but statically-allowed) pattern. Plain substring matching is linear and
-  // isn't capped.
-  // NOTE: normalize.js has a sibling cap (MAX_SCAN) for the change-detection path;
-  // if you tune this bound, look at that one too.
-  const MAX_REGEX_SCAN = 200000;
+  // Upper bound on text scanned by a compiled regex per cycle. The static guard
+  // (validators.isSafeRegex) excludes the known exponential shapes, but a
+  // statically-allowed pattern can still backtrack quadratically — and the
+  // match runs synchronously in the service worker every cycle, so the cap is
+  // what keeps the worst case at a tolerable per-cycle budget (~O(n²) at 20k is
+  // milliseconds; at 200k it was tens of seconds, i.e. a frozen worker).
+  // Trade-off: in regex mode a keyword first appearing beyond the cap is missed;
+  // plain substring matching is linear, scans the full text, and isn't capped.
+  // NOTE: normalize.js has a sibling cap (MAX_SCAN) for the change-detection path.
+  const MAX_REGEX_SCAN = 20000;
 
   function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -28,10 +31,14 @@
 
   // Split a raw keyword string into individual terms (comma-separated = match ANY).
   // A term with no comma yields a single-element list — identical to the old
-  // single-keyword behavior.
+  // single-keyword behavior. '\,' escapes a literal comma: without it a keyword
+  // like "1,000 in stock" silently became the terms "1" + "000 in stock", and
+  // "1" matches essentially every page.
   function parseKeywords(raw) {
     if (typeof raw !== 'string') return [];
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
+    return raw.split(/(?<!\\),/)
+      .map(s => s.trim().replace(/\\,/g, ','))
+      .filter(Boolean);
   }
 
   // Build a matcher from a job's keyword settings.
@@ -76,7 +83,18 @@
       const body = terms.map(escapeRegex).join('|');
       let re;
       try {
-        re = new RegExp('\\b(?:' + body + ')\\b', caseSensitive ? '' : 'i');
+        // Unicode-aware word boundaries. \b is ASCII-only (\w), so with it a
+        // non-ASCII keyword ("café", "日本語") silently NEVER matched — no
+        // boundary exists between é and a space. Lookarounds over letters/
+        // numbers/_ express the same "not inside a word" rule for any script,
+        // and also fix terms ending in punctuation ("C++"), where \b required
+        // a word char after the '+'. The 'u' flag is required for \p{...}
+        // (escapeRegex only emits escapes that stay valid under 'u').
+        const notWord = '[\\p{L}\\p{N}_]';
+        re = new RegExp(
+          '(?<!' + notWord + ')(?:' + body + ')(?!' + notWord + ')',
+          (caseSensitive ? '' : 'i') + 'u'
+        );
       } catch (e) {
         return { ok: false, empty: false, error: String(e && e.message || e), test: () => false };
       }
