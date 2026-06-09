@@ -5,17 +5,22 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 ## Features
 
 - **Flexible intervals** — 8 quick presets (5s → 1hr) plus fully custom intervals
-- **Keyword detection** — plays a sound alert and optionally stops when a word/phrase appears on the page
+- **Keyword detection** — plays a sound alert and optionally stops when a word/phrase (or comma-separated list, whole-word, case-sensitive, or regex) appears on the page; an inverse mode alerts when it *disappears*
 - **Page change monitoring** — detects when page content changes between refreshes
+- **Noise-tolerant change detection** — optionally ignore whitespace/digit churn (clocks, counters, ads) and require a minimum changed fraction before alerting
 - **Hard refresh** — bypass cache on every cycle
 - **Random intervals** — randomize the delay between a configurable min/max range
 - **Stop after X refreshes** — automatically stop after a set number of cycles
+- **Click-to-stop** — optionally stop the job on the next click anywhere on the page (links/buttons still work); see [docs/click-to-stop.md](docs/click-to-stop.md)
+- **Repeat beep until acknowledged** — keep beeping on an alert until you click/dismiss the notification (bounded)
+- **Per-domain URL rules** — auto-start a job when a tab finishes loading a URL matching a match-pattern glob
 - **Draggable, resizable overlay** — countdown widget injected into the page; drag to reposition, resize from the corner; position and size are remembered
 - **Hotkey** — `Alt+R` by default (customizable in Settings) to toggle refresh on/off from the keyboard
 - **Popup countdown** — the extension popup shows a live hero countdown synced to the actual remaining time
+- **Scroll preservation** — optionally restore the scroll position across refreshes
 - **Navigation detection** — automatically stops when you navigate away from the original URL
 - **Manage All Tabs** — view and stop all active refresh jobs across every open tab
-- **Import / Export** — back up and restore all settings as JSON
+- **Import / Export** — back up and restore all settings as JSON (imports are sanitized — see below)
 - **Auto-start URLs** — open specific URLs and start refreshing automatically when Chrome launches
 
 ## Installation
@@ -47,14 +52,39 @@ Open **Settings** from the popup footer → Keyboard Shortcut → click **⏺ Re
 ## File Structure
 
 ```
-├── manifest.json       # Extension manifest (MV3)
-├── background.js       # Service worker: alarms, job management, keyword detection
-├── content.js          # Injected into pages: countdown overlay, drag/resize
-├── popup.html/js       # Extension popup UI
-├── options.html        # Settings page (hotkey recorder, defaults, presets)
-├── manage.html         # Manage all active tabs, auto-start URLs, import/export
-├── offscreen.html/js   # Hidden page used for audio playback (offscreen API)
-└── icons/              # Extension icons
+├── manifest.json         # Extension manifest (MV3)
+├── background.js         # Service worker: alarms, job management, keyword detection
+├── content.js           # Injected into pages: countdown overlay, drag/resize, click-to-stop
+├── popup.html/js        # Extension popup UI (the launcher)
+├── options.html/js      # Settings page (hotkey recorder, defaults, presets)
+├── manage.html/js       # Manage all active tabs, auto-start URLs, URL rules, import/export
+├── offscreen.html/js    # Hidden page used for audio playback (offscreen API)
+│
+│   # Pure, dependency-free modules (loaded via importScripts in the worker,
+│   # <script src> in pages, and require() in the Node test suite):
+├── validators.js        # SECURITY trust boundary: URL / image / import / regex / sender validation
+├── compose-settings.js  # Canonical job-settings constructor (shared by popup + hotkey launch)
+├── interval.js          # Refresh-interval computation (fixed / random, NaN-hardened)
+├── keyword-match.js     # Keyword matcher (multi-term, whole-word, case, regex)
+├── normalize.js         # Noise-tolerant change-significance helpers
+├── monitor-decision.js  # "Should an alert fire this cycle?" keyword/change logic
+├── refresh-guards.js    # Refresh-loop timing guards (backstop dedup, notify throttle)
+├── rehydrate.js         # Rebuild job state after a service-worker restart
+├── serialize.js         # Async mutex for storage read-modify-write
+├── notif-id.js          # Encode/decode tab id in a notification id
+├── preset-row.js        # Preset row builder + shared DEFAULT_PRESETS
+├── sounds.js            # Shared alert-tone catalog + playback
+│
+├── test/                # node --test suite for every pure module
+├── scripts/lint.mjs     # Syntax / manifest / CSP / script-ref sanity check (npm run lint)
+└── icons/               # Extension icons
+```
+
+## Development
+
+```bash
+npm test     # run the unit suite (node --test)
+npm run lint # syntax-check all JS + verify manifest/CSP/script references resolve
 ```
 
 ## Notes

@@ -16,6 +16,14 @@ importScripts('rehydrate.js');
 // Async mutex (ARPSerialize.createMutex) used to serialize storage.activeJobs
 // read-modify-write so concurrent saves/removes can't drop a tab's entry.
 importScripts('serialize.js');
+// Canonical job-settings constructor (ARPCompose.composeJobSettings) shared with
+// the popup, so hotkey- and popup-launched jobs compose identical settings.
+importScripts('compose-settings.js');
+// Pure keyword/change fire-decision logic (ARPMonitor) — the core "should an
+// alert fire this cycle?" branch, extracted so it's unit-testable.
+importScripts('monitor-decision.js');
+// Pure refresh-loop timing guards (ARPGuards.isBackstopDuplicate / shouldNotifyRefresh).
+importScripts('refresh-guards.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -225,7 +233,7 @@ async function fireRefresh(tabId) {
   // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
   const now = Date.now();
   const curInterval = job.settings.currentInterval || computeInterval(job.settings);
-  if (job._lastRefresh && (now - job._lastRefresh) < curInterval * 0.5) {
+  if (ARPGuards.isBackstopDuplicate(job._lastRefresh, now, curInterval)) {
     scheduleNext(tabId, Math.max(0, job.nextRefresh - now));
     return;
   }
@@ -286,7 +294,7 @@ async function doRefresh(tabId, job) {
   // per REFRESH_NOTIFY_MIN_GAP_MS; the message still shows the cumulative count.
   if (job.settings.notify) {
     const now = Date.now();
-    if (!job._lastRefreshNotify || (now - job._lastRefreshNotify) >= REFRESH_NOTIFY_MIN_GAP_MS) {
+    if (ARPGuards.shouldNotifyRefresh(job._lastRefreshNotify, now, REFRESH_NOTIFY_MIN_GAP_MS)) {
       job._lastRefreshNotify = now;
       notify('refresh', tabId, {
         type: 'basic',
@@ -312,7 +320,15 @@ function readPageText() {
   if (ov) { parent = ov.parentNode; next = ov.nextSibling; ov.remove(); }
   const text = document.body.innerText || '';
   if (ov && parent) parent.insertBefore(ov, next);
-  return text;
+  // Bound the returned text. innerText on an infinite-scroll / pathological page
+  // can be many MB; that full payload is structure-cloned out of the page on
+  // every cycle and held resident in job.previousContent per active job. This
+  // cap sits far above any realistic page (the matchers already only scan the
+  // first 200k chars), so detection is unchanged for real content while a runaway
+  // page can't blow up the worker's serialization cost or memory. (Inlined as a
+  // literal: an executeScript func can't close over an outer const.)
+  const MAX_PAGE_TEXT = 2000000;
+  return text.length > MAX_PAGE_TEXT ? text.slice(0, MAX_PAGE_TEXT) : text;
 }
 
 async function doMonitorRefresh(tabId, job) {
@@ -344,13 +360,15 @@ async function doMonitorRefresh(tabId, job) {
   // ── Keyword detection ──
   // Alert on a transition between cycles: absent→present normally, or
   // present→absent in inverse mode ("alert when the keyword disappears").
+  const hasBaseline = prevContent !== null && prevContent !== undefined;
   if (hasKeyword) {
-    const foundNow    = matcher.test(currentContent);
-    const hasBaseline = prevContent !== null && prevContent !== undefined;
-    const foundPrev   = hasBaseline && matcher.test(prevContent);
-    const fired = job.settings.kwInverse ? (!foundNow && foundPrev) : (foundNow && !foundPrev);
+    const foundNow  = matcher.test(currentContent);
+    const foundPrev = hasBaseline && matcher.test(prevContent);
+    const fired = ARPMonitor.computeKeywordFire({
+      foundNow, foundPrev, hasBaseline, kwInverse: job.settings.kwInverse,
+    });
 
-    if (fired && hasBaseline) {
+    if (fired) {
       if (job.settings.sound) await playBeep(soundOpts(job.settings));
       const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
       notify('kw', tabId, {
@@ -371,7 +389,7 @@ async function doMonitorRefresh(tabId, job) {
   // Only alert when we have a real baseline and content actually changed.
   // Skipped entirely when a keyword is set — the keyword owns the signal so the
   // generic change beep/notification doesn't drown it out (see hasKeyword above).
-  if (!hasKeyword && job.settings.monitorMode && prevContent !== null && prevContent !== undefined) {
+  if (ARPMonitor.shouldCheckChange({ hasKeyword, monitorMode: job.settings.monitorMode, hasBaseline })) {
     // Strict raw comparison by default (exact legacy behavior). When noise
     // tolerance is on, normalize (collapse whitespace/digits) and require the
     // configured minimum changed-fraction so clocks/counters/ads don't alert.
@@ -603,7 +621,20 @@ async function rehydrateJob(tabId, prefetched) {
 
 // Refill every persisted job not currently in memory. Safe to call repeatedly:
 // jobs already in memory are skipped, so a live alarm is never disturbed.
+//
+// The onMessage handler calls this on every inbound message (a restarted worker
+// has an empty map), but while the worker is warm the in-memory activeJobs map
+// is already authoritative — the only writer of the activeJobs storage key is
+// this worker (withJobsStore), which mirrors every mutation in memory. So once
+// we've read storage once, re-reading on every message (the popup polls, every
+// content script syncs) is pure cost. Gate the read on a freshness flag: a fresh
+// worker starts with it false (so the first message rehydrates), and any write
+// to activeJobs — including an out-of-band import via manage.js — trips the
+// storage.onChanged listener below to re-arm a single re-read.
+let jobsStoreFresh = false;
 async function rehydrateAll() {
+  if (jobsStoreFresh) return;
+  jobsStoreFresh = true; // set BEFORE the await: a write during the get flips it back, forcing a re-read
   const data = await chrome.storage.local.get('activeJobs');
   const stored = data.activeJobs || {};
   for (const tabIdStr of Object.keys(stored)) {
@@ -611,6 +642,13 @@ async function rehydrateAll() {
     if (!activeJobs[tabId]) await rehydrateJob(tabId, stored[tabIdStr]);
   }
 }
+
+// Re-arm a single rehydrateAll read whenever the persisted job map changes —
+// covers this worker's own writes (harmless: next message re-reads once) and an
+// out-of-band import (manage.js writes activeJobs straight to storage).
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.activeJobs) jobsStoreFresh = false;
+});
 
 // ── Startup: restore jobs ──────────────────────────────────────────────────
 chrome.runtime.onStartup.addListener(restoreJobs);
@@ -800,40 +838,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (activeJobs[toggleTabId]) {
           await stopRefresh(toggleTabId);
         } else {
-          // Compose the job the same way the popup does: per-launch state from
-          // popupSettings (s) — including randomize timing and stop-on-click —
-          // and the remaining refresh-behavior defaults from globalSettings (g).
-          // For the moved settings, fall back to g when popupSettings has no
-          // value yet, so an un-migrated config still applies. Keep the two in
-          // sync with popup.js gatherSettings().
+          // Compose the job exactly the way the popup does — the per-launch state
+          // from popupSettings (s) plus the refresh-behavior defaults from
+          // globalSettings (g) — via the single shared constructor, so a hotkey
+          // launch can never drift from a popup launch.
           const data = await chrome.storage.local.get(['popupSettings', 'globalSettings']);
-          const s = data.popupSettings || {};
-          const g = data.globalSettings || {};
-          const interval = s.selectedMs || (g.defaultInterval ? g.defaultInterval * 1000 : 30000);
-          await startRefresh(toggleTabId, {
-            interval, hardRefresh: !!g.hardRefresh,
-            showCountdown: g.showCountdown !== false, notify: !!g.notify,
-            sound: s.sound || false, monitorMode: s.monitor || false,
-            noiseTolerant: s.noiseTolerant || false,
-            collapseDigits: s.collapseDigits !== false,
-            minChangedFraction: parseFloat(s.minChangedFraction) || 0,
-            randomTimer: !!(s.random !== undefined ? s.random : g.random),
-            randomMin: (parseFloat(s.randomMin || g.randomMin) || 5) * 1000,
-            randomMax: (parseFloat(s.randomMax || g.randomMax) || 60) * 1000,
-            stopAfter: parseInt(g.stopAfter) || 0, keyword: s.keyword || '',
-            kwCaseSensitive: s.kwCaseSensitive || false, kwWholeWord: s.kwWholeWord || false,
-            kwRegex: s.kwRegex || false, kwInverse: s.kwInverse || false,
-            stopOnKeyword: s.stopOnKeyword || false, stopOnChange: s.stopOnChange || false,
-            stopOnClick: !!(s.stopOnClick !== undefined ? s.stopOnClick : g.stopOnClick),
-            preserveScroll: !!g.preserveScroll,
-            soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
-            soundTone: g.soundTone || 'beep',
-            soundRepeat: parseInt(g.soundRepeat) || 1,
-            beepUntilAck: s.beepUntilAck || false,
-            beepAckIntervalSec: parseFloat(s.beepAckIntervalSec) || 5,
-            beepRepeatMax: parseInt(s.beepRepeatMax) || 5,
-            currentInterval: interval
-          });
+          await startRefresh(toggleTabId, ARPCompose.composeJobSettings(data.popupSettings || {}, data.globalSettings || {}));
         }
         sendResponse({ ok: true });
         break;

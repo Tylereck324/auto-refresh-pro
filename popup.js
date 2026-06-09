@@ -15,14 +15,11 @@ let isActive = false;
 // by gatherSettings for the preferences the popup no longer exposes directly.
 let globalDefaults = {};
 
-// Built-in fallback presets, mirrors options.js. Overridden by the user's
-// custom presets from the Settings page (globalSettings.presets) when present.
-const DEFAULT_PRESETS = [
-  { label: '5s', ms: 5000 },   { label: '10s', ms: 10000 },
-  { label: '30s', ms: 30000 }, { label: '1m', ms: 60000 },
-  { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 },
-  { label: '30m', ms: 1800000 }, { label: '1h', ms: 3600000 }
-];
+// Built-in fallback presets — the single source of truth lives in preset-row.js
+// (loaded before this script in popup.html) and is shared with options.js so the
+// two surfaces can't drift. Overridden by the user's custom presets from the
+// Settings page (globalSettings.presets) when present.
+const DEFAULT_PRESETS = self.DEFAULT_PRESETS;
 
 // Countdown is a pure render of the background's authoritative deadline.
 // jobDeadline is an absolute timestamp (job.nextRefresh); jobTotal is the
@@ -48,9 +45,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (msg && msg.type === 'STATUS_UPDATE') applyStatus(msg);
   });
 
-  // Fallback: poll once a second in case a broadcast was missed or the service
-  // worker was restarted. Also keeps refreshCount/active-count stats fresh.
-  setInterval(refreshStatus, 1000);
+  // Slow safety-net poll. The STATUS_UPDATE push above is the primary sync (the
+  // background fires it on every start/refresh/stop/update), and the countdown
+  // paints from the absolute deadline independently of any poll — so this only
+  // needs to recover a dropped broadcast or a job started in another tab. A 1 Hz
+  // poll would wake the service worker and (pre-freshness-guard) read storage
+  // every second for data the push already delivers; 15 s is ample.
+  setInterval(refreshStatus, 15000);
 });
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -232,47 +233,34 @@ async function stopRefresh() {
 }
 
 // ── Settings gather ─────────────────────────────────────────────────────────
-// Compose the full job settings the background expects: the per-launch fields
-// from the popup's own controls, plus the refresh-behavior preferences pulled
-// from the Settings-page defaults (globalDefaults).
+// Read the popup's per-launch controls into the popupSettings shape, then hand
+// off to the shared constructor (compose-settings.js) which merges in the
+// Settings-page defaults (globalDefaults) and applies the 2s floor / inverted-
+// range swap. The background's hotkey-toggle path calls the same constructor, so
+// popup- and hotkey-launched jobs can't drift.
 function gatherSettings() {
-  const g = globalDefaults || {};
-  // Random range comes from the popup's own inputs — floor at 2s and swap an
-  // inverted range so the background never gets a negative-width range.
-  let randomMinSec = Math.max(2, parseFloat(document.getElementById('optRandomMin').value) || 5);
-  let randomMaxSec = Math.max(2, parseFloat(document.getElementById('optRandomMax').value) || 60);
-  if (randomMinSec > randomMaxSec) { [randomMinSec, randomMaxSec] = [randomMaxSec, randomMinSec]; }
-  return {
-    interval: selectedMs,
-    // ── Preferences (Settings page) ──
-    hardRefresh: !!g.hardRefresh,
-    showCountdown: g.showCountdown !== false,
-    notify: !!g.notify,
-    preserveScroll: !!g.preserveScroll,
-    stopAfter: Math.max(0, parseInt(g.stopAfter) || 0),
-    soundVolume: typeof g.soundVolume === 'number' ? g.soundVolume : 0.9,
-    soundTone: g.soundTone || 'beep',
-    soundRepeat: parseInt(g.soundRepeat) || 1,
-    // ── Per-launch (popup) ──
-    randomTimer: document.getElementById('optRandom').checked,
-    randomMin: randomMinSec * 1000,
-    randomMax: randomMaxSec * 1000,
-    stopOnClick: document.getElementById('optStopOnClick').checked,
-    sound: document.getElementById('optSound').checked,
-    monitorMode: document.getElementById('optMonitor').checked,
-    noiseTolerant: document.getElementById('optNoiseTolerant').checked,
-    collapseDigits: document.getElementById('optCollapseDigits').checked,
-    minChangedFraction: clampFraction(document.getElementById('optMinChange').value),
-    keyword: document.getElementById('optKeyword').value.trim(),
-    kwCaseSensitive: document.getElementById('optKwCase').checked,
-    kwWholeWord: document.getElementById('optKwWhole').checked,
-    kwRegex: document.getElementById('optKwRegex').checked,
-    kwInverse: document.getElementById('optKwInverse').checked,
-    stopOnKeyword: document.getElementById('optStopOnKeyword').checked,
-    stopOnChange: document.getElementById('optStopOnChange').checked,
-    beepUntilAck: document.getElementById('optBeepUntilAck').checked,
-    currentInterval: selectedMs
+  const el = (id) => document.getElementById(id);
+  const s = {
+    selectedMs,
+    random: el('optRandom').checked,
+    randomMin: parseFloat(el('optRandomMin').value) || 5,
+    randomMax: parseFloat(el('optRandomMax').value) || 60,
+    stopOnClick: el('optStopOnClick').checked,
+    sound: el('optSound').checked,
+    monitor: el('optMonitor').checked,
+    noiseTolerant: el('optNoiseTolerant').checked,
+    collapseDigits: el('optCollapseDigits').checked,
+    minChangedFraction: clampFraction(el('optMinChange').value),
+    keyword: el('optKeyword').value.trim(),
+    kwCaseSensitive: el('optKwCase').checked,
+    kwWholeWord: el('optKwWhole').checked,
+    kwRegex: el('optKwRegex').checked,
+    kwInverse: el('optKwInverse').checked,
+    stopOnKeyword: el('optStopOnKeyword').checked,
+    stopOnChange: el('optStopOnChange').checked,
+    beepUntilAck: el('optBeepUntilAck').checked,
   };
+  return ARPCompose.composeJobSettings(s, globalDefaults);
 }
 
 // "Min change %" is 0–100 in the UI but stored/sent as a 0–1 fraction.

@@ -283,4 +283,9 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
 loadJobs();
 loadAutoStart();
 loadRules();
-setInterval(loadJobs, 3000);
+// Slow backstop poll. The _sig guard in loadJobs already skips the DOM rebuild +
+// per-tab tabs.get when nothing changed, so the only residual per-poll cost is
+// the GET_ALL_JOBS round-trip (which wakes the worker). This page isn't usually
+// foregrounded and the refresh-count badges don't need 3 s granularity, so an
+// 8 s cadence cuts the wakeups without a noticeable staleness.
+setInterval(loadJobs, 8000);

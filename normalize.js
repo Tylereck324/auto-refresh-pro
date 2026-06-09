@@ -17,6 +17,8 @@
   'use strict';
 
   // Bound the work done per comparison; page innerText can be very large.
+  // NOTE: keyword-match.js has a sibling cap (MAX_REGEX_SCAN) for the keyword
+  // path; if you tune this bound, look at that one too.
   const MAX_SCAN = 200000;
 
   // Collapse whitespace runs to a single space and trim. When collapseDigits is

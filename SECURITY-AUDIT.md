@@ -3,8 +3,8 @@
 Date: 2026-06-05 · Scope: full codebase (manifest, service worker, content
 script, popup/options/manage pages, offscreen audio, image/PNG handling).
 
-All findings below were remediated. A regression test suite (`test/`, 35 tests)
-locks each fix in place. `npm test` and `npm run lint` both pass; the extension
+All findings below were remediated. A regression test suite (`test/`, run via
+`npm test`) locks each fix in place. `npm test` and `npm run lint` both pass; the extension
 loads (manifest + all referenced files validated).
 
 ---

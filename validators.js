@@ -313,6 +313,10 @@
       kwInverse: !!s.kwInverse,
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
+      // Click-to-stop. Carried so a rule-started job honors it like a popup- or
+      // hotkey-started one; omitting it left job.settings.stopOnClick undefined,
+      // so sendCountdownStart silently disabled click-to-stop for every rule job.
+      stopOnClick: !!s.stopOnClick,
       // Sound sub-settings — carried (bounded) so a rule with sound enabled plays
       // the chosen tone/volume rather than silently falling back to defaults.
       // soundTone is left as a string; the player maps unknown tones to 'beep'.

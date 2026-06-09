@@ -156,12 +156,9 @@ document.addEventListener('keydown', (e) => {
 }, true);
 
 // ── Presets ───────────────────────────────────────────────────────────────
-const defaultPresets = [
-  { label: '5s', ms: 5000 }, { label: '10s', ms: 10000 },
-  { label: '30s', ms: 30000 }, { label: '1m', ms: 60000 },
-  { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 },
-  { label: '30m', ms: 1800000 }, { label: '1h', ms: 3600000 }
-];
+// Single source of truth shared with popup.js, defined in preset-row.js (loaded
+// before this script in options.html).
+const defaultPresets = self.DEFAULT_PRESETS;
 
 function setCheck(id, val) {
   const el = document.getElementById(id);

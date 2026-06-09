@@ -11,8 +11,19 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.buildPresetRow = api.buildPresetRow;
   root.readPresets = api.readPresets;
+  root.DEFAULT_PRESETS = api.DEFAULT_PRESETS;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+
+  // The eight built-in interval presets. Single source of truth: options.js seeds
+  // globalSettings.presets from these, and popup.js falls back to them when no
+  // custom presets are stored — so the two surfaces must never disagree.
+  const DEFAULT_PRESETS = [
+    { label: '5s', ms: 5000 },   { label: '10s', ms: 10000 },
+    { label: '30s', ms: 30000 }, { label: '1m', ms: 60000 },
+    { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 },
+    { label: '30m', ms: 1800000 }, { label: '1h', ms: 3600000 },
+  ];
 
   function buildPresetRow(doc, p, i) {
     const div = doc.createElement('div');
@@ -64,5 +75,5 @@
     return out;
   }
 
-  return { buildPresetRow, readPresets };
+  return { buildPresetRow, readPresets, DEFAULT_PRESETS };
 });

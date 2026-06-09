@@ -18,6 +18,8 @@
   // can be large; bounding the input caps the worst-case cost of a pathological
   // (but statically-allowed) pattern. Plain substring matching is linear and
   // isn't capped.
+  // NOTE: normalize.js has a sibling cap (MAX_SCAN) for the change-detection path;
+  // if you tune this bound, look at that one too.
   const MAX_REGEX_SCAN = 200000;
 
   function escapeRegex(s) {

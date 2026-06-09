@@ -78,6 +78,10 @@
     if (!contextValid) return;
     if (overlayEl && document.body && document.body.contains(overlayEl)) return;
 
+    // Wire the shared drag/resize document listeners now that an overlay is about
+    // to exist (one-shot; no-op on subsequent rebuilds).
+    wireGlobalPointerListeners();
+
     // ── Inject styles once ──
     if (!document.getElementById('__ar_styles')) {
       const style = document.createElement('style');
@@ -243,12 +247,10 @@
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
     hintText.className = '__ar_hint_text';
+    // customHotkey may still be loading; the single module-level read below calls
+    // refreshHint() once it lands, and storage.onChanged keeps it current — so no
+    // separate per-overlay read is needed here.
     hintText.textContent = hintLabel();
-    // customHotkey may still be loading from storage; refresh once it's in.
-    safeStorageGet('customHotkey', (data) => {
-      customHotkey = (data && data.customHotkey) || customHotkey;
-      refreshHint();
-    });
     hint.appendChild(hintText);
 
     body.appendChild(timer);
@@ -270,10 +272,14 @@
     overlayEl._fill  = fill;
 
     // ── Scale everything proportionally with overlay size ──
-    function scaleOverlay() {
+    // forcedW/forcedH let the resize handler pass the dimensions it just computed,
+    // so we don't read offsetWidth/offsetHeight right after writing width/height
+    // (which would force a synchronous reflow on every resize mousemove tick). The
+    // non-resize callers omit them and fall back to measuring the element.
+    function scaleOverlay(forcedW, forcedH) {
       if (!overlayEl) return;
-      const w = overlayEl.offsetWidth  || 240;
-      const h = overlayEl.offsetHeight || 140;
+      const w = forcedW || overlayEl.offsetWidth  || 240;
+      const h = forcedH || overlayEl.offsetHeight || 140;
       const s = Math.min(w, h * 1.6); // base scaling unit
 
       // Drag bar
@@ -403,38 +409,49 @@
     });
   }
 
-  // Single set of document-level pointer listeners for drag + resize, registered
-  // once at injection. Previously makeDraggable/makeResizable each added their own
-  // document mousemove/mouseup on every overlay rebuild, stacking duplicate
-  // listeners after repeated start/stop cycles on a static page. These act on the
-  // current overlay via the shared state set on mousedown above.
-  document.addEventListener('mousemove', (e) => {
-    if (dragState) {
-      applyPos(dragState.startElX + e.clientX - dragState.startMouseX,
-               dragState.startElY + e.clientY - dragState.startMouseY);
-    } else if (resizeState) {
-      const el = resizeState.el;
-      el.style.width  = Math.max(140, resizeState.startW + (e.clientX - resizeState.startX)) + 'px';
-      el.style.height = Math.max(80,  resizeState.startH + (e.clientY - resizeState.startY)) + 'px';
-      if (resizeState.onResize) resizeState.onResize();
-    }
-  });
+  // Single set of document-level pointer listeners for drag + resize, wired once
+  // the first time an overlay is built (see ensureOverlay) rather than at
+  // injection. They only ever act on dragState/resizeState, which are set by the
+  // overlay's own drag-bar/resize-handle mousedown handlers — so before any
+  // overlay exists they are dead weight on every page. Deferring them keeps the
+  // common no-job page from carrying a document-level mousemove listener that
+  // fires on every pointer move for the page's whole lifetime.
+  let pointerListenersWired = false;
+  function wireGlobalPointerListeners() {
+    if (pointerListenersWired) return;
+    pointerListenersWired = true;
+    document.addEventListener('mousemove', (e) => {
+      if (dragState) {
+        applyPos(dragState.startElX + e.clientX - dragState.startMouseX,
+                 dragState.startElY + e.clientY - dragState.startMouseY);
+      } else if (resizeState) {
+        const el = resizeState.el;
+        const w = Math.max(140, resizeState.startW + (e.clientX - resizeState.startX));
+        const h = Math.max(80,  resizeState.startH + (e.clientY - resizeState.startY));
+        el.style.width  = w + 'px';
+        el.style.height = h + 'px';
+        // Pass the just-computed dimensions so scaleOverlay doesn't re-measure
+        // (which would force a reflow right after the writes above).
+        if (resizeState.onResize) resizeState.onResize(w, h);
+      }
+    });
 
-  document.addEventListener('mouseup', () => {
-    if (dragState) {
-      const el = dragState.el;
-      el.style.cursor    = 'grab';
-      el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
-      savePos(parseInt(el.style.left), parseInt(el.style.top));
-      dragState = null;
-    }
-    if (resizeState) {
-      const el = resizeState.el;
-      document.body.style.cursor = '';
-      safeStorageSet({ '__ar_overlay_size': { w: el.offsetWidth, h: el.offsetHeight } });
-      resizeState = null;
-    }
-  });
+    document.addEventListener('mouseup', () => {
+      if (dragState) {
+        const el = dragState.el;
+        el.style.cursor    = 'grab';
+        el.style.boxShadow = '0 8px 40px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.06) inset';
+        savePos(parseInt(el.style.left), parseInt(el.style.top));
+        dragState = null;
+      }
+      if (resizeState) {
+        const el = resizeState.el;
+        document.body.style.cursor = '';
+        safeStorageSet({ '__ar_overlay_size': { w: el.offsetWidth, h: el.offsetHeight } });
+        resizeState = null;
+      }
+    });
+  }
 
   // ── Hide overlay ──────────────────────────────────────────────────────────
   function hideOverlay() {
@@ -557,8 +574,13 @@
           startCountdown(resp.job.nextRefresh, total);
           refreshHint();
         }
-      } else if (attempt < 8) {
-        // Exponential backoff: 100, 200, 400, 800, 1000, 1000, 1000, 1000 ms
+      } else if (attempt < 3) {
+        // No job for this tab is the common case (most pages never start one),
+        // and `synced` is only set when a job IS found — so these retries fire on
+        // every ordinary page load. Each one wakes the service worker, so keep
+        // the ceiling low: the only thing the retries buy is winning the race
+        // where the popup's START_REFRESH lands just after this script injected,
+        // which resolves within a few hundred ms. Backoff: 100, 200, 400 ms.
         const delay = Math.min(100 * Math.pow(2, attempt), 1000);
         setTimeout(() => syncWithBackground(attempt + 1), delay);
       }
@@ -573,8 +595,12 @@
   // Option-key-safe on macOS, where Alt+R mangles `e.key`).
   const DEFAULT_HOTKEY = { key: 'r', code: 'KeyR', ctrl: false, alt: true, shift: false, meta: false };
 
+  // Single page-lifetime read of the custom hotkey. The keydown handler needs it
+  // even with no overlay (the hotkey can START a job), so this is not overlay-
+  // gated. refreshHint() corrects an already-built overlay's footer once it lands
+  // (no-op when no overlay exists).
   let customHotkey = null;
-  safeStorageGet('customHotkey', (d) => { customHotkey = (d && d.customHotkey) || null; });
+  safeStorageGet('customHotkey', (d) => { customHotkey = (d && d.customHotkey) || null; refreshHint(); });
 
   function activeHotkey() { return customHotkey || DEFAULT_HOTKEY; }
 
