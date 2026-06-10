@@ -39,5 +39,16 @@
     return !hasKeyword && !!monitorMode && !!hasBaseline;
   }
 
-  return { computeKeywordFire, shouldCheckChange };
+  // How the screen-edge flash should be delivered when a keyword alert fires.
+  // With stopOnKeyword the page is NOT reloaded, so the flash can go to the
+  // still-live content script immediately ('now'). Without it the background
+  // reloads the page right after the alert, which would destroy the flash
+  // mid-animation — so it must be re-sent once the new document's content
+  // script is up ('after-reload').
+  function computeFlashDelivery({ fired, flashOnKeyword, stopOnKeyword }) {
+    if (!fired || !flashOnKeyword) return 'none';
+    return stopOnKeyword ? 'now' : 'after-reload';
+  }
+
+  return { computeKeywordFire, shouldCheckChange, computeFlashDelivery };
 });

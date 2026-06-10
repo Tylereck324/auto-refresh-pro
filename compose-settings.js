@@ -9,7 +9,8 @@
 //
 //   s — the popup's per-launch state (popupSettings shape): selectedMs, random,
 //       randomMin/randomMax (seconds), stopOnClick, sound, monitor, noiseTolerant,
-//       collapseDigits, minChangedFraction (0–1), keyword, kw*, stopOn*, beepUntilAck.
+//       collapseDigits, minChangedFraction (0–1), keyword, kw*, stopOn*, beepUntilAck,
+//       flashOnKeyword.
 //   g — the Settings-page defaults (globalSettings): hardRefresh, showCountdown,
 //       notify, preserveScroll, stopAfter, sound tone/volume/repeat, defaultInterval,
 //       plus the legacy random/stopOnClick values for un-migrated configs.
@@ -82,6 +83,7 @@
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       beepUntilAck: !!s.beepUntilAck,
+      flashOnKeyword: !!s.flashOnKeyword,
       currentInterval: interval,
     };
   }

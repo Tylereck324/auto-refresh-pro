@@ -410,6 +410,17 @@ async function doMonitorRefresh(tabId, job) {
         title: 'Keyword Detected!',
         message: '"' + job.settings.keyword + '" ' + verb + ' page!'
       });
+      // Screen-edge flash: with stopOnKeyword the page stays put, so flash the
+      // still-live content script now. Otherwise the reload below would destroy
+      // the flash mid-animation — defer it until after doRefresh (see the
+      // _pendingFlash consumption at the end of this function).
+      const flashPlan = ARPMonitor.computeFlashDelivery({
+        fired,
+        flashOnKeyword: job.settings.flashOnKeyword,
+        stopOnKeyword: job.settings.stopOnKeyword,
+      });
+      if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
+      else if (flashPlan === 'after-reload') job._pendingFlash = true;
       if (job.settings.stopOnKeyword) {
         await stopRefresh(tabId);
         return;
@@ -452,6 +463,13 @@ async function doMonitorRefresh(tabId, job) {
   // early, so '' can never become the baseline).
   job.previousContent = currentContent;
   await doRefresh(tabId, job);
+
+  // Deliver the flash deferred at fire time. Cleared on consumption (not on
+  // ack) so a delivery that exhausts its retries can't flash on a later cycle.
+  if (job._pendingFlash) {
+    job._pendingFlash = false;
+    sendKeywordFlash(tabId, 0);
+  }
 }
 
 // Refresh-interval computation lives in interval.js (ARPInterval.computeInterval)
@@ -571,6 +589,42 @@ async function sendCountdownStart(tabId, attempt) {
       if (attempt < 12) {
         const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
         setTimeout(() => sendCountdownStart(tabId, attempt + 1), delay);
+      }
+    }
+  });
+}
+
+// Deliver the screen-edge flash for a keyword alert. Same poll/backoff/inject
+// skeleton as sendCountdownStart, with one deliberate difference: no
+// activeJobs[tabId] guard — in the stopOnKeyword case the job is deleted
+// while the flash is still in flight, and it must land anyway.
+async function sendKeywordFlash(tabId, attempt) {
+  // Wait until the tab has finished loading — in the non-stop case the flash is
+  // sent right after the post-detection reload kicks off.
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'loading') {
+      if (attempt < 12) {
+        const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
+        setTimeout(() => sendKeywordFlash(tabId, attempt + 1), delay);
+      }
+      return;
+    }
+  } catch (e) {
+    return; // Tab gone
+  }
+
+  chrome.tabs.sendMessage(tabId, { type: 'KEYWORD_FLASH' }, (resp) => {
+    if (chrome.runtime.lastError || !resp) {
+      // No live content script yet — inject once, then retry until its
+      // onMessage listener is registered. Swallow failures (chrome:// etc.).
+      if (attempt === 0) {
+        chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] })
+          .catch(() => {});
+      }
+      if (attempt < 12) {
+        const delay = Math.min(150 * Math.pow(1.6, attempt), 1500);
+        setTimeout(() => sendKeywordFlash(tabId, attempt + 1), delay);
       }
     }
   });

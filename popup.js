@@ -132,6 +132,7 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
+   'optFlashOnKeyword',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -376,6 +377,7 @@ function readPopupState() {
     stopOnKeyword: el('optStopOnKeyword').checked,
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
+    flashOnKeyword: el('optFlashOnKeyword').checked,
   };
 }
 
@@ -606,6 +608,7 @@ function loadSettings() {
       setCheckbox('optKwRegex', s.kwRegex);
       setCheckbox('optKwInverse', s.kwInverse);
       setCheckbox('optBeepUntilAck', s.beepUntilAck);
+      setCheckbox('optFlashOnKeyword', s.flashOnKeyword);
 
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
     }

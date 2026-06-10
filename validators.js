@@ -371,6 +371,7 @@
       soundVolume: num(s.soundVolume, 0, 1, 0.9),
       soundRepeat: Math.round(num(s.soundRepeat, 1, 5, 1)),
       beepUntilAck: !!s.beepUntilAck,
+      flashOnKeyword: !!s.flashOnKeyword,
       // Noise-tolerance sub-settings for the change monitor (otherwise off for
       // rule-started jobs even when monitorMode is set).
       noiseTolerant: !!s.noiseTolerant,

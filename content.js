@@ -706,6 +706,53 @@
     hideOverlay();
   }, true);
 
+  // ── Keyword flash ─────────────────────────────────────────────────────────
+  // Pulses a glow around the viewport edges when a keyword alert fires.
+  // Deliberately independent of the countdown overlay (its styles only exist
+  // once ensureOverlay() runs, and the flash must work with the overlay
+  // disabled). pointer-events:none keeps the page — and the overlay's Stop
+  // button — fully interactive underneath.
+  let flashTimer = null;
+
+  function startKeywordFlash() {
+    if (!document.body) return;
+    if (!document.getElementById('__ar_flash_styles')) {
+      const style = document.createElement('style');
+      style.id = '__ar_flash_styles';
+      style.textContent = `
+        @keyframes __ar_flash_pulse { 0%,100% { opacity:0; } 50% { opacity:1; } }
+        #__ar_flash {
+          position:fixed; inset:0;
+          pointer-events:none;
+          z-index:2147483647;
+          opacity:0;
+          box-shadow:inset 0 0 0 3px rgba(248,113,113,0.95),
+                     inset 0 0 70px 18px rgba(251,146,60,0.5);
+          animation:__ar_flash_pulse 0.85s ease-in-out 4;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          #__ar_flash { animation:none; opacity:0.8; }
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    // Idempotent: a re-delivered message restarts the flash instead of stacking.
+    const old = document.getElementById('__ar_flash');
+    if (old) old.remove();
+    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+    const el = document.createElement('div');
+    el.id = '__ar_flash';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+    const cleanup = () => {
+      if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+      el.remove();
+    };
+    el.addEventListener('animationend', cleanup);
+    // Backstop: prefers-reduced-motion shows a static glow with no animationend.
+    flashTimer = setTimeout(cleanup, 4000);
+  }
+
   // ── Messages from background ─────────────────────────────────────────────
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -729,6 +776,10 @@
         case 'STOPPED':
           stopOnClickEnabled = false;
           hideOverlay();
+          sendResponse({ ok: true });
+          break;
+        case 'KEYWORD_FLASH':
+          startKeywordFlash();
           sendResponse({ ok: true });
           break;
 

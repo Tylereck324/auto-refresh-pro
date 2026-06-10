@@ -18,7 +18,7 @@ function popupState(over) {
     noiseTolerant: false, collapseDigits: true, minChangedFraction: 0,
     keyword: '', kwCaseSensitive: false, kwWholeWord: false,
     kwRegex: false, kwInverse: false, stopOnKeyword: false, stopOnChange: false,
-    beepUntilAck: false,
+    beepUntilAck: false, flashOnKeyword: false,
   }, over || {});
 }
 
@@ -38,7 +38,7 @@ const EXPECTED_KEYS = [
   'randomMin', 'randomMax', 'stopOnClick', 'sound', 'monitorMode', 'noiseTolerant',
   'collapseDigits', 'minChangedFraction', 'keyword', 'kwCaseSensitive',
   'kwWholeWord', 'kwRegex', 'kwInverse', 'stopOnKeyword', 'stopOnChange',
-  'beepUntilAck', 'currentInterval',
+  'beepUntilAck', 'flashOnKeyword', 'currentInterval',
 ].sort();
 
 test('emits exactly the expected field set (no missing / extra keys)', () => {
@@ -85,7 +85,7 @@ test('showCountdown defaults on; soundVolume defaults to 0.9; tone to beep', () 
 test('per-launch flags map straight through from popup state', () => {
   const out = composeJobSettings(popupState({
     sound: true, monitor: true, noiseTolerant: true, stopOnKeyword: true,
-    stopOnChange: true, beepUntilAck: true, kwCaseSensitive: true,
+    stopOnChange: true, beepUntilAck: true, flashOnKeyword: true, kwCaseSensitive: true,
     kwWholeWord: true, kwRegex: true, kwInverse: true, keyword: 'price',
   }), globals());
   assert.equal(out.sound, true);
@@ -94,11 +94,17 @@ test('per-launch flags map straight through from popup state', () => {
   assert.equal(out.stopOnKeyword, true);
   assert.equal(out.stopOnChange, true);
   assert.equal(out.beepUntilAck, true);
+  assert.equal(out.flashOnKeyword, true);
   assert.equal(out.kwCaseSensitive, true);
   assert.equal(out.kwWholeWord, true);
   assert.equal(out.kwRegex, true);
   assert.equal(out.kwInverse, true);
   assert.equal(out.keyword, 'price');
+});
+
+test('flashOnKeyword defaults off when absent from popup state', () => {
+  assert.equal(composeJobSettings({}, {}).flashOnKeyword, false);
+  assert.equal(composeJobSettings(popupState(), globals()).flashOnKeyword, false);
 });
 
 test('collapseDigits defaults on; only an explicit false turns it off', () => {

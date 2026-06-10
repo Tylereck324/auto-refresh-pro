@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { computeKeywordFire, shouldCheckChange } = require('../monitor-decision.js');
+const { computeKeywordFire, shouldCheckChange, computeFlashDelivery } = require('../monitor-decision.js');
 
 // ── Keyword: normal mode (alert when the keyword APPEARS) ─────────────────────
 test('normal mode fires only on an absent→present transition', () => {
@@ -47,4 +47,22 @@ test('a set keyword owns the signal and suppresses the change path', () => {
 test('change path is gated off without monitor mode or without a baseline', () => {
   assert.equal(shouldCheckChange({ hasKeyword: false, monitorMode: false, hasBaseline: true }), false);
   assert.equal(shouldCheckChange({ hasKeyword: false, monitorMode: true, hasBaseline: false }), false);
+});
+
+// ── Screen-edge flash delivery ────────────────────────────────────────────────
+test('flash delivery is none unless the alert fired AND the flag is on', () => {
+  assert.equal(computeFlashDelivery({ fired: false, flashOnKeyword: true, stopOnKeyword: true }), 'none');
+  assert.equal(computeFlashDelivery({ fired: true, flashOnKeyword: false, stopOnKeyword: true }), 'none');
+  assert.equal(computeFlashDelivery({ fired: false, flashOnKeyword: false, stopOnKeyword: false }), 'none');
+});
+
+test('flash goes now when stopOnKeyword keeps the page alive, else after the reload', () => {
+  assert.equal(computeFlashDelivery({ fired: true, flashOnKeyword: true, stopOnKeyword: true }), 'now');
+  assert.equal(computeFlashDelivery({ fired: true, flashOnKeyword: true, stopOnKeyword: false }), 'after-reload');
+});
+
+test('flash delivery tolerates truthy/falsy (non-boolean) inputs', () => {
+  assert.equal(computeFlashDelivery({ fired: 1, flashOnKeyword: 'yes', stopOnKeyword: undefined }), 'after-reload');
+  assert.equal(computeFlashDelivery({ fired: 1, flashOnKeyword: 'yes', stopOnKeyword: 1 }), 'now');
+  assert.equal(computeFlashDelivery({ fired: 1, flashOnKeyword: undefined, stopOnKeyword: 1 }), 'none');
 });

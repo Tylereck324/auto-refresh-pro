@@ -79,6 +79,7 @@ test('sanitizeRuleSettings carries bounded sound + noise sub-settings', () => {
   const out = V.sanitizeRuleSettings({
     interval: 5000,
     sound: true, soundTone: 'chime', soundVolume: 0.5, soundRepeat: 3, beepUntilAck: true,
+    flashOnKeyword: true,
     monitorMode: true, noiseTolerant: true, collapseDigits: false, minChangedFraction: 0.25,
     preserveScroll: true,
   });
@@ -86,10 +87,17 @@ test('sanitizeRuleSettings carries bounded sound + noise sub-settings', () => {
   assert.equal(out.soundVolume, 0.5);
   assert.equal(out.soundRepeat, 3);
   assert.equal(out.beepUntilAck, true);
+  assert.equal(out.flashOnKeyword, true);
   assert.equal(out.noiseTolerant, true);
   assert.equal(out.collapseDigits, false);
   assert.equal(out.minChangedFraction, 0.25);
   assert.equal(out.preserveScroll, true);
+});
+
+test('sanitizeRuleSettings coerces flashOnKeyword to a boolean (default off)', () => {
+  assert.equal(V.sanitizeRuleSettings({}).flashOnKeyword, false);
+  assert.equal(V.sanitizeRuleSettings({ flashOnKeyword: 'truthy' }).flashOnKeyword, true);
+  assert.equal(V.sanitizeRuleSettings({ flashOnKeyword: 0 }).flashOnKeyword, false);
 });
 
 test('sanitizeRuleSettings bounds out-of-range / garbage sound values', () => {
