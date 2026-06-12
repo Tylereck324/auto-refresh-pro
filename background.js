@@ -229,6 +229,25 @@ async function fireRefresh(tabId) {
   const job = activeJobs[tabId] || await rehydrateJob(tabId);
   if (!job) return; // genuinely stopped, or the tab was closed while we slept
 
+  // Navigate-away backstop: the tabs.onUpdated stop listener can miss a
+  // navigation (SPA history-API route changes don't always fire it), and once
+  // missed nothing else re-checks — the loop would keep reloading whatever page
+  // the tab is on now. Verify the tab is still on the job's original URL before
+  // acting; stop instead of reloading if it moved.
+  if (job.startUrl) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch (e) {
+      await stopRefresh(tabId); // tab gone and onRemoved never fired
+      return;
+    }
+    if (ARPRehydrate.isNavigateAway(job.startUrl, tab.url || tab.pendingUrl || '')) {
+      await stopRefresh(tabId);
+      return;
+    }
+  }
+
   // Backstop dedup: if a setTimeout tick already refreshed within this interval,
   // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
   const now = Date.now();

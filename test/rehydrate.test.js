@@ -91,6 +91,9 @@ test('different path or origin is a navigate-away', () => {
   assert.equal(R.isNavigateAway('https://a.com/p', 'https://a.com/q'), true);
   assert.equal(R.isNavigateAway('https://a.com/p', 'https://b.com/p'), true);
   assert.equal(R.isNavigateAway('https://a.com/p', 'http://a.com/p'), true); // scheme → origin differs
+  // Sub-path of the original is still a navigate-away (SPA route into a detail
+  // page, e.g. /studies → /studies/<id>).
+  assert.equal(R.isNavigateAway('https://a.com/studies', 'https://a.com/studies/abc123'), true);
 });
 
 test('no baseline → never a navigate-away; unparseable → stop to be safe', () => {
