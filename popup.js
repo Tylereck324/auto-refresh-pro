@@ -119,6 +119,19 @@ function bindEvents() {
   document.getElementById('optKeyword').addEventListener('input', validateKeywordRegex);
   document.getElementById('optKwRegex').addEventListener('change', validateKeywordRegex);
 
+  // Adaptive backoff is mutually exclusive with Randomize (one fixed-ish base
+  // interval to ramp vs. a re-rolled random range). Toggling one clears the other,
+  // then persists + live-applies to a running job — the same contract as the
+  // random toggle above it.
+  document.getElementById('optAdaptive').addEventListener('change', applyAdaptiveToggle);
+
+  // Live-validate the CSS selector so an invalid one is flagged before it silently
+  // falls back to whole-page reads.
+  document.getElementById('optWatchSelector').addEventListener('input', validateSelector);
+
+  // Adaptive-max cap: live-apply on edit (debounced).
+  document.getElementById('optAdaptiveMax').addEventListener('input', applyAdaptiveMaxDebounced);
+
   // Options link
   document.getElementById('optionsLink').addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
@@ -132,7 +145,7 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
-   'optFlashOnKeyword',
+   'optFlashOnKeyword','optWatchSelector',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -209,6 +222,11 @@ function updateConditionalRows() {
   const random = document.getElementById('optRandom').checked;
   const randomRow = document.getElementById('randomRow');
   if (randomRow) randomRow.classList.toggle('hidden', !random);
+
+  // The adaptive-max cap only matters when "Adaptive interval" is on.
+  const adaptive = document.getElementById('optAdaptive').checked;
+  const adaptiveRow = document.getElementById('adaptiveRow');
+  if (adaptiveRow) adaptiveRow.classList.toggle('hidden', !adaptive);
 }
 
 // When a keyword is set, the background uses the keyword as the sole signal and
@@ -257,10 +275,53 @@ function randomPlaceholderMs() {
 // dependent UI, persist, and — when a job is running — restart it so the new mode
 // takes effect immediately (fixed ⇄ random) instead of only on the next Start.
 function applyRandomToggle() {
+  const randomOn = document.getElementById('optRandom').checked;
+  // Mutually exclusive with adaptive backoff — see applyAdaptiveToggle.
+  if (randomOn) { const a = document.getElementById('optAdaptive'); if (a) a.checked = false; }
   updateConditionalRows();
   saveSettings();
-  const randomOn = document.getElementById('optRandom').checked;
   restartActiveJob(randomOn ? randomPlaceholderMs() : selectedMs);
+}
+
+// Adaptive backoff and Randomize are mutually exclusive (one base interval to
+// ramp vs. a re-rolled random range). Turning adaptive on clears random, then
+// persists and live-restarts a running job since the scheduling mode changed.
+function applyAdaptiveToggle() {
+  const adaptive = document.getElementById('optAdaptive');
+  if (adaptive.checked) {
+    const random = document.getElementById('optRandom');
+    if (random && random.checked) { random.checked = false; }
+  }
+  updateConditionalRows(); // show/hide the adaptive-max row (and the random row)
+  saveSettings();
+  restartActiveJob(selectedMs);
+}
+
+// Editing the adaptive-max cap follows the same live-apply contract as the random
+// range: persist (debounced — it's a per-keystroke number input) and, when an
+// adaptive job is running, restart it so the new cap takes effect now.
+const applyAdaptiveMaxDebounced = debounce(() => {
+  saveSettings();
+  if (document.getElementById('optAdaptive').checked) restartActiveJob(selectedMs);
+}, 500);
+
+// Validate the CSS selector: it must pass the shared safety guard AND actually
+// compile (querySelector throws SyntaxError on invalid CSS). On failure the field
+// is flagged and the background falls back to whole-page reads — so this is
+// advisory and never blocks Start (unlike an unsafe regex, which is refused).
+function validateSelector() {
+  const input = document.getElementById('optWatchSelector');
+  const hint  = document.getElementById('selectorHint');
+  const val = input.value.trim();
+  let bad = false;
+  if (val.length > 0) {
+    const safe = typeof ARPValidators !== 'undefined' && ARPValidators.isSafeSelector(val);
+    let compiles = true;
+    try { document.querySelector(val); } catch (e) { compiles = false; }
+    bad = !safe || !compiles;
+  }
+  input.classList.toggle('invalid', bad);
+  if (hint) hint.classList.toggle('show', bad);
 }
 
 // Editing the random range is part of the same live-apply contract as the
@@ -313,11 +374,25 @@ async function startRefresh() {
   }
 
   const settings = gatherSettings();
+  const deniedNote = document.getElementById('deniedNote');
+  if (deniedNote) deniedNote.classList.remove('show'); // clear any prior block message
 
   chrome.runtime.sendMessage({
     type: 'START_REFRESH',
     tabId: currentTabId,
     settings
+  }, (resp) => {
+    if (chrome.runtime.lastError) return;
+    // Domain denylist (#7) refused the start — revert the optimistic active
+    // state and surface why, instead of silently showing no job.
+    if (resp && resp.denied) {
+      isActive = false;
+      optimisticUntil = 0;
+      setActiveUI(false);
+      stopRenderLoop();
+      jobDeadline = 0;
+      if (deniedNote) deniedNote.classList.add('show');
+    }
   });
 
   isActive = true;
@@ -378,6 +453,14 @@ function readPopupState() {
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
     flashOnKeyword: el('optFlashOnKeyword').checked,
+    watchSelector: el('optWatchSelector').value.trim().slice(0, 200),
+    adaptive: el('optAdaptive').checked,
+    // Optional backoff cap, entered in minutes, stored as ms (0 / blank = the
+    // computeAdaptiveInterval default of 8× base).
+    adaptiveMax: (() => {
+      const v = parseFloat(el('optAdaptiveMax').value);
+      return Number.isFinite(v) && v > 0 ? Math.round(v * 60000) : 0;
+    })(),
   };
 }
 
@@ -484,6 +567,37 @@ function applyStatus(resp) {
   const statRefreshes = document.getElementById('statRefreshes');
   if (statActive)    statActive.textContent    = activeCount;
   if (statRefreshes) statRefreshes.textContent = job ? (job.refreshCount || 0) : 0;
+
+  // Keyword-detection tally — only meaningful (and only shown) when this tab's
+  // job is actually watching for a keyword. Hidden for plain refresh/monitor
+  // jobs so the hero doesn't show a permanent "Detections 0".
+  const statKeywords = document.getElementById('statKeywords');
+  const keywordStat  = document.getElementById('keywordStat');
+  const hasKeyword   = !!(job && job.settings && typeof job.settings.keyword === 'string'
+    && job.settings.keyword.trim().length > 0);
+  if (statKeywords) statKeywords.textContent = job ? (job.keywordCount || 0) : 0;
+  if (keywordStat)  keywordStat.style.display = hasKeyword ? '' : 'none';
+
+  // Paused (offline / quiet-hours) or snoozed indicator (#5/#9/#2). Runs every
+  // sync regardless of the optimistic early-returns below, so it can't get stuck.
+  const pauseNote = document.getElementById('pauseNote');
+  if (pauseNote) {
+    if (job && job.paused) {
+      const reasonText = job.pauseReason === 'offline' ? ' — offline'
+        : job.pauseReason === 'quiet' ? ' — quiet hours'
+        : ''; // 'manual' (or unknown) → just "Paused"
+      pauseNote.textContent = '⏸ Paused' + reasonText;
+      pauseNote.classList.add('show');
+    } else if (job && job.snoozeUntil) {
+      const mins = Math.max(1, Math.ceil((job.snoozeUntil - Date.now()) / 60000));
+      pauseNote.textContent = '🔕 Alerts snoozed (~' + mins + ' min)';
+      pauseNote.classList.add('show');
+    } else {
+      pauseNote.classList.remove('show');
+    }
+  }
+  // A live job for this tab means it wasn't denied — clear any stale block note.
+  if (job) { const dn = document.getElementById('deniedNote'); if (dn) dn.classList.remove('show'); }
 
   if (job) {
     if (!isActive) {
@@ -609,14 +723,20 @@ function loadSettings() {
       setCheckbox('optKwInverse', s.kwInverse);
       setCheckbox('optBeepUntilAck', s.beepUntilAck);
       setCheckbox('optFlashOnKeyword', s.flashOnKeyword);
+      setCheckbox('optAdaptive', s.adaptive);
+      if (typeof s.adaptiveMax === 'number' && s.adaptiveMax > 0) {
+        document.getElementById('optAdaptiveMax').value = Math.round(s.adaptiveMax / 60000);
+      }
 
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
+      if (s.watchSelector) document.getElementById('optWatchSelector').value = s.watchSelector;
     }
 
     highlightSelectedPreset();
     updateConditionalRows();
     updateKeywordLock();
     validateKeywordRegex();
+    validateSelector();
   });
 }
 

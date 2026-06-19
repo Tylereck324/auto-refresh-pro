@@ -84,6 +84,19 @@
       stopOnChange: !!s.stopOnChange,
       beepUntilAck: !!s.beepUntilAck,
       flashOnKeyword: !!s.flashOnKeyword,
+      // CSS-selector scoped detection (per-launch). Empty = read the whole body
+      // (existing behavior). The in-page read validates that it compiles.
+      watchSelector: typeof s.watchSelector === 'string' ? s.watchSelector.slice(0, 200) : '',
+      // Adaptive-backoff scheduling (per-launch). Mutually exclusive with random:
+      // the background prefers adaptive when both are set. adaptiveMax 0 ⇒ 8× base.
+      adaptive: !!s.adaptive,
+      adaptiveMax: Number.isFinite(parseFloat(s.adaptiveMax)) ? Math.max(0, Math.floor(parseFloat(s.adaptiveMax))) : 0,
+      // Outbound webhook + quiet hours are Settings-page (global) behaviors,
+      // snapshotted onto the job at launch so the refresh loop never pays a
+      // per-cycle storage read. Editing them re-applies on the next job start.
+      webhookUrl: typeof g.webhookUrl === 'string' ? g.webhookUrl : '',
+      webhookFormat: g.webhookFormat || 'json',
+      quietHours: (g.quietHours && typeof g.quietHours === 'object') ? g.quietHours : null,
       currentInterval: interval,
     };
   }

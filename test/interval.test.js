@@ -4,7 +4,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { computeInterval, MIN_INTERVAL_MS, DEFAULT_INTERVAL_MS } = require('../interval.js');
+const { computeInterval, computeAdaptiveInterval, MIN_INTERVAL_MS, DEFAULT_INTERVAL_MS } = require('../interval.js');
 
 // ── Characterization: fixed interval ──────────────────────────────────────
 test('fixed mode returns the configured interval unchanged', () => {
@@ -57,4 +57,43 @@ test('random mode uses defaults when bounds are missing', () => {
     const v = computeInterval({ randomTimer: true });
     assert.ok(v >= 5000 && v <= 30000, `got ${v}`);
   }
+});
+
+// ── Adaptive backoff ───────────────────────────────────────────────────────
+test('adaptive: at streak 0 it equals the base interval', () => {
+  assert.equal(computeAdaptiveInterval({ interval: 10000 }, 0), 10000);
+});
+
+test('adaptive: it ramps up monotonically as the no-change streak grows', () => {
+  const base = 10000;
+  let prev = computeAdaptiveInterval({ interval: base }, 0);
+  for (let s = 1; s <= 8; s++) {
+    const v = computeAdaptiveInterval({ interval: base }, s);
+    assert.ok(v >= prev, `streak ${s}: ${v} should be >= ${prev}`);
+    prev = v;
+  }
+});
+
+test('adaptive: never exceeds the cap (default 8x base)', () => {
+  const base = 10000;
+  for (let s = 0; s <= 50; s++) {
+    const v = computeAdaptiveInterval({ interval: base }, s);
+    assert.ok(v <= base * 8, `streak ${s}: ${v} exceeded cap`);
+  }
+});
+
+test('adaptive: honors an explicit adaptiveMax cap', () => {
+  const v = computeAdaptiveInterval({ interval: 10000, adaptiveMax: 25000 }, 50);
+  assert.equal(v, 25000);
+});
+
+test('adaptive: a huge streak stays finite and capped (no Infinity)', () => {
+  const v = computeAdaptiveInterval({ interval: 5000 }, 1e9);
+  assert.ok(Number.isFinite(v) && v === 5000 * 8);
+});
+
+test('adaptive: floors the base to the 2s minimum and survives garbage', () => {
+  assert.equal(computeAdaptiveInterval({ interval: 500 }, 0), MIN_INTERVAL_MS);
+  assert.equal(computeAdaptiveInterval({}, 0), DEFAULT_INTERVAL_MS);
+  assert.ok(Number.isFinite(computeAdaptiveInterval({ interval: 'x' }, 'y')));
 });

@@ -171,6 +171,77 @@
   /* Tone dropdown holds word labels, so it needs room and left alignment. */
   #defSoundTone { width: auto; min-width: 132px; text-align: left; }
 
+  /* ── Quiet Hours / Webhook shared form controls ── */
+  .form-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: var(--radius-s);
+    outline: none;
+  }
+  .form-select:focus { border-color: var(--accent); }
+
+  .time-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: var(--radius-s);
+    outline: none;
+  }
+  .time-input:focus { border-color: var(--accent); }
+  .time-input::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+
+  .url-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius-s);
+    outline: none;
+  }
+  .url-input:focus { border-color: var(--accent); }
+  .url-input.invalid { border-color: var(--danger); }
+  .url-input::placeholder { color: var(--text2); }
+
+  .field-stack { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .field-stack > label { font-size: 11px; color: var(--text2); }
+
+  /* Muted note shown when a webhook URL is non-empty but invalid. */
+  .form-hint {
+    font-size: 11px;
+    color: var(--danger);
+    margin-top: 6px;
+    display: none;
+    line-height: 1.4;
+  }
+  .form-hint.show { display: block; }
+
+  /* Day / channel checkbox clusters. */
+  .check-cluster { display: flex; flex-wrap: wrap; gap: 10px 14px; padding: 4px 0; }
+  .check-cluster label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .check-cluster input { accent-color: var(--accent); }
+  .cluster-label { font-size: 11px; color: var(--text2); margin: 8px 0 2px; }
+  /* Collapsed when the active mode doesn't use these channels. */
+  .row-hidden { display: none; }
+
   /* ── Narrow viewport ──
      Let each setting row wrap so a long label no longer collapses into a 2–3
      word column beside its control; the control drops below it instead. */
@@ -317,6 +388,91 @@
     <div class="presets-list" id="presetsList"></div>
   </div>
 
+  <!-- ── QUIET HOURS ──
+       Mute or pause alerts during a recurring time window. Persisted as
+       globalSettings.quietHours; the window math lives in quiet-hours.js. -->
+  <div class="card">
+    <div class="card-title">Quiet Hours</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Enable Quiet Hours</div>
+        <div class="setting-sub">Mute or pause alerts during a daily time window</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="qhEnabled" aria-label="Enable quiet hours"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">From / To</div>
+        <div class="setting-sub">Start and end of the quiet window (24h, wraps midnight)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input class="time-input" type="time" id="qhStart" value="22:00" aria-label="Quiet hours start time">
+        <span style="color:var(--text2);font-size:12px;">to</span>
+        <input class="time-input" type="time" id="qhEnd" value="07:00" aria-label="Quiet hours end time">
+      </div>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">While Quiet</div>
+        <div class="setting-sub">What to do during the window</div>
+      </div>
+      <select class="form-select" id="qhMode" aria-label="Quiet hours mode">
+        <option value="suppress">Mute alerts (keep detecting)</option>
+        <option value="pause">Pause refreshing entirely</option>
+      </select>
+    </div>
+    <!-- Channels: only meaningful in 'suppress' mode; hidden when paused. -->
+    <div class="setting-row" id="qhChannelsRow">
+      <div>
+        <div class="setting-label">Mute Channels</div>
+        <div class="setting-sub">Which alert channels to silence while detecting</div>
+      </div>
+      <div class="check-cluster">
+        <label><input type="checkbox" id="qhChanSound" checked aria-label="Mute sound during quiet hours"> Sound</label>
+        <label><input type="checkbox" id="qhChanFlash" checked aria-label="Mute screen flash during quiet hours"> Flash</label>
+        <label><input type="checkbox" id="qhChanNotify" checked aria-label="Mute notifications during quiet hours"> Notify</label>
+      </div>
+    </div>
+    <!-- Weekday filter: all 7 checked ⇒ stored as null (every day). -->
+    <div>
+      <div class="cluster-label">Active days</div>
+      <div class="check-cluster" id="qhDaysRow">
+        <label><input type="checkbox" id="qhDay0" checked aria-label="Quiet hours active on Sunday"> Sun</label>
+        <label><input type="checkbox" id="qhDay1" checked aria-label="Quiet hours active on Monday"> Mon</label>
+        <label><input type="checkbox" id="qhDay2" checked aria-label="Quiet hours active on Tuesday"> Tue</label>
+        <label><input type="checkbox" id="qhDay3" checked aria-label="Quiet hours active on Wednesday"> Wed</label>
+        <label><input type="checkbox" id="qhDay4" checked aria-label="Quiet hours active on Thursday"> Thu</label>
+        <label><input type="checkbox" id="qhDay5" checked aria-label="Quiet hours active on Friday"> Fri</label>
+        <label><input type="checkbox" id="qhDay6" checked aria-label="Quiet hours active on Saturday"> Sat</label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── WEBHOOK ALERTS ──
+       POST an alert to Discord/Slack/a generic JSON endpoint on keyword/change.
+       The URL is fetched by the privileged worker, so a bad/SSRF URL is never
+       stored (validated with ARPValidators.isSafeWebhookUrl on save). -->
+  <div class="card">
+    <div class="card-title">Webhook Alerts</div>
+    <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">POST an alert to a webhook when a keyword or change fires. HTTPS only.</div>
+    <div class="field-stack">
+      <label for="webhookUrl">Webhook URL</label>
+      <input class="url-input" type="text" id="webhookUrl" placeholder="https://discord.com/api/webhooks/..." aria-label="Webhook URL" autocomplete="off" spellcheck="false">
+      <div class="form-hint" id="webhookHint">That URL is not a valid HTTPS webhook (or points to a private address) — it won't be saved.</div>
+    </div>
+    <div class="setting-row" style="margin-top:12px;">
+      <div>
+        <div class="setting-label">Payload Format</div>
+        <div class="setting-sub">Shape of the POST body</div>
+      </div>
+      <select class="form-select" id="webhookFormat" aria-label="Webhook payload format">
+        <option value="discord">Discord</option>
+        <option value="slack">Slack</option>
+        <option value="json">Generic JSON</option>
+      </select>
+    </div>
+  </div>
+
   <!-- ── ABOUT ── -->
   <div class="card">
     <div class="card-title">About</div>
@@ -333,6 +489,7 @@
 
 <script src="sounds.js"></script>
 <script src="validators.js"></script>
+<script src="quiet-hours.js"></script>
 <script src="preset-row.js"></script>
 <script src="toast.js"></script>
 <script src="options.js"></script>

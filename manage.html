@@ -68,6 +68,20 @@
   .autostart-remove { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 16px; min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-s); flex-shrink: 0; }
   .autostart-remove:hover { color: var(--danger); }
 
+  /* Paused/snoozed job pill — muted, distinct from the green ACTIVE badge. */
+  .paused-badge { background: var(--surface2); color: var(--text2); border: 1px solid var(--border2); }
+
+  /* Recent Alerts log */
+  .alert-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .alert-item { display: flex; align-items: center; gap: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .alert-main { flex: 1; min-width: 0; }
+  .alert-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .alert-time { font-size: 11px; color: var(--text2); font-family: var(--font-mono); }
+  .alert-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alert-url { font-size: 11px; color: var(--text2); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alert-detail { font-size: 12px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alert-empty { color: var(--text2); font-size: 12px; padding: 8px 2px; }
+
   /* Import/Export */
   .io-row { display: flex; gap: 10px; margin-top: 10px; }
   .btn-io { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 8px 16px; border-radius: var(--radius-s); cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font-sans); }
@@ -128,6 +142,16 @@
     </div>
   </div>
 
+  <!-- Recent Alerts -->
+  <div class="section-title h-section">Recent Alerts</div>
+  <div class="autostart-card">
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-bottom:4px;">
+      <button class="btn-io" id="exportAlertsBtn" aria-label="Export alert log as JSON">⬇ Export</button>
+      <button class="btn-io" id="clearAlertsBtn" aria-label="Clear all alerts">✕ Clear</button>
+    </div>
+    <div class="alert-list" id="alertList"></div>
+  </div>
+
   <!-- Auto-Start URLs -->
   <div class="section-title h-section">Auto-Start URLs on Browser Open</div>
   <div class="autostart-card">
@@ -154,6 +178,22 @@
       <button class="btn-add" id="addRule">+ Add</button>
     </div>
     <div class="autostart-list" id="ruleList"></div>
+  </div>
+
+  <!-- Domain Denylist -->
+  <div class="section-title h-section">Domain Denylist</div>
+  <div class="autostart-card">
+    <div style="color:var(--text2);font-size:12px;margin-bottom:10px;">
+      Auto refresh will never start on these sites (banking, webmail, etc.).
+      Patterns: an exact host (<code>mail.google.com</code>), a leading wildcard
+      (<code>*.bank.com</code> = the domain and any subdomain), or <code>*</code> (everything).
+    </div>
+    <div class="form-row">
+      <label>Domain</label>
+      <input class="form-input" id="denyPattern" type="text" placeholder="*.bank.com" aria-label="Domain deny pattern">
+      <button class="btn-add" id="addDeny" aria-label="Add domain to denylist">+ Add</button>
+    </div>
+    <div class="autostart-list" id="denyList"></div>
   </div>
 
   <!-- Import/Export -->

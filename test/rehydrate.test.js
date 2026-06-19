@@ -11,11 +11,12 @@ const MATCHER = { ok: true, empty: true, test: () => false };
 // ── buildRehydratedJob ───────────────────────────────────────────────────────
 test('buildRehydratedJob carries persisted count, deadline, and startUrl', () => {
   const job = R.buildRehydratedJob(
-    { settings: { interval: 5000 }, refreshCount: 7, nextRefresh: 1234, startUrl: 'https://a.com/x' },
+    { settings: { interval: 5000 }, refreshCount: 7, keywordCount: 3, nextRefresh: 1234, startUrl: 'https://a.com/x' },
     42,
     { matcher: MATCHER, now: 9999, fallbackInterval: 5000 }
   );
   assert.equal(job.refreshCount, 7);
+  assert.equal(job.keywordCount, 3);
   assert.equal(job.nextRefresh, 1234);
   assert.equal(job.startUrl, 'https://a.com/x');
   assert.equal(job.alarmName, 'refresh_42');
@@ -67,8 +68,23 @@ test('buildRehydratedJob fills sane defaults for a sparse entry', () => {
     { matcher: MATCHER, now: 1000, fallbackInterval: 30000 }
   );
   assert.equal(job.refreshCount, 0);
+  assert.equal(job.keywordCount, 0);
   assert.equal(job.nextRefresh, 31000); // now + fallbackInterval
   assert.equal(job.startUrl, null);
+});
+
+// A string keywordCount (hand-edited or legacy storage) must coerce to a number,
+// or `count + 1` becomes string concatenation ("3" → "31") and the popup tally
+// is garbage. Same hazard the refreshCount coercion guards against.
+test('buildRehydratedJob coerces a string/garbage keywordCount to a number', () => {
+  assert.equal(
+    R.buildRehydratedJob({ settings: {}, keywordCount: '3' }, 1, { matcher: MATCHER, now: 0 }).keywordCount,
+    3
+  );
+  for (const bad of [undefined, null, 'NaN', {}, []]) {
+    const job = R.buildRehydratedJob({ settings: {}, keywordCount: bad }, 1, { matcher: MATCHER, now: 0 });
+    assert.equal(job.keywordCount, 0, `keywordCount=${JSON.stringify(bad)} should rehydrate as 0`);
+  }
 });
 
 test('buildRehydratedJob prefers the live startUrl over the stored one', () => {
