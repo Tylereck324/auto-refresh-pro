@@ -165,6 +165,29 @@ function setCheck(id, val) {
   if (el) el.checked = !!val;
 }
 
+// ── Quiet Hours / Webhook helpers ────────────────────────────────────────────
+const QH_DAY_IDS = ['qhDay0','qhDay1','qhDay2','qhDay3','qhDay4','qhDay5','qhDay6'];
+
+// Channel checkboxes only matter in 'suppress' mode (a paused window skips the
+// reload before any channel fires), so hide that row when mode = 'pause'.
+function syncQuietChannelsRow() {
+  const mode = document.getElementById('qhMode').value;
+  const row = document.getElementById('qhChannelsRow');
+  if (row) row.classList.toggle('row-hidden', mode !== 'suppress');
+}
+
+// Show the muted hint (and flag the input) only when the URL is non-empty AND
+// fails the shared SSRF/https guard. Empty is a valid "no webhook" state.
+function validateWebhookUrl() {
+  const input = document.getElementById('webhookUrl');
+  const hint = document.getElementById('webhookHint');
+  const raw = (input.value || '').trim();
+  const bad = raw.length > 0 && !ARPValidators.isSafeWebhookUrl(raw);
+  input.classList.toggle('invalid', bad);
+  if (hint) hint.classList.toggle('show', bad);
+  return !bad;
+}
+
 function load() {
   chrome.storage.local.get(['globalSettings', 'customHotkey'], function(data) {
     const s = data.globalSettings || {};
@@ -218,6 +241,32 @@ function load() {
       el.addEventListener('input', save);
     });
 
+    // ── Quiet Hours ──
+    // Default to a 22:00→07:00 suppress window when absent; keep stored times
+    // (and days/channels) on the controls so toggling enabled preserves them.
+    const qh = s.quietHours || {};
+    setCheck('qhEnabled', qh.enabled);
+    document.getElementById('qhStart').value =
+      typeof qh.startMin === 'number' ? ARPQuietHours.minutesToTime(qh.startMin) : '22:00';
+    document.getElementById('qhEnd').value =
+      typeof qh.endMin === 'number' ? ARPQuietHours.minutesToTime(qh.endMin) : '07:00';
+    document.getElementById('qhMode').value = qh.mode === 'pause' ? 'pause' : 'suppress';
+    // days: null (or absent) = every day ⇒ all seven checked.
+    const days = Array.isArray(qh.days) && qh.days.length === 7 ? qh.days : null;
+    QH_DAY_IDS.forEach(function(id, i) { setCheck(id, days ? days[i] : true); });
+    // channels: null (or absent) = mute all ⇒ all three checked.
+    const chans = qh.channels && typeof qh.channels === 'object' ? qh.channels : null;
+    setCheck('qhChanSound', chans ? chans.sound !== false : true);
+    setCheck('qhChanFlash', chans ? chans.flash !== false : true);
+    setCheck('qhChanNotify', chans ? chans.notify !== false : true);
+    syncQuietChannelsRow();
+
+    // ── Webhook ──
+    document.getElementById('webhookUrl').value = typeof s.webhookUrl === 'string' ? s.webhookUrl : '';
+    document.getElementById('webhookFormat').value =
+      ['discord','slack','json'].includes(s.webhookFormat) ? s.webhookFormat : 'json';
+    validateWebhookUrl();
+
     loaded = true;
   });
 }
@@ -230,11 +279,44 @@ let loaded = false;
 let presetCount = defaultPresets.length; // number of preset rows currently rendered
 let unknownSoundTone = null; // a newer version's tone we must not clobber (see load)
 
+// Build the quietHours object from the controls. Always returns the FULL shape
+// (even when disabled) so toggling enabled off and back on preserves the
+// window, days, and channels the user set.
+function buildQuietHours() {
+  const startMin = ARPQuietHours.parseTimeToMinutes(document.getElementById('qhStart').value);
+  const endMin = ARPQuietHours.parseTimeToMinutes(document.getElementById('qhEnd').value);
+  const dayBools = QH_DAY_IDS.map(function(id) { return document.getElementById(id).checked; });
+  // All seven checked ⇒ "every day" ⇒ store null (the worker treats null as no
+  // weekday filter); otherwise store the explicit 7-bool mask.
+  const days = dayBools.every(Boolean) ? null : dayBools;
+  return {
+    enabled: document.getElementById('qhEnabled').checked,
+    // parseTimeToMinutes can return null for an empty/garbage field; fall back to
+    // the documented defaults so we never persist a NaN/null window bound.
+    startMin: startMin == null ? 22 * 60 : startMin,
+    endMin: endMin == null ? 7 * 60 : endMin,
+    mode: document.getElementById('qhMode').value === 'pause' ? 'pause' : 'suppress',
+    days,
+    channels: {
+      sound: document.getElementById('qhChanSound').checked,
+      flash: document.getElementById('qhChanFlash').checked,
+      notify: document.getElementById('qhChanNotify').checked,
+    },
+  };
+}
+
 function gatherAndSave() {
   if (!loaded) return; // don't persist before the initial load populates the form
   // Read back exactly the rows we rendered (presetCount) — not a fixed template
   // length — so importing/having ≠8 presets doesn't drop or fabricate rows.
   const presets = readPresets(document, presetCount);
+
+  // Webhook: the worker fetches this with the extension's host access, so a
+  // bad/SSRF URL must never be stored. Trim, then persist '' if it fails the
+  // guard (and surface the hint). Empty stays empty (no webhook).
+  const webhookRaw = (document.getElementById('webhookUrl').value || '').trim();
+  const webhookOk = validateWebhookUrl();
+  const webhookUrl = (webhookRaw && webhookOk) ? webhookRaw : '';
 
   const settings = {
     hardRefresh: document.getElementById('defHardRefresh').checked,
@@ -250,7 +332,11 @@ function gatherAndSave() {
     // Refresh-behavior defaults. (Randomize + stop-on-click moved to the popup.)
     preserveScroll: document.getElementById('defPreserveScroll').checked,
     stopAfter: Math.max(0, parseInt(document.getElementById('defStopAfter').value) || 0),
-    presets: presets
+    presets: presets,
+    // Quiet Hours + Webhook ride along into the Object.assign merge below.
+    quietHours: buildQuietHours(),
+    webhookUrl: webhookUrl,
+    webhookFormat: document.getElementById('webhookFormat').value || 'json'
   };
 
   // MERGE into the stored object, never replace it. globalSettings also carries
@@ -297,17 +383,29 @@ function save() {
   saveTimer = setTimeout(gatherAndSave, 350);
 }
 
-// Static default controls — attach once.
+// Static default controls — attach once. Checkboxes/selects save on 'change';
+// the quiet-hours day/channel checkboxes and both selects join this group.
 ['defHardRefresh', 'defCountdown', 'defNotify', 'defSound', 'defSoundTone',
- 'defPreserveScroll'].forEach(function(id) {
+ 'defPreserveScroll',
+ 'qhEnabled', 'qhMode', 'qhChanSound', 'qhChanFlash', 'qhChanNotify',
+ 'qhDay0', 'qhDay1', 'qhDay2', 'qhDay3', 'qhDay4', 'qhDay5', 'qhDay6',
+ 'webhookFormat'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', save);
 });
+// Text/time/number inputs save on 'input' (save() debounces).
 ['defInterval', 'defSoundRepeat', 'defSoundVolume',
- 'defStopAfter'].forEach(function(id) {
+ 'defStopAfter',
+ 'qhStart', 'qhEnd', 'webhookUrl'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', save);
 });
+
+// Mode drives whether the channel row is relevant — re-sync on change.
+document.getElementById('qhMode').addEventListener('change', syncQuietChannelsRow);
+// Live-validate the webhook URL as the user types (separate from the debounced
+// save so the hint reacts immediately).
+document.getElementById('webhookUrl').addEventListener('input', validateWebhookUrl);
 
 // Keep the volume percentage readout in sync with the slider.
 function syncVolumeReadout() {

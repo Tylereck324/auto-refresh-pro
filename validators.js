@@ -163,6 +163,154 @@
     return { ok: true, test: (url) => typeof url === 'string' && re.test(url) };
   }
 
+  // ── CSS-selector validation (scoped detection) ─────────────────────────────
+  // A monitor job may carry a CSS selector so detection reads only the matched
+  // region's text instead of the whole body. The real "does it compile" check
+  // happens in-page (querySelectorAll wrapped in try/catch — invalid CSS throws
+  // there, not here), so this is only a cheap structural guard at the storage /
+  // import boundary: bound the length and reject characters that never appear in
+  // a legitimate selector but would signal an attempt to break out of the
+  // selector context or smuggle markup.
+  const MAX_SELECTOR_LEN = 200;
+  function isSafeSelector(sel) {
+    if (typeof sel !== 'string') return false;
+    const s = sel.trim();
+    if (s.length === 0 || s.length > MAX_SELECTOR_LEN) return false;
+    // '>' '+' '~' are legitimate selector combinators, so they stay allowed;
+    // '<' is markup and '{' '}' ';' are CSS rule syntax that never appears in a
+    // selector — their presence signals an injection attempt.
+    if (/[<{};]/.test(s)) return false;
+    return true;
+  }
+
+  // ── Webhook URL validation (outbound alerts) ───────────────────────────────
+  // A webhook URL is user-supplied but fetched BY the privileged service worker
+  // using the extension's <all_urls> host access. So it must be https-only (no
+  // cleartext exfil, no file:/data:/etc.) and must NOT resolve to the loopback
+  // interface, link-local / cloud-metadata addresses, or RFC1918 private ranges
+  // — otherwise a crafted import could turn the extension into an SSRF probe of
+  // the user's own machine and LAN.
+  const MAX_WEBHOOK_URL_LEN = 2048;
+
+  // True if a dotted-quad IPv4 string is loopback / private / link-local /
+  // CGNAT / multicast / reserved (or malformed). Pulled out so the IPv6 path can
+  // reuse it for any embedded IPv4.
+  function isPrivateIPv4(host) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (!m) return false;
+    const o = [m[1], m[2], m[3], m[4]].map(Number);
+    if (o.some(n => n > 255)) return true;                       // malformed → deny
+    if (o[0] === 0 || o[0] === 127) return true;                 // 0.0.0.0/8, 127/8 loopback
+    if (o[0] === 10) return true;                                // 10/8
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;   // 172.16/12
+    if (o[0] === 192 && o[1] === 168) return true;               // 192.168/16
+    if (o[0] === 169 && o[1] === 254) return true;               // 169.254/16 link-local + metadata
+    if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return true;  // 100.64/10 CGNAT
+    if (o[0] >= 224) return true;                                // multicast / reserved
+    return false;
+  }
+
+  function isPrivateHost(host) {
+    if (typeof host !== 'string' || !host) return true;
+    host = host.toLowerCase();
+    if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1); // strip IPv6 brackets
+    host = host.replace(/\.$/, '');                                // strip one FQDN-root trailing dot
+    if (host === 'localhost' || host.endsWith('.localhost')) return true;
+    if (host.endsWith('.local') || host.endsWith('.internal')) return true;
+    if (host.includes(':')) {
+      // IPv6 literal. DEFAULT-DENY anything that isn't global unicast (2000::/3,
+      // i.e. a leading hextet starting 2 or 3). This rejects loopback (::1), the
+      // unspecified address (::), ULA (fc00::/7), link-local (fe80::/10),
+      // multicast (ff00::/8), AND every IPv4-embedded form — mapped
+      // (::ffff:127.0.0.1), compatible (::127.0.0.1), NAT64 (64:ff9b::7f00:1) —
+      // none of which start 2/3, so a crafted literal can't tunnel to loopback,
+      // the LAN, or the cloud-metadata address. (Belt-and-suspenders: also flag
+      // any embedded private dotted-quad explicitly.)
+      const v4 = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
+      if (v4 && isPrivateIPv4(v4[1])) return true;
+      return !/^[23][0-9a-f]/.test(host);
+    }
+    return isPrivateIPv4(host);
+  }
+  function isSafeWebhookUrl(url) {
+    if (typeof url !== 'string') return false;
+    if (url.length === 0 || url.length > MAX_WEBHOOK_URL_LEN) return false;
+    let parsed;
+    try { parsed = new URL(url); } catch (e) { return false; }
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false; // creds-in-URL → reject
+    return !isPrivateHost(parsed.hostname);
+  }
+
+  // ── Domain denylist (never-refresh / never-read) ───────────────────────────
+  // A user-managed list of host patterns the extension must never attach a job
+  // to — e.g. banking, webmail, a health portal. Entries are host globs: an
+  // exact host ("mail.google.com"), a leading "*." (the domain and any
+  // subdomain, "*.bank.com"), or "*" (everything, a global kill-switch).
+  const MAX_DENYLIST = 200;
+  function isSafeDenyPattern(p) {
+    if (typeof p !== 'string') return false;
+    const s = p.trim();
+    if (s.length === 0 || s.length > 255) return false;
+    if (/\s/.test(s)) return false;
+    return s === '*' || /^(\*\.)?[a-z0-9.-]+$/i.test(s);
+  }
+  function hostMatchesDenyPattern(host, pattern) {
+    if (pattern === '*') return true;
+    // Canonicalize both sides: lowercase + strip a single trailing dot, so the
+    // FQDN-root form (mail.google.com.) can't slip past a "mail.google.com" rule.
+    host = String(host).toLowerCase().replace(/\.$/, '');
+    pattern = String(pattern).toLowerCase().replace(/\.$/, '');
+    if (pattern.startsWith('*.')) {
+      const base = pattern.slice(2);
+      return host === base || host.endsWith('.' + base);
+    }
+    return host === pattern;
+  }
+  function isUrlDenied(url, denylist) {
+    if (!Array.isArray(denylist) || denylist.length === 0) return false;
+    let host;
+    try { host = new URL(url).hostname; } catch (e) { return false; }
+    if (!host) return false;
+    host = host.toLowerCase().replace(/\.$/, ''); // canonicalize trailing-dot FQDN
+    return denylist.some(p => typeof p === 'string' && p && hostMatchesDenyPattern(host, p));
+  }
+  function sanitizeDenylist(arr) {
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const raw of arr.slice(0, MAX_DENYLIST)) {
+      const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+      if (isSafeDenyPattern(s) && out.indexOf(s) === -1) out.push(s);
+    }
+    return out;
+  }
+
+  // ── Quiet-hours config sanitization ────────────────────────────────────────
+  // Bounds an imported quiet-hours config so a crafted file can't smuggle a NaN
+  // window (which would compare false-but-unpredictably) or a non-array days
+  // mask into the worker's per-cycle gate.
+  function sanitizeQuietHours(q) {
+    if (!isPlainObject(q)) return null;
+    const minOr = (v, dflt) => {
+      const n = Math.floor(Number(v));
+      return Number.isFinite(n) && n >= 0 && n < 1440 ? n : dflt;
+    };
+    const days = (Array.isArray(q.days) && q.days.length === 7) ? q.days.map(Boolean) : null;
+    const channels = isPlainObject(q.channels) ? {
+      sound: q.channels.sound !== false,
+      flash: q.channels.flash !== false,
+      notify: q.channels.notify !== false,
+    } : null;
+    return {
+      enabled: !!q.enabled,
+      startMin: minOr(q.startMin, 0),
+      endMin: minOr(q.endMin, 0),
+      mode: q.mode === 'pause' ? 'pause' : 'suppress',
+      days,
+      channels,
+    };
+  }
+
   // ── base64 decode (browser atob OR Node Buffer) ────────────────────────────
   function decodeBase64ToBytes(b64) {
     if (typeof b64 !== 'string') return null;
@@ -378,6 +526,15 @@
       collapseDigits: s.collapseDigits !== false,
       minChangedFraction: num(s.minChangedFraction, 0, 1, 0),
       preserveScroll: !!s.preserveScroll,
+      // CSS-selector scoped detection: an unsafe/oversized selector is dropped
+      // (empty = whole-body read, the existing behavior).
+      watchSelector: (typeof s.watchSelector === 'string' && isSafeSelector(s.watchSelector))
+        ? s.watchSelector.trim().slice(0, MAX_SELECTOR_LEN) : '',
+      // Adaptive-backoff scheduling (mutually exclusive with randomTimer, which
+      // is already forced false above). adaptiveMax 0 ⇒ "use the 8× default".
+      adaptive: !!s.adaptive,
+      adaptiveMax: Number.isFinite(Number(s.adaptiveMax))
+        ? Math.max(0, Math.min(24 * 3600 * 1000, Math.floor(Number(s.adaptiveMax)))) : 0,
       currentInterval: interval,
     };
   }
@@ -442,6 +599,14 @@
         errors.push('skipped runtime job state (activeJobs)');
         continue;
       }
+      if (key === 'alertLog') {
+        // Machine-local alert history, not a setting. Stripped for the same
+        // reason as activeJobs (runtime data) AND to close the unbounded
+        // pass-through below — without this branch a crafted import could plant
+        // an arbitrary-size log that the Manage page would then render.
+        errors.push('skipped alert history (alertLog)');
+        continue;
+      }
       if (key === 'autoStartUrls') {
         const safe = sanitizeAutoStartUrls(val);
         if (Array.isArray(val) && safe.length !== val.length) {
@@ -453,7 +618,26 @@
         const gs = safeShallowCopy(val);
         const presets = sanitizePresets(val.presets);
         if (presets) gs.presets = presets;
+        // Webhook URL is fetched by the privileged worker — re-validate it
+        // (https-only + SSRF guard) so an import can't aim it at localhost/LAN.
+        if ('webhookUrl' in gs && gs.webhookUrl && !isSafeWebhookUrl(gs.webhookUrl)) {
+          gs.webhookUrl = '';
+          errors.push('removed an unsafe webhook URL');
+        }
+        if ('webhookFormat' in gs) {
+          gs.webhookFormat = ['discord', 'slack', 'json'].includes(gs.webhookFormat) ? gs.webhookFormat : 'json';
+        }
+        if ('quietHours' in gs) gs.quietHours = sanitizeQuietHours(gs.quietHours);
+        if ('watchSelector' in gs && typeof gs.watchSelector === 'string' && !isSafeSelector(gs.watchSelector)) {
+          gs.watchSelector = '';
+        }
         out.globalSettings = gs;
+      } else if (key === 'domainDenylist') {
+        const safe = sanitizeDenylist(val);
+        if (Array.isArray(val) && safe.length !== val.length) {
+          errors.push('removed ' + (val.length - safe.length) + ' invalid denylist entr' + (val.length - safe.length === 1 ? 'y' : 'ies'));
+        }
+        out.domainDenylist = safe;
       } else if (key === 'urlRules') {
         const safe = sanitizeUrlRules(val);
         if (Array.isArray(val) && safe.length !== val.length) {
@@ -472,6 +656,11 @@
         if (ps.kwRegex && !isSafeRegex(ps.keyword)) {
           ps.kwRegex = false;
           errors.push('disabled an unsafe regex keyword');
+        }
+        // Watch selector: drop if unsafe/oversized (empty = whole-body read).
+        if (typeof ps.watchSelector === 'string' && !isSafeSelector(ps.watchSelector)) {
+          ps.watchSelector = '';
+          errors.push('removed an unsafe watch selector');
         }
         out.popupSettings = ps;
       } else {
@@ -509,10 +698,19 @@
     compileUrlGlob,
     sanitizeUrlRules,
     sanitizeRuleSettings,
+    isSafeSelector,
+    isSafeWebhookUrl,
+    isPrivateHost,
+    isUrlDenied,
+    isSafeDenyPattern,
+    sanitizeDenylist,
+    sanitizeQuietHours,
     MAX_IMAGE_BYTES,
     MAX_PNG_DIMENSION,
     MAX_KEYWORD_LEN,
     MAX_REGEX_LEN,
     MAX_URL_RULES,
+    MAX_SELECTOR_LEN,
+    MAX_DENYLIST,
   };
 });

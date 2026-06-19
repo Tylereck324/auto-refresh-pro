@@ -81,5 +81,35 @@
     return changedFraction(nPrev, nCurr) >= threshold;
   }
 
-  return { normalize, changedFraction, isMeaningfulChange, MAX_SCAN };
+  // Summarize what changed between two page snapshots, for the alert log. Returns
+  // { added, removed, summary } where added/removed are bounded token lists and
+  // summary is a short "+new −gone" string. Deliberately NOT digit-collapsed by
+  // default: the snippet is for a human reading the journal ("$19.99" → "$24.99"
+  // should be visible), unlike isMeaningfulChange whose job is to suppress that
+  // noise. Whitespace is still collapsed so layout churn doesn't dominate. O(n)
+  // in the token count, and each side is capped so a wholesale page swap can't
+  // produce a multi-thousand-token entry.
+  function diffTokens(prev, curr, opts) {
+    opts = opts || {};
+    const max = Number.isFinite(Number(opts.max)) ? Math.max(1, Math.floor(Number(opts.max))) : 12;
+    // Only collapse digits if the caller explicitly asks; default keeps numbers.
+    const nOpts = { collapseDigits: !!opts.collapseDigits };
+    const A = tokenSet(normalize(prev, nOpts));
+    const B = tokenSet(normalize(curr, nOpts));
+    const added = [];
+    const removed = [];
+    for (const t of B) if (!A.has(t) && added.length < max) added.push(t);
+    for (const t of A) if (!B.has(t) && removed.length < max) removed.push(t);
+    const parts = [];
+    for (const t of added) parts.push('+' + t);
+    for (const t of removed) parts.push('−' + t); // U+2212 MINUS SIGN
+    let summary = parts.join(' ');
+    // Bound the rendered summary length too — a page of long unique tokens could
+    // still blow past a sane entry size even within the per-side count cap.
+    const MAX_SUMMARY = 240;
+    if (summary.length > MAX_SUMMARY) summary = summary.slice(0, MAX_SUMMARY - 1) + '…';
+    return { added, removed, summary };
+  }
+
+  return { normalize, changedFraction, isMeaningfulChange, diffTokens, MAX_SCAN };
 });

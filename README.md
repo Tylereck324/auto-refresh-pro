@@ -6,8 +6,17 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 
 - **Flexible intervals** — 8 quick presets (5s → 1hr) plus fully custom intervals
 - **Keyword detection** — plays a sound alert and optionally stops when a word/phrase (or comma-separated list, whole-word, case-sensitive, or regex) appears on the page; an inverse mode alerts when it *disappears*
-- **Page change monitoring** — detects when page content changes between refreshes
+- **Page change monitoring** — detects when page content changes between refreshes, and reports a short token diff of *what* changed
+- **Scoped detection** — an optional CSS selector limits keyword/change detection to a single element (e.g. `#price`, `.stock-status`) so a one-word change isn't drowned out by unrelated page churn
 - **Noise-tolerant change detection** — optionally ignore whitespace/digit churn (clocks, counters, ads) and require a minimum changed fraction before alerting
+- **Alert journal** — a persistent, exportable log of every keyword/change detection (timestamp, tab, what changed), viewable on the Manage page; the toolbar badge shows a live job count and an unacknowledged-alert count
+- **Actionable notifications** — keyword/change desktop notifications carry **Stop** and **Snooze 15m** buttons
+- **Outbound webhooks** — optionally POST an alert to Discord, Slack, or a generic JSON endpoint (https-only, with an SSRF guard) so you're notified away from the tab
+- **Quiet hours** — mute alerts (or pause refreshing entirely) during a configurable time window / weekday mask, with per-channel control (sound / flash / notification)
+- **Adaptive interval** — back the interval off while a watched page stays quiet and snap back to full speed the moment something is detected
+- **Resilience** — pauses (instead of hammering) while offline, and backs off exponentially on a page that won't load/script
+- **Domain denylist** — never start a job on listed origins (banking, webmail, health portals); enforced across every launch path
+- **Overlay quick controls** — pause/resume and **+30s** buttons right on the in-page countdown widget
 - **Hard refresh** — bypass cache on every cycle
 - **Random intervals** — randomize the delay between a configurable min/max range
 - **Stop after X refreshes** — automatically stop after a set number of cycles

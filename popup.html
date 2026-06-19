@@ -604,6 +604,11 @@
       <span class="hero-stat-val" id="statRefreshes">0</span>
       <span class="hero-stat-label">Refreshes</span>
     </div>
+    <!-- Shown only while the active tab's job has a keyword set (toggled in popup.js) -->
+    <div class="hero-stat" id="keywordStat" style="display: none;">
+      <span class="hero-stat-val" id="statKeywords">0</span>
+      <span class="hero-stat-label">Detections</span>
+    </div>
     <div class="hero-stat">
       <span class="hero-stat-val" id="statActive">0</span>
       <span class="hero-stat-label">Active Tabs</span>
@@ -639,6 +644,10 @@
       <span aria-hidden="true">■</span> Stop
     </button>
   </div>
+  <!-- Shown when a job is paused (offline / quiet hours) or its alerts are
+       snoozed, or when this site is on the domain denylist (#7). -->
+  <div class="custom-hint" id="pauseNote" style="text-align:center;"></div>
+  <div class="custom-hint" id="deniedNote" style="text-align:center;">This site is on your denylist — auto refresh is disabled here.</div>
 
   <!-- Refresh behavior (collapsible). Per-launch timing/stop preferences that
        apply to the job started from this popup. The remaining behavior defaults
@@ -669,6 +678,27 @@
           <span class="range-sep">to</span>
           <input class="custom-input" type="number" id="optRandomMax" min="2" value="60" aria-label="Random range maximum seconds">
         </div>
+      </div>
+
+      <!-- Adaptive backoff — ramps the interval up while a watched page stays
+           quiet and snaps back to the base the moment something is detected.
+           Mutually exclusive with Randomize; needs Keyword or Monitor to have a
+           "change" signal to ramp against. -->
+      <div class="opt-card" id="cardAdaptive">
+        <div>
+          <div class="opt-label">Adaptive interval</div>
+          <div class="opt-sub">Slow down while quiet, sprint on a change</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="optAdaptive" aria-label="Adaptive interval backoff">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <!-- Adaptive max — optional cap on the backoff, shown only while Adaptive is on. -->
+      <div id="adaptiveRow" class="hidden">
+        <div class="field-label field-subhead">MAX INTERVAL WHILE QUIET (MIN — BLANK = 8× BASE)</div>
+        <input class="custom-input" type="number" id="optAdaptiveMax" min="0" placeholder="auto" aria-label="Adaptive maximum interval in minutes" style="width:120px;">
       </div>
 
       <div class="opt-card" id="cardStopOnClick">
@@ -782,6 +812,15 @@
             <label class="kw-flag"><input type="checkbox" id="optCollapseDigits" checked> Ignore digits</label>
           </div>
         </div>
+      </div>
+
+      <!-- Scoped detection (#4): when set, keyword + change detection read only
+           the matched element(s) instead of the whole page, so a one-word
+           price/status change isn't drowned out by unrelated churn. -->
+      <div id="selectorRow" style="margin-top:12px;">
+        <div class="field-label field-subhead">WATCH ONLY THIS ELEMENT — CSS SELECTOR (OPTIONAL)</div>
+        <input class="keyword-input" type="text" id="optWatchSelector" placeholder="e.g. #price, .stock-status" aria-label="CSS selector to scope detection" style="width:100%;">
+        <div class="kw-regex-hint" id="selectorHint">Invalid CSS selector — watching the whole page.</div>
       </div>
 
     </div>

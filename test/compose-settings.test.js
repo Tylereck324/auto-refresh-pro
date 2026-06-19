@@ -38,7 +38,8 @@ const EXPECTED_KEYS = [
   'randomMin', 'randomMax', 'stopOnClick', 'sound', 'monitorMode', 'noiseTolerant',
   'collapseDigits', 'minChangedFraction', 'keyword', 'kwCaseSensitive',
   'kwWholeWord', 'kwRegex', 'kwInverse', 'stopOnKeyword', 'stopOnChange',
-  'beepUntilAck', 'flashOnKeyword', 'currentInterval',
+  'beepUntilAck', 'flashOnKeyword', 'watchSelector', 'adaptive', 'adaptiveMax',
+  'webhookUrl', 'webhookFormat', 'quietHours', 'currentInterval',
 ].sort();
 
 test('emits exactly the expected field set (no missing / extra keys)', () => {

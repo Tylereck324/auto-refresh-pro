@@ -24,6 +24,8 @@ importScripts('compose-settings.js');
 importScripts('monitor-decision.js');
 // Pure refresh-loop timing guards (ARPGuards.isBackstopDuplicate / shouldNotifyRefresh).
 importScripts('refresh-guards.js');
+// Pure quiet-hours window logic (ARPQuietHours.isWithinQuietHours / quietAction).
+importScripts('quiet-hours.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -33,6 +35,17 @@ const activeJobs = {};
 // true sub-30s refresh can't be driven by alarms. Intervals below it use a
 // self-rescheduling setTimeout loop instead (see scheduleNext).
 const ALARM_MIN_MS = 30000;
+
+// How often a paused job (quiet-hours pause mode, or offline) wakes to re-check
+// whether it can resume. Capped so a fast interval doesn't spin while paused.
+const PAUSE_RECHECK_MS = 5 * 60 * 1000;
+
+// Best-effort offline signal. navigator.onLine is available in the service
+// worker; `=== false` means the browser is definitely offline (true can be a
+// false positive, so we only act on the definite case).
+function isOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
 
 // Schedule a job's next refresh with the right mechanism for its interval:
 //  • >= ALARM_MIN_MS → chrome.alarms (survives worker termination cleanly).
@@ -136,6 +149,7 @@ async function handleNotifClick(id) {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
   delete notifTabMap[id];
   chrome.notifications.clear(id);
+  clearUnacked(); // viewing an alert acknowledges the unacked badge count
   if (tabId == null) return;
   // A click is an acknowledgement — stop any repeat-until-ack beeping.
   clearAckBeeps(tabId);
@@ -148,9 +162,31 @@ async function handleNotifClick(id) {
 
 chrome.notifications.onClicked.addListener(handleNotifClick);
 
+// Action buttons on keyword/change notifications (#2): button 0 = Stop the job,
+// button 1 = Snooze its alerts for 15 minutes. For an away-from-tab monitoring
+// tool the notification IS the interaction surface — without this the only action
+// is click-to-focus, so you can't quiet a flickering keyword without hunting for
+// the tab. Tab id is recovered the same way as a click (warm map → encoded id),
+// so the buttons still work after a worker restart.
+chrome.notifications.onButtonClicked.addListener(async (id, buttonIndex) => {
+  const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  delete notifTabMap[id];
+  chrome.notifications.clear(id);
+  clearUnacked();
+  if (tabId == null) return;
+  clearAckBeeps(tabId);
+  if (buttonIndex === 0) {
+    await stopRefresh(tabId);
+  } else if (buttonIndex === 1) {
+    const job = activeJobs[tabId] || await rehydrateJob(tabId);
+    if (job) job._snoozeUntil = Date.now() + SNOOZE_MS; // in-memory; resets on restart (fine)
+  }
+});
+
 chrome.notifications.onClosed.addListener((id) => {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
   delete notifTabMap[id];
+  clearUnacked();
   if (tabId != null) clearAckBeeps(tabId);
 });
 
@@ -184,6 +220,144 @@ function startAckBeeps(tabId) {
 function clearAckBeeps(tabId) {
   const job = activeJobs[tabId];
   if (job && job._ackTimer) { clearTimeout(job._ackTimer); job._ackTimer = null; }
+}
+
+// How long a notification "Snooze" button mutes a job's alerts (#2).
+const SNOOZE_MS = 15 * 60 * 1000;
+
+// ── Toolbar badge: live state + unacked-alert indicator (#1) ─────────────────
+// The action icon is the cheapest persistent "something happened" signal — every
+// other alert (sound, OS notification, screen flash) is ephemeral, so a missed
+// one leaves no trace. Shows a neutral count of active jobs normally, flipping to
+// a red unacknowledged-alert count when a keyword/change fires. The unacked count
+// is persisted (unackedAlerts) so it survives a worker restart; the badge text
+// itself is browser UI state that also persists, but recomputing it on every
+// start/stop/fire/ack/rehydrate keeps it honest.
+let unackedMirror = 0; // in-memory mirror of the persisted unackedAlerts counter
+function refreshBadge() {
+  try {
+    const active = Object.keys(activeJobs).length;
+    if (unackedMirror > 0) {
+      chrome.action.setBadgeBackgroundColor({ color: '#ef4444' }); // red — needs attention
+      chrome.action.setBadgeText({ text: String(Math.min(unackedMirror, 999)) });
+    } else if (active > 0) {
+      chrome.action.setBadgeBackgroundColor({ color: '#3b82f6' }); // blue — running
+      chrome.action.setBadgeText({ text: String(active) });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
+  } catch (e) { /* chrome.action unavailable (shouldn't happen with action declared) */ }
+}
+
+// ── Alert + change journal (#3) ──────────────────────────────────────────────
+// A ring-buffered log of keyword/change detections, persisted so the ephemeral
+// beep becomes an auditable trail (the headline gap for the overnight restock /
+// price-watch use case) and the opaque "a change was detected" string gains a
+// diff snippet of WHAT changed. Its own mutex — NOT jobsStoreMutex — so a
+// multi-tab burst of concurrent fires can't interleave with (and clobber) the
+// jobs-map read-modify-write, or vice-versa.
+const alertLogMutex = ARPSerialize.createMutex();
+const MAX_ALERT_LOG = 200;
+function withAlertStore(mutate) {
+  return alertLogMutex(async () => {
+    const data = await chrome.storage.local.get(['alertLog', 'unackedAlerts']);
+    const store = {
+      alertLog: Array.isArray(data.alertLog) ? data.alertLog : [],
+      unackedAlerts: Number(data.unackedAlerts) || 0,
+    };
+    await mutate(store);
+    // Oldest-evicted ring buffer (keep the newest MAX_ALERT_LOG).
+    if (store.alertLog.length > MAX_ALERT_LOG) {
+      store.alertLog = store.alertLog.slice(store.alertLog.length - MAX_ALERT_LOG);
+    }
+    if (store.unackedAlerts < 0) store.unackedAlerts = 0;
+    unackedMirror = store.unackedAlerts;
+    await chrome.storage.local.set({ alertLog: store.alertLog, unackedAlerts: store.unackedAlerts });
+    return store;
+  });
+}
+// Record one detection and bump the unacked counter. Every field is bounded so a
+// hostile page's title/url/snippet can't bloat the persisted log.
+async function logAlert(entry) {
+  try {
+    await withAlertStore((s) => {
+      s.alertLog.push({
+        ts: Date.now(),
+        tabId: entry.tabId,
+        url: String(entry.url || '').slice(0, 2048),
+        title: String(entry.title || '').slice(0, 200),
+        type: entry.type,                       // 'kw' | 'chg'
+        keyword: String(entry.keyword || '').slice(0, 200),
+        snippet: String(entry.snippet || '').slice(0, 240),
+      });
+      s.unackedAlerts = (s.unackedAlerts || 0) + 1;
+    });
+  } catch (e) { console.warn('logAlert failed', e); }
+  refreshBadge();
+}
+// Clear the unacked count once the user has seen the alerts (notification ack,
+// or the popup opening via GET_STATUS).
+async function clearUnacked() {
+  if (unackedMirror === 0) return;
+  try { await withAlertStore((s) => { s.unackedAlerts = 0; }); } catch (e) {}
+  refreshBadge();
+}
+// Load the persisted unacked counter into the in-memory mirror after a restart.
+async function loadUnacked() {
+  try {
+    const data = await chrome.storage.local.get('unackedAlerts');
+    unackedMirror = Number(data.unackedAlerts) || 0;
+  } catch (e) {}
+  refreshBadge();
+}
+// Capture a tab's URL/title for a log entry / webhook without throwing if it's gone.
+async function tabMeta(tabId) {
+  try { const t = await chrome.tabs.get(tabId); return { url: t.url || '', title: t.title || '' }; }
+  catch (e) { return { url: '', title: '' }; }
+}
+
+// ── Outbound webhook alerts (#6) ─────────────────────────────────────────────
+// Reach the user when they're away from the tab (Discord / Slack / generic JSON
+// POST). The URL is re-validated here (https-only + SSRF guard) even though it
+// was validated on input — defense in depth against a poisoned storage value.
+// fetch is AWAITED (a fire-and-forget fetch is cut off when the worker idles out)
+// behind an AbortController timeout so a hung endpoint can't wedge the cycle.
+async function sendWebhook(job, info) {
+  const url = job.settings && job.settings.webhookUrl;
+  if (!url || !ARPValidators.isSafeWebhookUrl(url)) return;
+  const fmt = job.settings.webhookFormat || 'json';
+  const line = info.type === 'kw'
+    ? ('🔔 Keyword ' + (info.inverse ? 'disappeared from' : 'found on') + ' “' + info.title + '”: ' + info.keyword)
+    : ('🔔 Page changed: “' + info.title + '”' + (info.snippet ? ('\n' + info.snippet) : ''));
+  const message = line + '\n' + info.url;
+  let body;
+  if (fmt === 'discord') body = { content: message };
+  else if (fmt === 'slack') body = { text: message };
+  else body = {
+    event: info.type === 'kw' ? 'keyword' : 'change',
+    title: info.title, url: info.url, keyword: info.keyword,
+    snippet: info.snippet || '', count: info.count, timestamp: Date.now(),
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+      // SSRF defense: refuse redirects. isSafeWebhookUrl only vets the INITIAL
+      // URL — without this a public endpoint could 30x-redirect the POST to
+      // http://169.254.169.254/… and fetch would transparently re-send the body
+      // to the internal target. Real webhooks (Discord/Slack/generic) never
+      // legitimately redirect.
+      redirect: 'error',
+    });
+  } catch (e) {
+    console.warn('Webhook delivery failed', e);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // createDocument() resolves once the offscreen page has loaded, but offscreen.js
@@ -248,10 +422,35 @@ async function fireRefresh(tabId) {
     }
   }
 
-  // Backstop dedup: if a setTimeout tick already refreshed within this interval,
-  // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
+  // now + the cycle's current interval, used by both the pause gate and the
+  // backstop-dedup check below.
   const now = Date.now();
   const curInterval = job.settings.currentInterval || computeInterval(job.settings);
+
+  // ── Pause gates (#5 quiet-hours pause, #9 offline) ──
+  // Skip the reload WITHOUT advancing the cycle — no refreshCount bump, no
+  // baseline capture — and wake again soon to re-check. Quiet-hours PAUSE mode
+  // mutes a job overnight; the offline gate avoids reloading into Chrome's "No
+  // internet" page, whose NON-empty text would otherwise become the detection
+  // baseline and fire a false "changed"/"keyword appeared" the moment the
+  // network returns. NOTE: this catches hangs + offline, not soft 5xx/captcha
+  // pages (tab.status only distinguishes loading/complete — no HTTP codes).
+  const pauseReason =
+    job._manualPause ? 'manual'
+    : (ARPQuietHours.quietAction(new Date(), job.settings.quietHours) === 'pause') ? 'quiet'
+    : (isOffline() ? 'offline' : null);
+  if (pauseReason) {
+    job._pauseReason = pauseReason;
+    const recheck = Math.min(curInterval, pauseReason === 'offline' ? 60000 : PAUSE_RECHECK_MS);
+    job.nextRefresh = now + recheck;
+    scheduleNext(tabId, recheck);
+    broadcastStatus();
+    return;
+  }
+  if (job._pauseReason) { job._pauseReason = null; broadcastStatus(); } // resumed
+
+  // Backstop dedup: if a setTimeout tick already refreshed within this interval,
+  // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
   if (ARPGuards.isBackstopDuplicate(job._lastRefresh, now, curInterval)) {
     scheduleNext(tabId, Math.max(0, job.nextRefresh - now));
     return;
@@ -265,14 +464,13 @@ async function fireRefresh(tabId) {
   // overwrite that with the interval it computed before the await.
   const epoch = job._epoch || 0;
 
-  // Compute next interval (random or fixed)
-  const nextInterval = computeInterval(job.settings);
-  job.settings.currentInterval = nextInterval;
+  // What kind of cycle is this? Hoisted out of the try so the post-detection
+  // interval math (adaptive backoff) can see it.
+  const hasKeyword = job.settings.keyword && job.settings.keyword.trim().length > 0;
+  const hasMonitor = job.settings.monitorMode;
+  job._changedThisCycle = false; // doMonitorRefresh flips this when an alert fires
 
   try {
-    // Run keyword/monitor check if: keyword is set, OR monitor-change mode is on
-    const hasKeyword = job.settings.keyword && job.settings.keyword.trim().length > 0;
-    const hasMonitor = job.settings.monitorMode;
     if (hasKeyword || hasMonitor) {
       await doMonitorRefresh(tabId, job);
     } else {
@@ -280,6 +478,24 @@ async function fireRefresh(tabId) {
     }
   } catch (e) {
     console.warn('Refresh error on tab', tabId, e);
+  }
+
+  // Compute the NEXT interval AFTER detection ran, so adaptive backoff (#8) can
+  // read this cycle's outcome (job._changedThisCycle) and the failure backoff
+  // (#9) can read the streak doMonitorRefresh maintains. Adaptive applies only to
+  // detecting jobs — a plain refresh has no "change" signal to ramp against.
+  let nextInterval;
+  if (job.settings.adaptive && (hasKeyword || hasMonitor)) {
+    job._noChangeStreak = job._changedThisCycle ? 0 : (job._noChangeStreak || 0) + 1;
+    nextInterval = ARPInterval.computeAdaptiveInterval(job.settings, job._noChangeStreak);
+  } else {
+    nextInterval = computeInterval(job.settings);
+  }
+  const fails = job._consecutiveFailures || 0;
+  if (fails > 0) {
+    // Exponential backoff (capped at 15 min) for a page that won't render/script
+    // — the "refreshes forever on a non-scriptable/erroring page" fix.
+    nextInterval = Math.min(nextInterval * Math.pow(2, Math.min(fails, 6)), 15 * 60 * 1000);
   }
 
   // Stop after X refreshes — checked AFTER the refresh so "stop after 1"
@@ -292,8 +508,12 @@ async function fireRefresh(tabId) {
   // Reschedule (alarm or setTimeout, per interval) — unless an UPDATE_INTERVAL
   // landed during the await above (epoch advanced): its reschedule is newer and
   // already persisted/broadcast, so ours would drag the job back to the old
-  // timing for one full stale cycle.
+  // timing for one full stale cycle. currentInterval (the overlay/popup ring
+  // total) is assigned INSIDE this guard too: a stale cycle writing it after an
+  // UPDATE_INTERVAL bumped the epoch would otherwise clobber the new total back
+  // for one cycle while the new deadline ships.
   if (activeJobs[tabId] && (activeJobs[tabId]._epoch || 0) === epoch) {
+    activeJobs[tabId].settings.currentInterval = nextInterval;
     activeJobs[tabId].nextRefresh = Date.now() + nextInterval;
     await saveJobToStorage(tabId, activeJobs[tabId].settings); // persist count + deadline
     scheduleNext(tabId, nextInterval);
@@ -341,12 +561,36 @@ async function doRefresh(tabId, job) {
 // timer ticks every second and would otherwise be read as a "page change".
 // The overlay is detached only for the synchronous innerText read, then restored
 // in the same call, so there is no visible flicker.
-function readPageText() {
+function readPageText(selector) {
   if (!document.body) return '';
   const ov = document.getElementById('__ar_overlay');
   let parent = null, next = null;
   if (ov) { parent = ov.parentNode; next = ov.nextSibling; ov.remove(); }
-  const text = document.body.innerText || '';
+  let text;
+  if (selector && typeof selector === 'string') {
+    // Scoped read (#4 CSS-selector detection): read only the matched region(s)
+    // so all downstream detection (keyword match, change diff, noise tolerance,
+    // minChangedFraction) runs against just that text instead of the whole body
+    // — the only way a one-word price/status change isn't drowned out on a busy
+    // page. Invalid CSS throws HERE (in-page, not at the storage boundary), so
+    // it's guarded. A selector that matches NOTHING returns '' which the callers
+    // treat as "no read this cycle" (skip detection, keep the old baseline) — not
+    // as a wholesale change. That deliberately avoids a false alert the instant a
+    // watched element briefly drops out of the DOM (re-render, lazy load).
+    try {
+      const nodes = document.querySelectorAll(selector);
+      const parts = [];
+      for (let i = 0; i < nodes.length; i++) {
+        const t = nodes[i].innerText || nodes[i].textContent || '';
+        if (t) parts.push(t);
+      }
+      text = parts.join('\n');
+    } catch (e) {
+      text = ''; // invalid selector → treat as empty read (skip), never throw
+    }
+  } else {
+    text = document.body.innerText || '';
+  }
   if (ov && parent) parent.insertBefore(ov, next);
   // Bound the returned text. innerText on an infinite-scroll / pathological page
   // can be many MB; that full payload is structure-cloned out of the page on
@@ -369,9 +613,14 @@ async function doMonitorRefresh(tabId, job) {
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: readPageText
+      func: readPageText,
+      args: [job.settings.watchSelector || ''], // scoped detection ('' = whole body)
     });
   } catch (e) {
+    // Page won't script (chrome://, web store, error page, hang). Count it so the
+    // failure backoff (#9) in fireRefresh ramps the interval instead of hammering
+    // a page that will never yield a read.
+    job._consecutiveFailures = (job._consecutiveFailures || 0) + 1;
     await doRefresh(tabId, job);
     return;
   }
@@ -390,6 +639,16 @@ async function doMonitorRefresh(tabId, job) {
     await doRefresh(tabId, job);
     return;
   }
+  job._consecutiveFailures = 0; // a real read landed — clear any failure backoff
+
+  // Alert-DELIVERY suppression for this cycle. Detection, baseline, counts,
+  // badge, and the persisted alert log are NEVER suppressed — only the noisy
+  // channels (sound / desktop notification / screen flash / webhook / ack-beeps):
+  //   • quiet-hours 'suppress' mode mutes the configured channels overnight (#5)
+  //   • a notification "Snooze 15m" mutes everything until _snoozeUntil (#2)
+  const nowDate = new Date();
+  const snoozed = job._snoozeUntil && Date.now() < job._snoozeUntil;
+  const muted = (channel) => !!snoozed || ARPQuietHours.isChannelMuted(nowDate, job.settings.quietHours, channel);
 
   // A keyword takes precedence over generic change-monitoring. When one is set,
   // the keyword is the signal of interest, so we skip the page-change path
@@ -421,21 +680,37 @@ async function doMonitorRefresh(tabId, job) {
     });
 
     if (fired) {
-      if (job.settings.sound) await playBeep(soundOpts(job.settings));
+      // Running tally of keyword alerts (absent→present, or present→absent in
+      // inverse mode), surfaced next to the refresh count in the popup. Bumped
+      // before the stopOnKeyword early-return below so a stop-on-hit cycle still
+      // counts the hit that stopped it.
+      job.keywordCount = (job.keywordCount || 0) + 1;
+      job._changedThisCycle = true; // adaptive backoff: snap back to the fast base
+      // Persist to the alert journal + bump the unacked badge — independent of
+      // any delivery suppression, so a muted overnight hit is still captured.
+      const meta = await tabMeta(tabId);
+      await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword });
+      // Outbound webhook (not awaited: its internal fetch is timed-out, and
+      // blocking the reload on a slow endpoint would stall the cycle).
+      if (!muted('notify')) sendWebhook(job, { type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount });
+      if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
       const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
-      notify('kw', tabId, {
+      if (!muted('notify')) notify('kw', tabId, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Keyword Detected!',
-        message: '"' + job.settings.keyword + '" ' + verb + ' page!'
+        message: '"' + job.settings.keyword + '" ' + verb + ' page!',
+        requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
+        buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
       });
       // Screen-edge flash: with stopOnKeyword the page stays put, so flash the
       // still-live content script now. Otherwise the reload below would destroy
       // the flash mid-animation — defer it until after doRefresh (see the
-      // _pendingFlash consumption at the end of this function).
+      // _pendingFlash consumption at the end of this function). Muted-flash
+      // collapses to flashOnKeyword=false ⇒ computeFlashDelivery returns 'none'.
       const flashPlan = ARPMonitor.computeFlashDelivery({
         fired,
-        flashOnKeyword: job.settings.flashOnKeyword,
+        flashOnKeyword: job.settings.flashOnKeyword && !muted('flash'),
         stopOnKeyword: job.settings.stopOnKeyword,
       });
       if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
@@ -444,7 +719,7 @@ async function doMonitorRefresh(tabId, job) {
         await stopRefresh(tabId);
         return;
       }
-      startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
+      if (!muted('sound')) startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
     }
   }
 
@@ -463,18 +738,31 @@ async function doMonitorRefresh(tabId, job) {
         })
       : (currentContent !== prevContent);
     if (changed) {
-      if (job.settings.sound) await playBeep(soundOpts(job.settings));
-      notify('chg', tabId, {
+      job._changedThisCycle = true; // adaptive backoff: snap back to the fast base
+      // What changed — a short token diff so the log/notification says more than
+      // the old opaque "a change was detected". Digit-collapse follows the job's
+      // own setting so a price ticking 19→24 is still shown when noise tolerance
+      // keeps digits, and hidden when it collapses them.
+      const diff = ARPNormalize.diffTokens(prevContent, currentContent, {
+        collapseDigits: job.settings.collapseDigits !== false && job.settings.noiseTolerant,
+      });
+      const meta = await tabMeta(tabId);
+      await logAlert({ tabId, url: meta.url, title: meta.title, type: 'chg', snippet: diff.summary });
+      if (!muted('notify')) sendWebhook(job, { type: 'chg', title: meta.title || meta.url, url: meta.url, snippet: diff.summary, count: job.refreshCount });
+      if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
+      if (!muted('notify')) notify('chg', tabId, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Page Changed!',
-        message: 'A change was detected on the monitored page.'
+        message: diff.summary ? ('Changed: ' + diff.summary) : 'A change was detected on the monitored page.',
+        requireInteraction: true,
+        buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }],
       });
       if (job.settings.stopOnChange) {
         await stopRefresh(tabId);
         return;
       }
-      startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
+      if (!muted('sound')) startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
     }
   }
 
@@ -521,10 +809,23 @@ async function startRefresh(tabId, settings) {
     startUrl = tab.url || tab.pendingUrl || null;
   } catch (e) {}
 
+  // Domain denylist (#7): never attach a job to a user-blocked origin. This ONE
+  // guard covers every launch path — popup, hotkey, URL rule, auto-start — because
+  // they all funnel through startRefresh. Checked BEFORE the baseline executeScript
+  // so a denied page (bank, webmail, health portal) is never even read.
+  if (startUrl) {
+    const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+    if (ARPValidators.isUrlDenied(startUrl, domainDenylist)) {
+      chrome.tabs.sendMessage(tabId, { type: 'STOPPED' }).catch(() => {}); // clear any overlay
+      return false;
+    }
+  }
+
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: readPageText
+      func: readPageText,
+      args: [settings.watchSelector || ''], // scoped baseline read ('' = whole body)
     });
     const raw = results && results[0] && results[0].result;
     // Only use as baseline if we got real content (non-empty).
@@ -539,6 +840,7 @@ async function startRefresh(tabId, settings) {
   activeJobs[tabId] = {
     settings,
     refreshCount: 0,
+    keywordCount: 0,
     nextRefresh: Date.now() + interval,
     alarmName: `refresh_${tabId}`,
     startUrl,
@@ -557,6 +859,8 @@ async function startRefresh(tabId, settings) {
   // Persist to storage
   await saveJobToStorage(tabId, settings);
   broadcastStatus();
+  refreshBadge(); // active-job count changed
+  return true;
 }
 
 async function sendCountdownStart(tabId, attempt) {
@@ -661,6 +965,7 @@ async function stopRefresh(tabId) {
   chrome.tabs.sendMessage(tabId, { type: 'STOPPED' }).catch(() => {});
   await removeJobFromStorage(tabId);
   broadcastStatus();
+  refreshBadge(); // active-job count changed
 }
 
 // ── Storage helpers ────────────────────────────────────────────────────────
@@ -692,10 +997,20 @@ async function saveJobToStorage(tabId, settings) {
     jobs[tabId] = {
       settings,
       refreshCount: (job && job.refreshCount) || 0,
+      keywordCount: (job && job.keywordCount) || 0,
       nextRefresh: (job && job.nextRefresh) || (Date.now() + computeInterval(settings)),
       startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
       previousContent: (monitors && job && typeof job.previousContent === 'string')
         ? job.previousContent : null, // keyword/change baseline across restarts
+      // Adaptive-backoff streak (#8): persist so the ramp resumes at the right
+      // step after a worker restart at long (alarm-driven) intervals, instead of
+      // snapping back to the fast base every time the worker idles out.
+      noChangeStreak: (job && Number(job._noChangeStreak)) || 0,
+      // Manual pause (#10): persist so a job paused via the overlay/Manage stays
+      // paused across a worker restart instead of silently resuming (the
+      // alarm-backed recheck lets the MV3 worker idle out). Quiet/offline pauses
+      // are re-derived from the clock/navigator.onLine and need no persistence.
+      manualPause: !!(job && job._manualPause),
       savedAt: Date.now(),
     };
   });
@@ -752,7 +1067,9 @@ async function rehydrateJob(tabId, prefetched) {
 // to activeJobs — including an out-of-band import via manage.js — trips the
 // storage.onChanged listener below to re-arm a single re-read.
 let jobsStoreFresh = false;
+let unackedLoaded = false; // load the persisted unacked count once per worker life
 async function rehydrateAll() {
+  if (!unackedLoaded) { unackedLoaded = true; await loadUnacked(); } // restore badge after restart
   if (jobsStoreFresh) return;
   jobsStoreFresh = true; // set BEFORE the await: a write during the get flips it back, forcing a re-read
   const data = await chrome.storage.local.get('activeJobs');
@@ -761,13 +1078,22 @@ async function rehydrateAll() {
     const tabId = parseInt(tabIdStr);
     if (!activeJobs[tabId]) await rehydrateJob(tabId, stored[tabIdStr]);
   }
+  refreshBadge(); // active-job count may have changed after a restart-time refill
 }
 
 // Re-arm a single rehydrateAll read whenever the persisted job map changes —
 // covers this worker's own writes (harmless: next message re-reads once) and an
 // out-of-band import (manage.js writes activeJobs straight to storage).
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.activeJobs) jobsStoreFresh = false;
+  if (area !== 'local') return;
+  if (changes.activeJobs) jobsStoreFresh = false;
+  // Keep the badge in sync with the persisted unacked counter — covers this
+  // worker's own writes (idempotent) AND an out-of-band clear from the Manage
+  // page's "Clear" button, which writes unackedAlerts straight to storage (#1/#3).
+  if (changes.unackedAlerts) {
+    unackedMirror = Number(changes.unackedAlerts.newValue) || 0;
+    refreshBadge();
+  }
 });
 
 // ── Startup: restore jobs ──────────────────────────────────────────────────
@@ -781,8 +1107,11 @@ chrome.runtime.onInstalled.addListener(() => restoreJobs({ autoStart: false }));
 
 async function restoreJobs(opts) {
   const autoStart = !!(opts && opts.autoStart);
-  const data = await chrome.storage.local.get(['activeJobs', 'autoStartUrls']);
+  const data = await chrome.storage.local.get(['activeJobs', 'autoStartUrls', 'domainDenylist']);
   const jobs = data.activeJobs || {};
+  const denylist = Array.isArray(data.domainDenylist) ? data.domainDenylist : [];
+  await loadUnacked(); // restore the unacked badge count on browser launch / update
+  unackedLoaded = true;
 
   for (const [tabIdStr, stored] of Object.entries(jobs)) {
     const tabId = parseInt(tabIdStr);
@@ -807,6 +1136,13 @@ async function restoreJobs(opts) {
       chrome.alarms.clear(`refresh_${tabId}`);
       continue;
     }
+    // Denylist may have been added since the job was persisted — don't re-attach
+    // to a now-blocked origin (#7).
+    if (ARPValidators.isUrlDenied(url, denylist)) {
+      await removeJobFromStorage(tabId);
+      chrome.alarms.clear(`refresh_${tabId}`);
+      continue;
+    }
 
     // Same restore semantics as a mid-session worker restart: rehydrateJob
     // preserves refreshCount/nextRefresh so "stop after N" resumes faithfully
@@ -820,15 +1156,16 @@ async function restoreJobs(opts) {
     }
   }
   broadcastStatus();
+  refreshBadge();
 
   if (!autoStart) return;
 
   // Auto-start URLs. Only open entries whose URL is a safe http(s) navigation —
   // a poisoned storage value (e.g. an imported javascript:/file: URL) must never
-  // be auto-opened on browser startup.
+  // be auto-opened on browser startup — and never one on the denylist (#7).
   const autoStartUrls = data.autoStartUrls || [];
   for (const item of autoStartUrls) {
-    if (item.url && ARPValidators.isSafeNavigableUrl(item.url)) {
+    if (item.url && ARPValidators.isSafeNavigableUrl(item.url) && !ARPValidators.isUrlDenied(item.url, denylist)) {
       const tab = await chrome.tabs.create({ url: item.url, active: false });
       if (item.autoRefresh && item.refreshSettings) {
         await startRefresh(tab.id, item.refreshSettings);
@@ -906,15 +1243,29 @@ function broadcastStatus() {
   chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', jobs: serializeJobs() }).catch(() => {});
 }
 
+// One job's wire shape, shared by serializeJobs (the broadcast map) and the
+// GET_STATUS single-job payload so the two can't drift — the pause/snooze fields
+// below were once only in the map, so the popup's GET_STATUS sync hid the
+// indicator on open.
+function serializeJob(job) {
+  return {
+    settings: job.settings,
+    refreshCount: job.refreshCount,
+    keywordCount: job.keywordCount,
+    nextRefresh: job.nextRefresh,
+    // Paused state (#5 quiet-hours pause, #9 offline, #10 manual) so the
+    // popup/Manage UI can show "Paused — …" instead of a misleading countdown.
+    paused: (job._pauseReason || job._manualPause) ? true : undefined,
+    pauseReason: job._manualPause ? 'manual' : (job._pauseReason || undefined),
+    // Snooze (#2): when the alerts are muted via a notification button, surface
+    // the remaining time so the popup can show a "snoozed" pill.
+    snoozeUntil: (job._snoozeUntil && Date.now() < job._snoozeUntil) ? job._snoozeUntil : undefined,
+  };
+}
+
 function serializeJobs() {
   const out = {};
-  for (const [tabId, job] of Object.entries(activeJobs)) {
-    out[tabId] = {
-      settings: job.settings,
-      refreshCount: job.refreshCount,
-      nextRefresh: job.nextRefresh
-    };
-  }
+  for (const [tabId, job] of Object.entries(activeJobs)) out[tabId] = serializeJob(job);
   return out;
 }
 
@@ -939,10 +1290,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     await rehydrateAll(); // a restarted worker has an empty activeJobs; refill it
     switch (msg.type) {
-      case 'START_REFRESH':
-        await startRefresh(senderTabId || msg.tabId, msg.settings);
-        sendResponse({ ok: true });
+      case 'START_REFRESH': {
+        // startRefresh returns false when the URL is on the domain denylist (#7),
+        // so the popup can surface "disabled on this site" instead of silently
+        // showing no job.
+        const started = await startRefresh(senderTabId || msg.tabId, msg.settings);
+        sendResponse({ ok: started !== false, denied: started === false });
         break;
+      }
       case 'STOP_REFRESH': {
         const stopTabId = senderTabId || msg.tabId;
         if (stopTabId) await stopRefresh(stopTabId);
@@ -951,13 +1306,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       case 'GET_STATUS': {
         const resolvedTabId = senderTabId || msg.tabId;
+        // A GET_STATUS with no sender.tab comes from the popup/extension page (a
+        // content-script sync always carries sender.tab) — the user is looking at
+        // the UI, so acknowledge the unacked-alert badge (#1). Content-script
+        // syncs must NOT clear it (the user hasn't seen anything yet).
+        if (!senderTabId) clearUnacked();
         sendResponse({
           jobs: serializeJobs(),
-          job: resolvedTabId && activeJobs[resolvedTabId] ? {
-            settings: activeJobs[resolvedTabId].settings,
-            refreshCount: activeJobs[resolvedTabId].refreshCount,
-            nextRefresh: activeJobs[resolvedTabId].nextRefresh
-          } : null
+          job: resolvedTabId && activeJobs[resolvedTabId] ? serializeJob(activeJobs[resolvedTabId]) : null
         });
         break;
       }
@@ -1018,6 +1374,61 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'GET_ALL_JOBS':
         sendResponse({ jobs: serializeJobs() });
         break;
+      case 'CLEAR_ALERTS': {
+        // Clear the alert journal + unacked count THROUGH the alert-log mutex, so
+        // a "Clear" click can't interleave with an in-flight logAlert (a blind
+        // storage.set from the Manage page would race the worker's RMW). The
+        // storage.onChanged badge sync + Manage re-render follow from the write.
+        try { await withAlertStore((s) => { s.alertLog = []; s.unackedAlerts = 0; }); } catch (e) {}
+        refreshBadge();
+        sendResponse({ ok: true });
+        break;
+      }
+
+      // ── Overlay / Manage quick controls (#10) ──
+      case 'PAUSE_JOB': {
+        const pTabId = senderTabId || msg.tabId;
+        const job = activeJobs[pTabId] || await rehydrateJob(pTabId);
+        if (!job) { sendResponse({ ok: false }); break; }
+        job._manualPause = true;
+        clearAckBeeps(pTabId);
+        const recheck = Math.min(job.settings.currentInterval || computeInterval(job.settings), PAUSE_RECHECK_MS);
+        job.nextRefresh = Date.now() + recheck;
+        scheduleNext(pTabId, recheck);
+        await saveJobToStorage(pTabId, job.settings); // persist the pause flag (survives worker restart)
+        broadcastStatus();
+        sendResponse({ ok: true });
+        break;
+      }
+      case 'RESUME_JOB': {
+        const rTabId = senderTabId || msg.tabId;
+        const job = activeJobs[rTabId] || await rehydrateJob(rTabId);
+        if (!job) { sendResponse({ ok: false }); break; }
+        job._manualPause = false;
+        job._pauseReason = null; // clear the stale 'manual' reason so the UI doesn't show a resumed job as paused
+        const interval = computeInterval(job.settings);
+        job.nextRefresh = Date.now() + interval;
+        scheduleNext(rTabId, interval);
+        sendCountdownStart(rTabId, 0);
+        await saveJobToStorage(rTabId, job.settings); // clear the persisted pause flag
+        broadcastStatus();
+        sendResponse({ ok: true });
+        break;
+      }
+      case 'EXTEND_JOB': {
+        // Push the next refresh out by a bounded amount (overlay "+30s"), without
+        // changing the configured interval.
+        const eTabId = senderTabId || msg.tabId;
+        const job = activeJobs[eTabId] || await rehydrateJob(eTabId);
+        if (!job) { sendResponse({ ok: false }); break; }
+        const addMs = Math.min(60 * 60 * 1000, Math.max(1000, parseInt(msg.ms, 10) || 30000));
+        job.nextRefresh = Math.max(job.nextRefresh, Date.now()) + addMs;
+        scheduleNext(eTabId, Math.max(0, job.nextRefresh - Date.now()));
+        sendCountdownStart(eTabId, 0);
+        broadcastStatus();
+        sendResponse({ ok: true });
+        break;
+      }
       default:
         // Unknown type: respond instead of leaving the caller's port hanging
         // until the worker dies ("message port closed").

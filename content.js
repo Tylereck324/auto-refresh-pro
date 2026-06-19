@@ -11,6 +11,7 @@
   let contextValid  = true;
   let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
   let preserveScrollEnabled = false; // when true, scroll position survives refreshes
+  let paused = false; // local mirror of the overlay's pause toggle (no COUNTDOWN_START follows PAUSE_JOB)
   // Shared drag/resize state, read by the document-level pointer listeners that
   // are registered once (see below) rather than per overlay rebuild.
   let dragState = null;
@@ -151,6 +152,25 @@
           color:#f87171;
           border-color:rgba(248,113,113,0.6);
         }
+        #__ar_ctl {
+          display:flex; align-items:center; flex-shrink:0;
+        }
+        #__ar_pause, #__ar_extend {
+          background:rgba(255,255,255,0.08);
+          color:rgba(255,255,255,0.7);
+          border:1px solid rgba(255,255,255,0.18);
+          border-radius:7px;
+          font-weight:700;
+          cursor:pointer;
+          font-family:inherit;
+          transition:all 0.15s; flex-shrink:0;
+          white-space:nowrap;
+        }
+        #__ar_pause:hover, #__ar_extend:hover {
+          background:rgba(255,255,255,0.16);
+          color:#ffffff;
+          border-color:rgba(255,255,255,0.35);
+        }
         #__ar_body {
           display:flex; flex-direction:column; align-items:center;
           justify-content:center; flex:1; min-height:0;
@@ -197,7 +217,7 @@
            animations. */
         @media (prefers-reduced-motion: reduce) {
           #__ar_dot { animation:none; }
-          #__ar_overlay, #__ar_fill, #__ar_stop, #__ar_resize { transition:none; }
+          #__ar_overlay, #__ar_fill, #__ar_stop, #__ar_pause, #__ar_extend, #__ar_resize { transition:none; }
         }
       `;
       document.head.appendChild(style);
@@ -217,6 +237,42 @@
     labelText.id = '__ar_lbl';
     labelText.textContent = 'Auto Refresh';
 
+    // Quick controls live in a flex group so the three buttons stay grouped at
+    // the right edge with a small gap, while the label keeps ellipsizing on the
+    // left (the drag bar's space-between pushes the group right).
+    const ctl = document.createElement('div');
+    ctl.id = '__ar_ctl';
+
+    // Pause/Resume toggle. data-ar-stop makes the drag-start guard skip it (it
+    // already skips [data-ar-stop]), so a click here never begins a drag.
+    const pauseBtn = document.createElement('button');
+    pauseBtn.id = '__ar_pause';
+    pauseBtn.setAttribute('data-ar-stop', '1');
+    pauseBtn.textContent = paused ? '▶' : '⏸';
+    pauseBtn.setAttribute('aria-label', 'Pause or resume');
+    pauseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (paused) {
+        safeMessage({ type: 'RESUME_JOB', tabId: null });
+        setPaused(false);
+      } else {
+        safeMessage({ type: 'PAUSE_JOB', tabId: null });
+        setPaused(true);
+      }
+    });
+
+    // +30s — push the next refresh out. The background re-sends COUNTDOWN_START
+    // in reply, so the timer updates itself; nothing to reflect locally.
+    const extendBtn = document.createElement('button');
+    extendBtn.id = '__ar_extend';
+    extendBtn.setAttribute('data-ar-stop', '1');
+    extendBtn.textContent = '+30s';
+    extendBtn.setAttribute('aria-label', 'Add 30 seconds');
+    extendBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      safeMessage({ type: 'EXTEND_JOB', tabId: null, ms: 30000 });
+    });
+
     const stopBtn = document.createElement('button');
     stopBtn.id = '__ar_stop';
     stopBtn.setAttribute('data-ar-stop', '1');
@@ -227,10 +283,22 @@
       hideOverlay();
     });
 
+    ctl.appendChild(pauseBtn);
+    ctl.appendChild(extendBtn);
+    ctl.appendChild(stopBtn);
     dragBar.appendChild(dot);
     dragBar.appendChild(labelText);
-    dragBar.appendChild(stopBtn);
+    dragBar.appendChild(ctl);
     overlayEl.appendChild(dragBar);
+
+    // Mirror module state onto the pause button + sublabel. Called by the click
+    // handler and by COUNTDOWN_START/STOPPED resets below (via overlayEl._setPaused).
+    function setPaused(p) {
+      paused = p;
+      pauseBtn.textContent = p ? '▶' : '⏸';
+      if (sublabel) sublabel.textContent = p ? 'paused' : 'until next refresh';
+    }
+    overlayEl._setPaused = setPaused;
 
     // ── Body ──
     const body = document.createElement('div');
@@ -301,6 +369,19 @@
       stopBtn.style.borderRadius = Math.round(s * 0.028) + 'px';
       stopBtn.style.letterSpacing = '0.5px';
       stopBtn.style.lineHeight = '1.5';
+
+      // Quick-control buttons scale with the overlay just like Stop, but stay a
+      // touch more compact so the three fit at the default 240px width.
+      ctl.style.gap = Math.round(s * 0.022) + 'px';
+      const qFont = Math.max(8, Math.round(s * 0.04)) + 'px';
+      const qPad  = Math.round(s * 0.012) + 'px ' + Math.round(s * 0.026) + 'px';
+      const qRad  = Math.round(s * 0.028) + 'px';
+      [pauseBtn, extendBtn].forEach((b) => {
+        b.style.fontSize = qFont;
+        b.style.padding = qPad;
+        b.style.borderRadius = qRad;
+        b.style.lineHeight = '1.5';
+      });
 
       // Body
       const bp = Math.round(s * 0.06);
@@ -692,15 +773,20 @@
   }, true);
 
   // ── Click-to-stop ─────────────────────────────────────────────────────────
-  // When enabled, a left-click anywhere on the page stops the refresh job.
-  // Pass-through: the click is NOT cancelled, so links/buttons still work.
-  // Clicks inside the overlay are ignored — it has its own Stop button.
-  document.addEventListener('click', (e) => {
+  // When enabled, the first press anywhere on the page stops the refresh job.
+  // Listens on `pointerdown` (capture), NOT `click`: a `click` only fires after a
+  // full press+release on the SAME element with no movement, so it silently misses
+  // drags, text selections, and presses on elements that re-render between down and
+  // up (menus, feeds, SPA content) — which is most of why a click "didn't stop it."
+  // `pointerdown` fires on press, every time, and reacts a beat sooner.
+  // Pass-through: the press is NOT cancelled, so links/buttons/selection still work.
+  // Presses inside the overlay are ignored — it has its own Stop button.
+  document.addEventListener('pointerdown', (e) => {
     if (!contextValid || !stopOnClickEnabled) return;
-    if (e.button) return; // left-button only
+    if (e.button || !e.isPrimary) return; // primary button / first touch point only
     if (e.target && e.target.closest && e.target.closest('#__ar_overlay')) return;
     // Stop the job, then disarm only once the stop is acknowledged. Disarming
-    // before the message round-trips could otherwise drop the click silently if
+    // before the message round-trips could otherwise drop the press silently if
     // the send failed. The flag is re-armed on the next COUNTDOWN_START anyway.
     safeMessage({ type: 'STOP_REFRESH', tabId: null }, () => { stopOnClickEnabled = false; });
     hideOverlay();
@@ -767,6 +853,10 @@
             hideOverlay();
           } else {
             ensureOverlay();
+            // A fresh COUNTDOWN_START means a real refresh/resume happened — clear
+            // any local paused state and restore the pause button + sublabel.
+            if (overlayEl && overlayEl._setPaused) overlayEl._setPaused(false);
+            else paused = false;
             startCountdown(msg.nextRefresh, msg.total);
             refreshHint();
           }
@@ -775,6 +865,7 @@
           break;
         case 'STOPPED':
           stopOnClickEnabled = false;
+          paused = false; // so the next overlay starts un-paused (⏸ / "until next refresh")
           hideOverlay();
           sendResponse({ ok: true });
           break;

@@ -41,10 +41,17 @@
       // concatenation ("5" → "51"), corrupting the display AND the stopAfter
       // comparison; a string nextRefresh would feed NaN into the scheduler.
       refreshCount: Number(stored.refreshCount) || 0,
+      keywordCount: Number(stored.keywordCount) || 0, // same coercion; counts keyword alerts
       nextRefresh: Number(stored.nextRefresh) || (now + fallbackInterval),
       alarmName: 'refresh_' + tabId,
       startUrl: opts.startUrl != null ? opts.startUrl : (stored.startUrl || null),
       previousContent: typeof stored.previousContent === 'string' ? stored.previousContent : null,
+      // Adaptive-backoff streak (#8) — coerced like the counts above so a
+      // hand-edited/legacy string can't poison the interval math.
+      _noChangeStreak: Number(stored.noChangeStreak) || 0,
+      // Manual pause (#10) — restore so a paused job stays paused across a worker
+      // restart until an explicit RESUME_JOB.
+      _manualPause: !!stored.manualPause,
       _matcher: opts.matcher,
       _lastRefresh: 0,
       _timer: null,

@@ -3,7 +3,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalize, changedFraction, isMeaningfulChange } = require('../normalize.js');
+const { normalize, changedFraction, isMeaningfulChange, diffTokens } = require('../normalize.js');
 
 // ── normalize ────────────────────────────────────────────────────────────────
 test('normalize collapses whitespace runs and trims', () => {
@@ -75,4 +75,40 @@ test('threshold gates small changes', () => {
   const curr = 'one two three four five six seven eight nine XXX'; // 1/10 tokens differ
   assert.equal(isMeaningfulChange(prev, curr, { minChangedFraction: 0 }), true);
   assert.equal(isMeaningfulChange(prev, curr, { minChangedFraction: 0.5 }), false);
+});
+
+// ── diffTokens ───────────────────────────────────────────────────────────────
+test('diffTokens reports added and removed tokens', () => {
+  const d = diffTokens('in stock $19.99', 'sold out $19.99');
+  assert.deepEqual(d.added.sort(), ['out', 'sold']);
+  assert.deepEqual(d.removed.sort(), ['in', 'stock']);
+  assert.ok(d.summary.includes('+sold'));
+  assert.ok(d.summary.includes('−in') || d.summary.includes('−stock'));
+});
+
+test('diffTokens keeps digits by default (so prices are visible)', () => {
+  const d = diffTokens('price 19', 'price 24');
+  assert.deepEqual(d.added, ['24']);
+  assert.deepEqual(d.removed, ['19']);
+});
+
+test('diffTokens bounds each side to opts.max', () => {
+  const prev = '';
+  const curr = Array.from({ length: 50 }, (_, i) => 'w' + i).join(' ');
+  const d = diffTokens(prev, curr, { max: 5 });
+  assert.equal(d.added.length, 5);
+  assert.equal(d.removed.length, 0);
+});
+
+test('diffTokens caps the rendered summary length', () => {
+  const curr = Array.from({ length: 200 }, (_, i) => 'longtoken' + i).join(' ');
+  const d = diffTokens('', curr, { max: 100 });
+  assert.ok(d.summary.length <= 240, `summary was ${d.summary.length}`);
+});
+
+test('diffTokens coerces non-strings to empty', () => {
+  const d = diffTokens(null, undefined);
+  assert.deepEqual(d.added, []);
+  assert.deepEqual(d.removed, []);
+  assert.equal(d.summary, '');
 });

@@ -12,6 +12,27 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// Derive the short "mode" label for a job from its settings. Order is
+// deliberate: an explicit keyword watch wins, then monitor, then the timer
+// modifiers, falling back to a plain refresh. Returned value is a fixed
+// vocabulary (not page-derived), so it's safe to render without escaping.
+function jobModeLabel(settings) {
+  const s = settings || {};
+  if (typeof s.keyword === 'string' && s.keyword.trim().length > 0) return 'Keyword';
+  if (s.monitorMode) return 'Monitor';
+  if (s.adaptive) return 'Adaptive';
+  if (s.randomTimer) return 'Random';
+  return 'Refresh';
+}
+
+// Human label for why a job is paused. Reason is a fixed background-controlled
+// enum, so the result is a safe constant string.
+function pauseReasonLabel(reason) {
+  if (reason === 'offline') return 'offline';
+  if (reason === 'quiet') return 'quiet hours';
+  return 'manual';
+}
+
 // showToast comes from the shared toast.js (loaded before this script).
 
 // ── Load active jobs ─────────────────────────────────────────────────────
@@ -50,9 +71,13 @@ async function loadJobs() {
 
   // Skip the DOM rebuild when nothing material changed since the last render.
   // The 3s poll would otherwise wipe out keyboard focus / hover on every tick.
+  // Includes paused/snooze/mode so a card actually repaints when those flip —
+  // otherwise the poll would dedup the change away and leave the pill stale.
   const sig = JSON.stringify(tabIds.map(id => [
-    id, jobs[id].refreshCount || 0,
+    id, jobs[id].refreshCount || 0, jobs[id].keywordCount || 0,
     jobs[id].settings.currentInterval || jobs[id].settings.interval,
+    jobs[id].paused, jobs[id].pauseReason, jobs[id].snoozeUntil,
+    jobModeLabel(jobs[id].settings),
   ]));
   if (sig === loadJobs._sig) return;
 
@@ -73,6 +98,25 @@ async function loadJobs() {
     const job = jobs[tabId];
     const intervalSec = Math.round((job.settings.currentInterval || job.settings.interval) / 1000);
 
+    // Keyword-detection tally — only for jobs actually watching a keyword.
+    // keywordCount is a background-controlled number, so it needs no escaping.
+    const hasKeyword = typeof job.settings.keyword === 'string' && job.settings.keyword.trim().length > 0;
+    const keywordPill = hasKeyword
+      ? `<span class="stat-pill">${job.keywordCount || 0} detections</span>`
+      : '';
+
+    // Mode label is a fixed vocabulary string from jobModeLabel — no escaping
+    // needed, but kept consistent with the other controlled-number pills.
+    const modePill = `<span class="stat-pill">${jobModeLabel(job.settings)}</span>`;
+
+    // Paused wins over snoozed; both reasons are fixed enums (safe constants).
+    let statePill = '';
+    if (job.paused) {
+      statePill = `<span class="stat-pill paused-badge">⏸ Paused — ${pauseReasonLabel(job.pauseReason)}</span>`;
+    } else if (job.snoozeUntil) {
+      statePill = `<span class="stat-pill paused-badge">🔕 Snoozed</span>`;
+    }
+
     // tab.favIconUrl is controlled by the visited (possibly hostile) page. Only
     // render it when it's a safe http(s) or validated raster-image data: URL;
     // anything else (javascript:, file:, svg, oversized/corrupt data:) falls back
@@ -90,8 +134,11 @@ async function loadJobs() {
       </div>
       <div class="tab-stats">
         <span class="stat-pill active-badge">ACTIVE</span>
+        ${modePill}
+        ${statePill}
         <span class="stat-pill">Every ${intervalSec}s</span>
         <span class="stat-pill">${job.refreshCount || 0} refreshes</span>
+        ${keywordPill}
       </div>
       <div class="tab-actions">
         <button class="btn-sm btn-sm-go" data-id="${escapeHtml(tabId)}">Go to Tab</button>
@@ -247,6 +294,136 @@ document.getElementById('addRule').addEventListener('click', async () => {
   loadRules();
 });
 
+// ── Recent Alerts log ────────────────────────────────────────────────────
+// The background persists a ring buffer at `alertLog` (newest at the END) plus
+// an `unackedAlerts` counter that drives the toolbar badge. Every field below
+// (title/url/keyword/snippet) originates from arbitrary visited pages, so each
+// is escaped before it touches innerHTML.
+const ALERT_RENDER_CAP = 200;
+
+async function loadAlerts() {
+  const { alertLog = [] } = await chrome.storage.local.get('alertLog');
+  const list = document.getElementById('alertList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (!Array.isArray(alertLog) || alertLog.length === 0) {
+    list.innerHTML = `<div class="alert-empty">No alerts yet</div>`;
+    return;
+  }
+
+  // Newest first, capped so a large log can't blow up the DOM.
+  const rows = alertLog.slice(-ALERT_RENDER_CAP).reverse();
+  rows.forEach(entry => {
+    if (!entry || typeof entry !== 'object') return;
+    const when = Number.isFinite(entry.ts) ? new Date(entry.ts).toLocaleString() : '';
+    const typeLabel = entry.type === 'kw' ? 'Keyword' : 'Change';
+    const heading = entry.title || entry.url || '(no title)';
+    const detail = entry.type === 'kw' ? (entry.keyword || '') : (entry.snippet || '');
+    const div = document.createElement('div');
+    div.className = 'alert-item';
+    div.innerHTML = `
+      <div class="alert-main">
+        <div class="alert-meta">
+          <span class="stat-pill">${escapeHtml(typeLabel)}</span>
+          <span class="alert-time">${escapeHtml(when)}</span>
+        </div>
+        <div class="alert-title">${escapeHtml(heading)}</div>
+        <div class="alert-url">${escapeHtml(entry.url || '')}</div>
+        ${detail ? `<div class="alert-detail">${escapeHtml(detail)}</div>` : ''}
+      </div>
+      <div class="tab-actions">
+        <button class="btn-sm btn-sm-go alert-go" data-id="${escapeHtml(entry.tabId)}" aria-label="Go to tab for this alert">Go to tab</button>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+
+  // The originating tab may be gone — update() rejects on a stale id, so guard it.
+  list.querySelectorAll('.alert-go').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.id);
+      if (!Number.isInteger(id)) return;
+      try {
+        chrome.tabs.update(id, { active: true });
+      } catch (e) { /* tab gone — nothing to focus */ }
+    });
+  });
+}
+
+document.getElementById('clearAlertsBtn').addEventListener('click', async () => {
+  // Route through the worker's CLEAR_ALERTS handler so the clear goes through the
+  // same alertLogMutex as logAlert — a blind storage.set here would race an
+  // in-flight alert write. The worker's storage write then drives the badge
+  // (its storage.onChanged) and our own onChanged listener re-renders the list.
+  await chrome.runtime.sendMessage({ type: 'CLEAR_ALERTS' });
+  loadAlerts();
+  showToast('Alerts cleared.', false);
+});
+
+document.getElementById('exportAlertsBtn').addEventListener('click', async () => {
+  const { alertLog = [] } = await chrome.storage.local.get('alertLog');
+  const blob = new Blob([JSON.stringify(alertLog, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'auto-refresh-pro-alerts.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Alerts exported.', false);
+});
+
+// ── Domain denylist ──────────────────────────────────────────────────────
+async function loadDenylist() {
+  const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+  const list = document.getElementById('denyList');
+  if (!list) return;
+  list.innerHTML = '';
+  domainDenylist.forEach(pattern => {
+    if (typeof pattern !== 'string') return;
+    const div = document.createElement('div');
+    div.className = 'autostart-item';
+    div.innerHTML = `
+      <span class="autostart-url">${escapeHtml(pattern)}</span>
+      <button class="autostart-remove deny-remove" data-pattern="${escapeHtml(pattern)}" aria-label="Remove ${escapeHtml(pattern)}" title="Remove">✕</button>
+    `;
+    list.appendChild(div);
+  });
+
+  // Remove by VALUE, not render-time index (same rationale as the URL-rules list).
+  list.querySelectorAll('.deny-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+      const idx = domainDenylist.indexOf(btn.dataset.pattern);
+      if (idx !== -1) {
+        domainDenylist.splice(idx, 1);
+        await chrome.storage.local.set({ domainDenylist });
+      }
+      loadDenylist();
+    });
+  });
+}
+
+document.getElementById('addDeny').addEventListener('click', async () => {
+  const value = document.getElementById('denyPattern').value.trim().toLowerCase();
+  if (!value) return;
+  if (!ARPValidators.isSafeDenyPattern(value)) {
+    showToast('Invalid domain pattern. Use e.g. *.bank.com', true);
+    return;
+  }
+  const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+  if (domainDenylist.length >= ARPValidators.MAX_DENYLIST) {
+    showToast('Too many entries (max ' + ARPValidators.MAX_DENYLIST + ').', true);
+    return;
+  }
+  domainDenylist.push(value);
+  // sanitizeDenylist trims/lowercases, drops invalid, dedupes, and caps length —
+  // store the canonical array so the editor and the worker agree on the shape.
+  const cleaned = ARPValidators.sanitizeDenylist(domainDenylist);
+  await chrome.storage.local.set({ domainDenylist: cleaned });
+  document.getElementById('denyPattern').value = '';
+  loadDenylist();
+});
+
 // ── Stop all ─────────────────────────────────────────────────────────────
 document.getElementById('stopAllBtn').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'STOP_ALL' });
@@ -313,6 +490,15 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
 loadJobs();
 loadAutoStart();
 loadRules();
+loadAlerts();
+loadDenylist();
+
+// Re-render the alert log when the background pushes a new entry (or it's
+// cleared from another Manage window). Scoped to the 'local' area and the
+// alertLog key so unrelated writes don't trigger a rebuild.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.alertLog) loadAlerts();
+});
 // Slow backstop poll. The _sig guard in loadJobs already skips the DOM rebuild +
 // per-tab tabs.get when nothing changed, so the only residual per-poll cost is
 // the GET_ALL_JOBS round-trip (which wakes the worker). This page isn't usually
