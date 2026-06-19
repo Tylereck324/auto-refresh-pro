@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Refresh Pro",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Auto refresh pages with custom intervals, page monitoring, keyword detection, and more.",
   "permissions": [
     "storage",
