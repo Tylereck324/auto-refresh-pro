@@ -8,6 +8,7 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 - **Keyword detection** — plays a sound alert and optionally stops when a word/phrase (or comma-separated list, whole-word, case-sensitive, or regex) appears on the page; an inverse mode alerts when it *disappears*
 - **Page change monitoring** — detects when page content changes between refreshes, and reports a short token diff of *what* changed
 - **Scoped detection** — an optional CSS selector limits keyword/change detection to a single element (e.g. `#price`, `.stock-status`) so a one-word change isn't drowned out by unrelated page churn
+- **Per-item detection** — with a selector set, treat each matched element as a separate item and alert on *every new match* (e.g. each new listing in a feed), not just the first page-level appearance — so arrivals aren't missed while earlier matches stay on screen
 - **Noise-tolerant change detection** — optionally ignore whitespace/digit churn (clocks, counters, ads) and require a minimum changed fraction before alerting
 - **Alert journal** — a persistent, exportable log of every keyword/change detection (timestamp, tab, what changed), viewable on the Manage page; the toolbar badge shows a live job count and an unacknowledged-alert count
 - **Actionable notifications** — keyword/change desktop notifications carry **Stop** and **Snooze 15m** buttons
@@ -100,4 +101,4 @@ npm run lint # syntax-check all JS + verify manifest/CSP/script references resol
 
 - Sound alerts use Chrome's [Offscreen API](https://developer.chrome.com/docs/extensions/reference/offscreenDocuments/) to bypass autoplay restrictions — requires Chrome 116+
 - The extension stops automatically when you navigate to a different URL in the same tab
-- Keyword detection compares page content between cycles — it only alerts when the keyword *appears* (absent → present transition), not on every cycle it's present
+- Keyword detection compares page content between cycles — by default it only alerts when the keyword *appears* (absent → present transition), not on every cycle it's present. With **per-item detection** (a selector + "Alert on each new match"), it instead diffs the *set* of matching items each cycle and alerts on each newly-arrived one, so a fresh match still fires while earlier matches remain on screen

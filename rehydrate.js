@@ -46,6 +46,11 @@
       alarmName: 'refresh_' + tabId,
       startUrl: opts.startUrl != null ? opts.startUrl : (stored.startUrl || null),
       previousContent: typeof stored.previousContent === 'string' ? stored.previousContent : null,
+      // Per-item detection baseline (the seen matching-item keys). Restored so a
+      // mid-session worker restart resumes diffing against items already seen
+      // instead of re-alerting for all of them. Non-array (legacy / hand-edited)
+      // degrades to null = no baseline, skipping one cycle rather than corrupting.
+      _seenKeys: Array.isArray(stored.seenKeys) ? stored.seenKeys : null,
       // Adaptive-backoff streak (#8) — coerced like the counts above so a
       // hand-edited/legacy string can't poison the interval math.
       _noChangeStreak: Number(stored.noChangeStreak) || 0,

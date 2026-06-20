@@ -506,6 +506,8 @@
       kwWholeWord: !!s.kwWholeWord,
       kwRegex,
       kwInverse: !!s.kwInverse,
+      // Per-item detection (alert on each new matching item; needs watchSelector).
+      kwPerItem: !!s.kwPerItem,
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       // Click-to-stop. Carried so a rule-started job honors it like a popup- or

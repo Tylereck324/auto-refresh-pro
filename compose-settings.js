@@ -80,6 +80,11 @@
       kwWholeWord: !!s.kwWholeWord,
       kwRegex: !!s.kwRegex,
       kwInverse: !!s.kwInverse,
+      // Per-item detection: alert on each NEW matching item (vs. once per
+      // page-level appear). Only takes effect with a watchSelector set — each
+      // matched element is one item — but carried unconditionally so the toggle
+      // round-trips even if the selector is added later.
+      kwPerItem: !!s.kwPerItem,
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       beepUntilAck: !!s.beepUntilAck,

@@ -144,7 +144,7 @@ function bindEvents() {
 
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
-   'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
+   'optKwCase','optKwWhole','optKwRegex','optKwInverse','optKwPerItem','optBeepUntilAck',
    'optFlashOnKeyword','optWatchSelector',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
@@ -322,6 +322,22 @@ function validateSelector() {
   }
   input.classList.toggle('invalid', bad);
   if (hint) hint.classList.toggle('show', bad);
+  updatePerItemEnabled(val.length > 0 && !bad);
+}
+
+// Per-item detection needs a (valid) selector to define item boundaries, so the
+// toggle is disabled until one is entered. Disabling also visually dims it (the
+// kw-flag picks up :disabled styling) and the "enter a selector" hint shows.
+function updatePerItemEnabled(hasSelector) {
+  const cb   = document.getElementById('optKwPerItem');
+  const flag = document.getElementById('perItemFlag');
+  const hint = document.getElementById('perItemHint');
+  if (!cb) return;
+  cb.disabled = !hasSelector;
+  if (flag) flag.style.opacity = hasSelector ? '' : '0.5';
+  // Show the "enter a selector" hint only when the box is ticked but unusable, so
+  // an enabled per-item alert isn't silently inert.
+  if (hint) hint.classList.toggle('show', !hasSelector && cb.checked);
 }
 
 // Editing the random range is part of the same live-apply contract as the
@@ -449,6 +465,7 @@ function readPopupState() {
     kwWholeWord: el('optKwWhole').checked,
     kwRegex: el('optKwRegex').checked,
     kwInverse: el('optKwInverse').checked,
+    kwPerItem: el('optKwPerItem').checked,
     stopOnKeyword: el('optStopOnKeyword').checked,
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
@@ -721,6 +738,7 @@ function loadSettings() {
       setCheckbox('optKwWhole', s.kwWholeWord);
       setCheckbox('optKwRegex', s.kwRegex);
       setCheckbox('optKwInverse', s.kwInverse);
+      setCheckbox('optKwPerItem', s.kwPerItem);
       setCheckbox('optBeepUntilAck', s.beepUntilAck);
       setCheckbox('optFlashOnKeyword', s.flashOnKeyword);
       setCheckbox('optAdaptive', s.adaptive);

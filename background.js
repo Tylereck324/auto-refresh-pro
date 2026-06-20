@@ -7,6 +7,8 @@ importScripts('validators.js');
 importScripts('interval.js');
 // Pure keyword-matching logic (ARPKeyword.compileMatcher).
 importScripts('keyword-match.js');
+// Pure per-item ("alert on each new match") detection helpers (ARPItemDetect).
+importScripts('item-detect.js');
 // Pure text-normalization for noise-tolerant change detection (ARPNormalize).
 importScripts('normalize.js');
 // Pure notification-id encode/decode (ARPNotif) for click-to-focus-tab.
@@ -561,13 +563,40 @@ async function doRefresh(tabId, job) {
 // timer ticks every second and would otherwise be read as a "page change".
 // The overlay is detached only for the synchronous innerText read, then restored
 // in the same call, so there is no visible flicker.
-function readPageText(selector) {
-  if (!document.body) return '';
+//
+// Returns a STRING normally. When `perItem` is set (per-item detection) AND a
+// selector is given, returns an ARRAY instead — one entry per matched element —
+// so the background can diff WHICH matching items are present between cycles
+// rather than collapsing them into one blob. The caller knows which it requested.
+function readPageText(selector, perItem) {
+  if (!document.body) return perItem ? [] : '';
   const ov = document.getElementById('__ar_overlay');
   let parent = null, next = null;
   if (ov) { parent = ov.parentNode; next = ov.nextSibling; ov.remove(); }
-  let text;
-  if (selector && typeof selector === 'string') {
+
+  // (Inlined as literals: an executeScript func can't close over an outer const.)
+  const MAX_PAGE_TEXT = 200000; // bound on the joined/body string (see note below)
+  let result;
+
+  if (perItem && selector && typeof selector === 'string') {
+    // Per-item read: ONE entry per matched element, so the background can track
+    // the set of matching items and alert on each NEW one. Both the item COUNT
+    // and each item's LENGTH are bounded, so a broad selector ("li" on an endless
+    // feed) can't blow up the structure-cloned message or the persisted seen-set.
+    // Invalid CSS throws here and degrades to an empty list, which callers treat
+    // as "no read this cycle" (skip detection, keep the baseline) — same policy
+    // as the scoped string read below.
+    const items = [];
+    try {
+      const nodes = document.querySelectorAll(selector);
+      const MAX_ITEMS = 500, MAX_ITEM_LEN = 4000;
+      for (let i = 0; i < nodes.length && items.length < MAX_ITEMS; i++) {
+        const t = nodes[i].innerText || nodes[i].textContent || '';
+        if (t) items.push(t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t);
+      }
+    } catch (e) { /* invalid selector → empty list (skip), never throw */ }
+    result = items;
+  } else if (selector && typeof selector === 'string') {
     // Scoped read (#4 CSS-selector detection): read only the matched region(s)
     // so all downstream detection (keyword match, change diff, noise tolerance,
     // minChangedFraction) runs against just that text instead of the whole body
@@ -584,15 +613,16 @@ function readPageText(selector) {
         const t = nodes[i].innerText || nodes[i].textContent || '';
         if (t) parts.push(t);
       }
-      text = parts.join('\n');
+      result = parts.join('\n');
     } catch (e) {
-      text = ''; // invalid selector → treat as empty read (skip), never throw
+      result = ''; // invalid selector → treat as empty read (skip), never throw
     }
   } else {
-    text = document.body.innerText || '';
+    result = document.body.innerText || '';
   }
+
   if (ov && parent) parent.insertBefore(ov, next);
-  // Bound the returned text. innerText on an infinite-scroll / pathological page
+  // Bound the returned string. innerText on an infinite-scroll / pathological page
   // can be many MB; that full payload is structure-cloned out of the page on
   // every cycle, held resident in job.previousContent, and (for monitor jobs)
   // persisted to storage as the cross-restart baseline. The cap matches the
@@ -600,21 +630,90 @@ function readPageText(selector) {
   // both 200k), so detection is unchanged for any page those paths could see
   // anyway, while a runaway page can't blow up worker memory, message
   // serialization, or the per-cycle storage write. Change detection beyond the
-  // cap is out of scope by design. (Inlined as a literal: an executeScript func
-  // can't close over an outer const.)
-  const MAX_PAGE_TEXT = 200000;
-  return text.length > MAX_PAGE_TEXT ? text.slice(0, MAX_PAGE_TEXT) : text;
+  // cap is out of scope by design. (The per-item array is bounded separately above.)
+  if (typeof result === 'string' && result.length > MAX_PAGE_TEXT) {
+    result = result.slice(0, MAX_PAGE_TEXT);
+  }
+  return result;
+}
+
+// Deliver a keyword alert through every channel — journal + unacked badge,
+// webhook, sound, desktop notification, screen-edge flash — and apply
+// stop-on-keyword. Shared by the page-level boolean path and the per-item path so
+// both stay in lockstep. Returns true if the job was STOPPED (the caller must
+// then return without reloading). opts:
+//   count   — how many hits this cycle (per-item: number of new matches; bumps
+//             keywordCount by this much). Default 1 = the boolean path's behavior.
+//   message — desktop-notification body (default: the classic single-keyword line).
+//   snippet — short note for the alert journal (per-item: "3 new").
+async function deliverKeywordAlert(tabId, job, muted, opts) {
+  opts = opts || {};
+  const count = opts.count || 1;
+  // Running tally surfaced next to the refresh count in the popup. Bumped before
+  // the stopOnKeyword early-return so a stop-on-hit cycle still counts the hit.
+  job.keywordCount = (job.keywordCount || 0) + count;
+  job._changedThisCycle = true; // adaptive backoff: snap back to the fast base
+  // Journal + unacked badge — independent of delivery suppression, so a muted
+  // overnight hit is still captured.
+  const meta = await tabMeta(tabId);
+  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' });
+  // Outbound webhook (not awaited: its internal fetch is timed-out, and blocking
+  // the reload on a slow endpoint would stall the cycle).
+  if (!muted('notify')) sendWebhook(job, { type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount });
+  if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
+  const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
+  if (!muted('notify')) notify('kw', tabId, {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: 'Keyword Detected!',
+    message: opts.message || ('"' + job.settings.keyword + '" ' + verb + ' page!'),
+    requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
+    buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
+  });
+  // Screen-edge flash: with stopOnKeyword the page stays put, so flash the
+  // still-live content script now. Otherwise the reload below would destroy the
+  // flash mid-animation — defer it until after doRefresh (see _pendingFlash).
+  // Muted-flash collapses to flashOnKeyword=false ⇒ computeFlashDelivery 'none'.
+  const flashPlan = ARPMonitor.computeFlashDelivery({
+    fired: true,
+    flashOnKeyword: job.settings.flashOnKeyword && !muted('flash'),
+    stopOnKeyword: job.settings.stopOnKeyword,
+  });
+  if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
+  else if (flashPlan === 'after-reload') job._pendingFlash = true;
+  if (job.settings.stopOnKeyword) {
+    await stopRefresh(tabId);
+    return true;
+  }
+  if (!muted('sound')) startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
+  return false;
+}
+
+// Desktop-notification body for a per-item batch: "3 new matches for '…'" (or
+// "…disappeared" in inverse mode). Distinct from the boolean path's single-line
+// message so the user can tell a fresh-arrival alert from a page-level one.
+function perItemMessage(settings, count) {
+  const kw = settings.keyword || 'match';
+  const noun = count === 1 ? 'match' : 'matches';
+  return settings.kwInverse
+    ? (count + ' ' + noun + ' for "' + kw + '" disappeared')
+    : (count + ' new ' + noun + ' for "' + kw + '"');
 }
 
 async function doMonitorRefresh(tabId, job) {
   // Step 1: Read current page content BEFORE reloading.
   // Sound must also fire BEFORE reload — the content script is destroyed during navigation.
+  // Per-item detection ("alert on each new match") needs a keyword AND a selector
+  // (each matched element is one item); when on, readPageText returns one entry
+  // per element instead of a single blob so we can diff which items are present.
+  const perItem = !!(job.settings.kwPerItem && job.settings.watchSelector &&
+    typeof job.settings.keyword === 'string' && job.settings.keyword.trim());
   let results;
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
       func: readPageText,
-      args: [job.settings.watchSelector || ''], // scoped detection ('' = whole body)
+      args: [job.settings.watchSelector || '', perItem], // scoped detection ('' = whole body)
     });
   } catch (e) {
     // Page won't script (chrome://, web store, error page, hang). Count it so the
@@ -659,6 +758,40 @@ async function doMonitorRefresh(tabId, job) {
   const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
   const hasKeyword = matcher.ok && !matcher.empty;
 
+  // ── Per-item detection ("alert on each new match") ──
+  // currentContent is the per-element array from the perItem read. Rather than a
+  // page-level absent→present boolean, diff the SET of matching item keys against
+  // last cycle's set and alert on each NEW one (or each DEPARTED one in inverse
+  // mode) — so a fresh matching card fires even while earlier matches stay on
+  // screen. job._seenKeys is the baseline (persisted across worker restarts); a
+  // null set means "no baseline yet" and never fires (cycle 1). Taken whenever the
+  // read was per-item, so the item array never flows into the string path below.
+  if (perItem) {
+    if (hasKeyword) {
+      const items = Array.isArray(currentContent) ? currentContent : [];
+      const currKeys = ARPItemDetect.collectMatches(items, matcher);
+      const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+      const newKeys = prevKeys
+        ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
+        : [];
+      job._seenKeys = currKeys;   // advance the baseline every cycle
+      job.previousContent = null; // per-item uses _seenKeys, not the flat snapshot
+      if (newKeys.length > 0) {
+        const stopped = await deliverKeywordAlert(tabId, job, muted, {
+          count: newKeys.length,
+          message: perItemMessage(job.settings, newKeys.length),
+          snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
+        });
+        if (stopped) return; // stopOnKeyword stopped the job — no reload
+      }
+    }
+    // Reload + deliver any deferred (after-reload) flash, mirroring the tail of
+    // the string path below.
+    await doRefresh(tabId, job);
+    if (job._pendingFlash) { job._pendingFlash = false; sendKeywordFlash(tabId, 0); }
+    return;
+  }
+
   // ── Keyword detection ──
   // Alert on a transition between cycles: absent→present normally, or
   // present→absent in inverse mode ("alert when the keyword disappears").
@@ -680,46 +813,10 @@ async function doMonitorRefresh(tabId, job) {
     });
 
     if (fired) {
-      // Running tally of keyword alerts (absent→present, or present→absent in
-      // inverse mode), surfaced next to the refresh count in the popup. Bumped
-      // before the stopOnKeyword early-return below so a stop-on-hit cycle still
-      // counts the hit that stopped it.
-      job.keywordCount = (job.keywordCount || 0) + 1;
-      job._changedThisCycle = true; // adaptive backoff: snap back to the fast base
-      // Persist to the alert journal + bump the unacked badge — independent of
-      // any delivery suppression, so a muted overnight hit is still captured.
-      const meta = await tabMeta(tabId);
-      await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword });
-      // Outbound webhook (not awaited: its internal fetch is timed-out, and
-      // blocking the reload on a slow endpoint would stall the cycle).
-      if (!muted('notify')) sendWebhook(job, { type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount });
-      if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
-      const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
-      if (!muted('notify')) notify('kw', tabId, {
-        type: 'basic',
-        iconUrl: 'icons/icon48.png',
-        title: 'Keyword Detected!',
-        message: '"' + job.settings.keyword + '" ' + verb + ' page!',
-        requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
-        buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
-      });
-      // Screen-edge flash: with stopOnKeyword the page stays put, so flash the
-      // still-live content script now. Otherwise the reload below would destroy
-      // the flash mid-animation — defer it until after doRefresh (see the
-      // _pendingFlash consumption at the end of this function). Muted-flash
-      // collapses to flashOnKeyword=false ⇒ computeFlashDelivery returns 'none'.
-      const flashPlan = ARPMonitor.computeFlashDelivery({
-        fired,
-        flashOnKeyword: job.settings.flashOnKeyword && !muted('flash'),
-        stopOnKeyword: job.settings.stopOnKeyword,
-      });
-      if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
-      else if (flashPlan === 'after-reload') job._pendingFlash = true;
-      if (job.settings.stopOnKeyword) {
-        await stopRefresh(tabId);
-        return;
-      }
-      if (!muted('sound')) startAckBeeps(tabId); // repeat beep until acknowledged (if enabled)
+      // Page-level hit: one alert via the shared deliverer (count 1, classic
+      // single-keyword message). stopOnKeyword returns true → stop, no reload.
+      const stopped = await deliverKeywordAlert(tabId, job, muted);
+      if (stopped) return;
     }
   }
 
@@ -821,20 +918,39 @@ async function startRefresh(tabId, settings) {
     }
   }
 
+  // Compiled once here so the per-item baseline below and the job's cached
+  // _matcher share one compile.
+  const matcher = buildMatcher(settings);
+  // Per-item baseline: seed the seen-set so cycle 1 doesn't alert for every
+  // matching item already present at start (mirrors previousContent's role).
+  const perItem = !!(settings.kwPerItem && settings.watchSelector &&
+    typeof settings.keyword === 'string' && settings.keyword.trim());
+  let initialSeenKeys = null;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: readPageText,
-      args: [settings.watchSelector || ''], // scoped baseline read ('' = whole body)
+      args: [settings.watchSelector || '', perItem], // scoped baseline read ('' = whole body)
     });
     const raw = results && results[0] && results[0].result;
-    // Only use as baseline if we got real content (non-empty).
-    // If empty/null, leave previousContent as null — the keyword check
-    // will skip alerting on cycle 1 and wait for cycle 2 when the page
-    // has had a chance to fully render.
-    initialContent = (raw && raw.length > 0) ? raw : null;
+    if (perItem) {
+      // ≥1 item read ⇒ a real baseline — even if nothing matches yet ([]), that's
+      // a genuine "nothing present at start" so a later arrival fires. Zero items
+      // (couldn't read / not rendered) ⇒ null = skip cycle 1, same as below.
+      const items = Array.isArray(raw) ? raw : [];
+      if (items.length > 0) {
+        initialSeenKeys = (matcher.ok && !matcher.empty)
+          ? ARPItemDetect.collectMatches(items, matcher) : [];
+      }
+    } else {
+      // Only use as baseline if we got real content (non-empty).
+      // If empty/null, leave previousContent as null — the keyword check
+      // will skip alerting on cycle 1 and wait for cycle 2 when the page
+      // has had a chance to fully render.
+      initialContent = (raw && raw.length > 0) ? raw : null;
+    }
   } catch (e) {
-    initialContent = null; // not scriptable — skip alert on first cycle
+    initialContent = null; // not scriptable — skip alert on first cycle (seenKeys stays null too)
   }
 
   activeJobs[tabId] = {
@@ -845,7 +961,8 @@ async function startRefresh(tabId, settings) {
     alarmName: `refresh_${tabId}`,
     startUrl,
     previousContent: initialContent,  // null = no baseline yet, skip first cycle
-    _matcher: buildMatcher(settings), // compiled once; reused every cycle
+    _seenKeys: initialSeenKeys,       // per-item baseline (null = no baseline yet)
+    _matcher: matcher,                // compiled once; reused every cycle
     _lastRefresh: 0,                  // no refresh has fired yet
     _timer: null,                     // short-interval setTimeout handle
   };
@@ -1002,6 +1119,11 @@ async function saveJobToStorage(tabId, settings) {
       startUrl: (job && job.startUrl) || null, // navigate-away baseline across restarts
       previousContent: (monitors && job && typeof job.previousContent === 'string')
         ? job.previousContent : null, // keyword/change baseline across restarts
+      // Per-item detection baseline: the seen matching-item keys, so a worker
+      // restart mid-session doesn't re-alert for every item already on the page.
+      // Keys are short hashes; cap the count to bound the write (readPageText
+      // already caps items at 500, so this is just defense in depth).
+      seenKeys: (job && Array.isArray(job._seenKeys)) ? job._seenKeys.slice(0, 1000) : null,
       // Adaptive-backoff streak (#8): persist so the ramp resumes at the right
       // step after a worker restart at long (alarm-driven) intervals, instead of
       // snapping back to the fast base every time the worker idles out.
@@ -1340,6 +1462,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job.nextRefresh = Date.now() + newInterval;
         job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
         job._prevFound = undefined; // cached verdict is for the OLD matcher — re-judge
+        // Per-item seen-set is keyed by the OLD keyword/selector; a changed
+        // keyword would make every new-keyword match look "new" and fire a burst.
+        // Drop it so the next cycle re-establishes a fresh baseline (no fire),
+        // mirroring the _prevFound reset above.
+        job._seenKeys = null;
         job._epoch = (job._epoch || 0) + 1; // invalidate any in-flight cycle's reschedule
 
         // Reschedule with the right mechanism for the new interval

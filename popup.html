@@ -821,6 +821,14 @@
         <div class="field-label field-subhead">WATCH ONLY THIS ELEMENT — CSS SELECTOR (OPTIONAL)</div>
         <input class="keyword-input" type="text" id="optWatchSelector" placeholder="e.g. #price, .stock-status" aria-label="CSS selector to scope detection" style="width:100%;">
         <div class="kw-regex-hint" id="selectorHint">Invalid CSS selector — watching the whole page.</div>
+        <!-- Per-item detection: treat each element the selector matches as a
+             separate item and alert on every NEW match (e.g. each new listing),
+             not just the first page-level appearance. Needs a selector to define
+             item boundaries — disabled until one is entered. -->
+        <label class="kw-flag kw-flag-wide" id="perItemFlag" style="margin-top:10px;" title="Needs a selector. Treats each matched element as a separate item and alerts on every NEW match — e.g. each new listing — instead of only the first appearance.">
+          <input type="checkbox" id="optKwPerItem"> Alert on each new match (per item)
+        </label>
+        <div class="kw-regex-hint" id="perItemHint" style="margin-top:2px;">Enter a CSS selector above to enable per-item alerts.</div>
       </div>
 
     </div>
