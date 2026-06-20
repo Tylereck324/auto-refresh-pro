@@ -118,6 +118,9 @@ function bindEvents() {
   // is flagged (and refused) before it can be saved or started.
   document.getElementById('optKeyword').addEventListener('input', validateKeywordRegex);
   document.getElementById('optKwRegex').addEventListener('change', validateKeywordRegex);
+  // The per-item toggle's "needs a selector" hint is keyword-aware (it only nudges
+  // while keyword detection is in use), so refresh it as the keyword changes too.
+  document.getElementById('optKeyword').addEventListener('input', validateSelector);
 
   // Adaptive backoff is mutually exclusive with Randomize (one fixed-ish base
   // interval to ramp vs. a re-rolled random range). Toggling one clears the other,
@@ -335,9 +338,12 @@ function updatePerItemEnabled(hasSelector) {
   if (!cb) return;
   cb.disabled = !hasSelector;
   if (flag) flag.style.opacity = hasSelector ? '' : '0.5';
-  // Show the "enter a selector" hint only when the box is ticked but unusable, so
-  // an enabled per-item alert isn't silently inert.
-  if (hint) hint.classList.toggle('show', !hasSelector && cb.checked);
+  // Explain the disabled state: per-item needs a selector for item boundaries.
+  // Surface the "enter a selector" nudge whenever the box is disabled while the
+  // user is actually doing keyword detection (or has ticked it) — otherwise a
+  // greyed checkbox reads as "the keyword disabled this", which it didn't.
+  const hasKeyword = document.getElementById('optKeyword').value.trim().length > 0;
+  if (hint) hint.classList.toggle('show', !hasSelector && (hasKeyword || cb.checked));
 }
 
 // Editing the random range is part of the same live-apply contract as the
