@@ -37,7 +37,8 @@ const EXPECTED_KEYS = [
   'stopAfter', 'soundVolume', 'soundTone', 'soundRepeat', 'randomTimer',
   'randomMin', 'randomMax', 'stopOnClick', 'sound', 'monitorMode', 'noiseTolerant',
   'collapseDigits', 'minChangedFraction', 'keyword', 'kwCaseSensitive',
-  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'stopOnKeyword', 'stopOnChange',
+  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'domWatch',
+  'domWatchInterval', 'stopOnKeyword', 'stopOnChange',
   'beepUntilAck', 'flashOnKeyword', 'watchSelector', 'adaptive', 'adaptiveMax',
   'webhookUrl', 'webhookFormat', 'quietHours', 'currentInterval',
 ].sort();
@@ -104,6 +105,17 @@ test('per-launch flags map straight through from popup state', () => {
   assert.equal(out.kwPerItem, true);
   assert.equal(out.kwExclude, '1 place');
   assert.equal(out.keyword, 'price');
+});
+
+test('live watch: flag maps through; interval is clamped to [2s, 20s], default 4s', () => {
+  const at = (v) => composeJobSettings(popupState({ domWatch: true, domWatchInterval: v }), globals());
+  assert.equal(at(4000).domWatch, true);
+  assert.equal(at(4000).domWatchInterval, 4000);
+  assert.equal(at(500).domWatchInterval, 2000);      // below floor → floored
+  assert.equal(at(60000).domWatchInterval, 20000);   // above ceiling → capped
+  assert.equal(at(undefined).domWatchInterval, 4000);// absent → default
+  assert.equal(at('junk').domWatchInterval, 4000);   // garbage → default
+  assert.equal(composeJobSettings({}, {}).domWatch, false); // off by default
 });
 
 test('flashOnKeyword defaults off when absent from popup state', () => {

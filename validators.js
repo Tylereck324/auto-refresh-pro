@@ -511,6 +511,9 @@
       // Per-item exclusion terms. Always matched as LITERAL whole words by the
       // background (never regex), so length is the only thing to bound here.
       kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, MAX_KEYWORD_LEN) : '',
+      // Live watch: bounds mirror compose-settings / background DOM_SCAN_*.
+      domWatch: !!s.domWatch,
+      domWatchInterval: num(s.domWatchInterval, 2000, 20000, 4000),
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       // Click-to-stop. Carried so a rule-started job honors it like a popup- or

@@ -467,13 +467,17 @@ async function fireRefresh(tabId) {
     : (isOffline() ? 'offline' : null);
   if (pauseReason) {
     job._pauseReason = pauseReason;
+    // Disarm the live-watch chain too — its ticks would otherwise keep the MV3
+    // worker awake all night for a job that is deliberately dormant. Re-armed
+    // on the resume edge below (and by RESUME_JOB for manual pauses).
+    clearDomScan(job);
     const recheck = Math.min(curInterval, pauseReason === 'offline' ? 60000 : PAUSE_RECHECK_MS);
     job.nextRefresh = now + recheck;
     scheduleNext(tabId, recheck);
     broadcastStatus();
     return;
   }
-  if (job._pauseReason) { job._pauseReason = null; broadcastStatus(); } // resumed
+  if (job._pauseReason) { job._pauseReason = null; scheduleDomScan(tabId); broadcastStatus(); } // resumed
 
   // Backstop dedup: if a setTimeout tick already refreshed within this interval,
   // a coincident backstop-alarm fire must not double-refresh. Re-arm and bail.
@@ -496,6 +500,9 @@ async function fireRefresh(tabId) {
   const hasMonitor = job.settings.monitorMode;
   job._changedThisCycle = false; // doMonitorRefresh flips this when an alert fires
 
+  // Flag the cycle's detection window so an overlapping live-watch tick skips
+  // its (redundant) read — this cycle's read is strictly fresher.
+  job._detectionBusy = true;
   try {
     if (hasKeyword || hasMonitor) {
       await doMonitorRefresh(tabId, job);
@@ -505,6 +512,12 @@ async function fireRefresh(tabId) {
   } catch (e) {
     console.warn('Refresh error on tab', tabId, e);
   }
+  job._detectionBusy = false;
+  // Re-arm live watch every active cycle (idempotent — scheduleDomScan clears
+  // before arming, so chains never multiply). This is the self-heal for chain
+  // deaths with no resume edge of their own: a transient-offline tick, or a
+  // worker kill whose revival path skipped rehydrateJob (job still in memory).
+  scheduleDomScan(tabId);
 
   // Compute the NEXT interval AFTER detection ran, so adaptive backoff (#8) can
   // read this cycle's outcome (job._changedThisCycle) and the failure backoff
@@ -752,6 +765,124 @@ function perItemMessage(settings, count) {
   return settings.kwInverse
     ? (count + ' ' + noun + ' for "' + kw + '" disappeared')
     : (count + ' new ' + noun + ' for "' + kw + '"');
+}
+
+// ── Live watch (#11): scan the DOM between reloads ──────────────────────────
+// A per-item job normally only observes the page once per reload cycle — but on
+// an SPA (Prolific, ticket queues) the site itself pushes new items into the DOM
+// between reloads. Live watch runs the SAME per-item detection on a fast
+// setTimeout chain WITHOUT reloading: each tick is one executeScript read (no
+// server request), so detection latency drops to seconds while the reload
+// interval — the thing rate limiters see — can stay slow.
+//
+// Worker lifetime: the tick's executeScript is extension-API activity, which
+// resets the MV3 idle timeout — so a chain ticking faster than ~30s keeps the
+// worker alive between alarm-driven reload cycles (same mechanism the
+// short-interval loop in scheduleNext relies on). DOM_SCAN_MAX_MS stays well
+// under that ceiling. If the worker is killed anyway (sleep/suspend), the chain
+// dies with it and the next alarm's rehydrateJob re-arms it.
+const DOM_SCAN_MIN_MS = 2000;
+const DOM_SCAN_MAX_MS = 20000;
+const DOM_SCAN_DEFAULT_MS = 4000;
+
+// Live watch is gated on the same prerequisites as per-item detection itself —
+// it IS per-item detection, just off-cycle. Settings-only check: the compiled
+// matcher is validated per tick (doDomScan), matching doMonitorRefresh's gate.
+function domScanEnabled(job) {
+  return !!(job && job.settings && job.settings.domWatch &&
+    job.settings.kwPerItem && job.settings.watchSelector);
+}
+
+// (Re-)arm a job's scan chain. Always clears first, so this is also how the
+// chain is DISARMED after a settings change turned live watch off — every
+// lifecycle edge (start, rehydrate, update, pause/resume) just calls this.
+function scheduleDomScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job) return;
+  clearDomScan(job);
+  if (!domScanEnabled(job)) return;
+  // A manually-paused job (including one rehydrated as paused) stays disarmed;
+  // RESUME_JOB re-arms. Quiet/offline pauses are caught per tick instead —
+  // they're clock/network states with no message-driven resume edge here.
+  if (job._manualPause) return;
+  const raw = Number(job.settings.domWatchInterval);
+  const delay = Math.min(DOM_SCAN_MAX_MS,
+    Math.max(DOM_SCAN_MIN_MS, Number.isFinite(raw) && raw > 0 ? raw : DOM_SCAN_DEFAULT_MS));
+  job._domTimer = setTimeout(() => doDomScan(tabId), delay);
+}
+
+function clearDomScan(job) {
+  if (job && job._domTimer) { clearTimeout(job._domTimer); job._domTimer = null; }
+}
+
+// One live-watch tick: read the per-item array, diff against the shared
+// _seenKeys baseline, alert on arrivals/departures, re-arm. Mirrors the
+// per-item branch of doMonitorRefresh minus the reload — both paths advance the
+// SAME baseline, so whichever observes a new item first alerts and the other
+// stays silent (the diff-then-advance section is synchronous, so an overlapping
+// reload cycle can't double-fire).
+async function doDomScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job || !domScanEnabled(job)) return; // stopped or reconfigured — chain ends
+  // While paused, END the chain rather than tick-and-skip: an idle chain would
+  // keep the MV3 worker awake for a deliberately dormant job. Every resume edge
+  // re-arms it (fireRefresh's resumed branch for quiet/offline — its pause gate
+  // re-checks on a capped recheck alarm — and RESUME_JOB for manual pauses).
+  if (job._manualPause ||
+      ARPQuietHours.quietAction(new Date(), job.settings.quietHours) === 'pause' ||
+      isOffline()) {
+    return;
+  }
+  // Skip the read (but keep the chain alive) while a full refresh cycle's
+  // detection is in flight — its read is seconds away and strictly fresher.
+  if (!job._detectionBusy) {
+    const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
+    if (matcher.ok && !matcher.empty) {
+      let raw = null;
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: readPageText,
+          args: [job.settings.watchSelector || '', true],
+        });
+        raw = results && results[0] && results[0].result;
+      } catch (e) { /* mid-reload / non-scriptable — skip this tick, keep the chain */ }
+      // The job may have been stopped/replaced during the await; only the live
+      // object may advance the baseline. null = no read (page mid-render);
+      // an ARRAY — including [] — is a real observation (same policy as the
+      // cycle path).
+      if (activeJobs[tabId] === job && Array.isArray(raw)) {
+        const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
+        const currKeys = ARPItemDetect.collectMatches(raw, matcher, itemKeyOpts(job.settings), exclude);
+        const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+        const newKeys = prevKeys
+          ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
+          : []; // first observation seeds the baseline without firing
+        job._seenKeys = currKeys;
+        if (newKeys.length > 0) {
+          const nowDate = new Date();
+          const snoozed = job._snoozeUntil && Date.now() < job._snoozeUntil;
+          const muted = (channel) => !!snoozed ||
+            ARPQuietHours.isChannelMuted(nowDate, job.settings.quietHours, channel);
+          const stopped = await deliverKeywordAlert(tabId, job, muted, {
+            count: newKeys.length,
+            message: perItemMessage(job.settings, newKeys.length),
+            snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
+          });
+          if (stopped) return; // stopOnKeyword — stopRefresh already cleared the chain
+          // No reload is coming, so a flash the deliverer deferred to
+          // "after-reload" (it assumes the cycle path) must fire now.
+          if (job._pendingFlash) { job._pendingFlash = false; sendKeywordFlash(tabId, 0); }
+          // Persist the advanced baseline so a worker death right after the
+          // alert can't rehydrate the OLD seen-set and re-alert the same items.
+          // Per-tick persistence would hammer storage; alert-frequency writes
+          // are bounded by genuinely-new arrivals.
+          await saveJobToStorage(tabId, job.settings);
+        }
+      }
+    }
+  }
+  scheduleDomScan(tabId);
 }
 
 async function doMonitorRefresh(tabId, job) {
@@ -1029,9 +1160,11 @@ async function startRefresh(tabId, settings) {
     _excludeMatcher: excludeMatcher,  // per-item "skip items containing" filter
     _lastRefresh: 0,                  // no refresh has fired yet
     _timer: null,                     // short-interval setTimeout handle
+    _domTimer: null,                  // live-watch scan chain handle
   };
 
   scheduleNext(tabId, interval);
+  scheduleDomScan(tabId); // live watch (#11): no-op unless domWatch + per-item are on
 
   // Notify content script — retry until it responds, since the content script
   // may not be injected yet (tab still loading) when Start is pressed.
@@ -1138,6 +1271,7 @@ async function stopRefresh(tabId) {
   if (activeJobs[tabId]) {
     clearAckBeeps(tabId); // stop any repeat-until-ack loop before dropping the job
     clearTimerLoop(activeJobs[tabId]); // stop the short-interval setTimeout loop
+    clearDomScan(activeJobs[tabId]);   // stop the live-watch scan chain
     delete activeJobs[tabId];
   }
   // Always clear the alarm, even if memory was wiped by a restart — a stray
@@ -1241,6 +1375,10 @@ async function rehydrateJob(tabId, prefetched) {
     now: Date.now(),
     fallbackInterval: computeInterval(stored.settings),
   });
+  // Restart the live-watch chain: it's a plain setTimeout chain, so it died
+  // with the worker; the alarm/message that triggered this rehydrate is what
+  // brings it back.
+  scheduleDomScan(tabId);
   return activeJobs[tabId];
 }
 
@@ -1540,6 +1678,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Reschedule with the right mechanism for the new interval
         scheduleNext(updateTabId, newInterval);
+        scheduleDomScan(updateTabId); // re-arm (or disarm) live watch per the new settings
 
         // Tell the content script to reset its countdown
         sendCountdownStart(updateTabId, 0);
@@ -1588,6 +1727,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!job) { sendResponse({ ok: false }); break; }
         job._manualPause = true;
         clearAckBeeps(pTabId);
+        clearDomScan(job); // paused = dormant; RESUME_JOB re-arms live watch
         const recheck = Math.min(job.settings.currentInterval || computeInterval(job.settings), PAUSE_RECHECK_MS);
         job.nextRefresh = Date.now() + recheck;
         scheduleNext(pTabId, recheck);
@@ -1605,6 +1745,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const interval = computeInterval(job.settings);
         job.nextRefresh = Date.now() + interval;
         scheduleNext(rTabId, interval);
+        scheduleDomScan(rTabId); // re-arm live watch (no-op unless enabled)
         sendCountdownStart(rTabId, 0);
         await saveJobToStorage(rTabId, job.settings); // clear the persisted pause flag
         broadcastStatus();
