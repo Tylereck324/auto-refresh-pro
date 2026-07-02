@@ -864,6 +864,20 @@
           <input class="keyword-input" type="text" id="optKwExclude" placeholder="e.g. 1 place" aria-label="Skip per-item matches containing these terms" style="width:100%;" disabled
                  title="Comma-separated. A matching item is skipped if it also contains any of these terms — matched as whole words/phrases, so '1 place' skips a one-slot card but not one showing '21 places' or '120 places'.">
         </div>
+        <!-- Live watch (#11): re-scan the DOM for new per-item matches BETWEEN
+             reloads. Zero server requests per scan (it reads the already-loaded
+             page), so it catches items the site pushes in via its own live
+             updates within seconds while the reload interval stays slow and
+             rate-limiter-friendly. Follows the per-item toggle's enabled state
+             (updatePerItemEnabled) like the exclude filter above. -->
+        <div id="domWatchRow" style="margin-top:10px;opacity:.5;">
+          <label class="kw-flag kw-flag-wide" title="Between reloads, re-check the page's current content for new matching items every few seconds — no extra requests to the site. Catches listings the site pushes into the open page. Tip: turn on Ignore noise + Ignore digits so an item whose numbers tick (places left) isn't re-alerted as new.">
+            <input type="checkbox" id="optDomWatch" disabled> Live watch between reloads
+          </label>
+          <label class="kw-flag" style="margin-top:4px;" title="How often to re-check the page (2–20 seconds). Faster costs nothing network-wise; 3–5s is plenty.">
+            every <input type="number" id="optDomWatchSec" min="2" max="20" step="1" value="4" style="width:52px;" disabled aria-label="Live watch scan interval in seconds"> s
+          </label>
+        </div>
       </div>
 
     </div>

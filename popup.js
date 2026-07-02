@@ -151,7 +151,7 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optKwPerItem','optBeepUntilAck',
-   'optFlashOnKeyword','optWatchSelector','optKwExclude',
+   'optFlashOnKeyword','optWatchSelector','optKwExclude','optDomWatch','optDomWatchSec',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -352,14 +352,20 @@ function updatePerItemEnabled(hasSelector) {
   // greyed checkbox reads as "the keyword disabled this", which it didn't.
   const hasKeyword = document.getElementById('optKeyword').value.trim().length > 0;
   if (hint) hint.classList.toggle('show', !hasSelector && (hasKeyword || cb.checked));
-  // The "skip items containing" filter only acts in per-item mode, so it follows
-  // the toggle: editable only while per-item is available AND checked (its
-  // stored value survives either way — disabling just dims it).
-  const ex = document.getElementById('optKwExclude');
-  const exRow = document.getElementById('kwExcludeRow');
+  // The "skip items containing" filter and live watch only act in per-item
+  // mode, so they follow the toggle: editable only while per-item is available
+  // AND checked (stored values survive either way — disabling just dims them).
   const exEnabled = hasSelector && cb.checked;
-  if (ex) ex.disabled = !exEnabled;
-  if (exRow) exRow.style.opacity = exEnabled ? '' : '0.5';
+  for (const [inputId, rowId] of [
+    ['optKwExclude', 'kwExcludeRow'],
+    ['optDomWatch', 'domWatchRow'],
+    ['optDomWatchSec', null],
+  ]) {
+    const input = document.getElementById(inputId);
+    if (input) input.disabled = !exEnabled;
+    const row = rowId && document.getElementById(rowId);
+    if (row) row.style.opacity = exEnabled ? '' : '0.5';
+  }
 }
 
 // Editing the random range is part of the same live-apply contract as the
@@ -489,6 +495,13 @@ function readPopupState() {
     kwInverse: el('optKwInverse').checked,
     kwPerItem: el('optKwPerItem').checked,
     kwExclude: el('optKwExclude').value.trim().slice(0, 200),
+    domWatch: el('optDomWatch').checked,
+    // Live-watch scan cadence, entered in seconds, stored as ms (bounds mirror
+    // the background's DOM_SCAN_MIN/MAX_MS).
+    domWatchInterval: (() => {
+      const v = parseFloat(el('optDomWatchSec').value);
+      return (Number.isFinite(v) ? Math.min(20, Math.max(2, v)) : 4) * 1000;
+    })(),
     stopOnKeyword: el('optStopOnKeyword').checked,
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
@@ -793,6 +806,10 @@ function loadSettings() {
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
       if (s.watchSelector) document.getElementById('optWatchSelector').value = s.watchSelector;
       if (s.kwExclude) document.getElementById('optKwExclude').value = s.kwExclude;
+      setCheckbox('optDomWatch', s.domWatch);
+      if (typeof s.domWatchInterval === 'number' && s.domWatchInterval > 0) {
+        document.getElementById('optDomWatchSec').value = Math.round(s.domWatchInterval / 1000);
+      }
     }
 
     highlightSelectedPreset();

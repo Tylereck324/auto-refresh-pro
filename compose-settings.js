@@ -89,6 +89,14 @@
       // The background compiles them as literal whole-word terms — see
       // buildExcludeMatcher for why they never inherit substring/regex mode.
       kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, 200) : '',
+      // Live watch (#11): scan the DOM for new per-item matches BETWEEN reloads
+      // (no server requests), catching items the site pushes into the page
+      // itself. Interval bounds mirror background DOM_SCAN_MIN/MAX_MS: the floor
+      // keeps the per-tick executeScript cost sane, the 20s ceiling keeps the
+      // scan chain's activity inside the MV3 worker idle timeout so the chain
+      // sustains itself between alarm-driven reload cycles.
+      domWatch: !!s.domWatch,
+      domWatchInterval: Math.min(20000, Math.max(2000, numOr(s.domWatchInterval, 4000))),
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       beepUntilAck: !!s.beepUntilAck,
