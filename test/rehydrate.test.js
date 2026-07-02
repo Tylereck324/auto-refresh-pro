@@ -110,6 +110,26 @@ test('buildRehydratedJob drops an expired or garbage snooze deadline', () => {
   }
 });
 
+// The navigate-away pause must survive a worker restart: without restore, the
+// rehydrated job would re-arm the live-watch chain on the WRONG page (poisoning
+// the frozen baseline, so returning re-fires everything as new) and the next
+// away-gate recheck would re-notify "watch paused" on every worker death.
+test('buildRehydratedJob restores an away pause as _pauseReason', () => {
+  const job = R.buildRehydratedJob(
+    { settings: {}, awayPause: true },
+    1,
+    { matcher: MATCHER, now: 0 }
+  );
+  assert.equal(job._pauseReason, 'away');
+});
+
+test('buildRehydratedJob leaves _pauseReason null without a persisted away pause', () => {
+  for (const stored of [{ settings: {} }, { settings: {}, awayPause: false }, { settings: {}, awayPause: 0 }]) {
+    const job = R.buildRehydratedJob(stored, 1, { matcher: MATCHER, now: 0 });
+    assert.equal(job._pauseReason, null);
+  }
+});
+
 test('buildRehydratedJob prefers the live startUrl over the stored one', () => {
   const job = R.buildRehydratedJob(
     { settings: {}, startUrl: 'https://old.com/' },

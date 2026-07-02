@@ -38,9 +38,15 @@ const activeJobs = {};
 // self-rescheduling setTimeout loop instead (see scheduleNext).
 const ALARM_MIN_MS = 30000;
 
-// How often a paused job (quiet-hours pause mode, or offline) wakes to re-check
-// whether it can resume. Capped so a fast interval doesn't spin while paused.
+// How often a paused job (quiet-hours pause mode, offline, or navigated away)
+// wakes to re-check whether it can resume. Capped so a fast interval doesn't
+// spin while paused.
 const PAUSE_RECHECK_MS = 5 * 60 * 1000;
+
+// Delay before the resume cycle after the tab returns to the watched page (#12).
+// Long enough for the SPA shell to start rendering, short enough that an item
+// which arrived while away alerts within moments of coming back.
+const AWAY_RESUME_DELAY_MS = 2500;
 
 // Best-effort offline signal. navigator.onLine is available in the service
 // worker; `=== false` means the browser is definitely offline (true can be a
@@ -429,11 +435,14 @@ async function fireRefresh(tabId) {
   const job = activeJobs[tabId] || await rehydrateJob(tabId);
   if (!job) return; // genuinely stopped, or the tab was closed while we slept
 
-  // Navigate-away backstop: the tabs.onUpdated stop listener can miss a
-  // navigation (SPA history-API route changes don't always fire it), and once
-  // missed nothing else re-checks — the loop would keep reloading whatever page
-  // the tab is on now. Verify the tab is still on the job's original URL before
-  // acting; stop instead of reloading if it moved.
+  // Navigate-away backstop (#12): the tabs.onUpdated pause/resume listener can
+  // miss a navigation (SPA history-API route changes don't always fire it), and
+  // once missed nothing else re-checks — the loop would keep reloading whatever
+  // page the tab is on now. Verify the tab is still on the job's original URL;
+  // a moved tab PAUSES via the away gate below (silently stopping here is how a
+  // dead watch once went unnoticed and studies were missed) and auto-resumes
+  // when the tab returns.
+  let away = false;
   if (job.startUrl) {
     let tab;
     try {
@@ -442,10 +451,7 @@ async function fireRefresh(tabId) {
       await stopRefresh(tabId); // tab gone and onRemoved never fired
       return;
     }
-    if (ARPRehydrate.isNavigateAway(job.startUrl, tab.url || tab.pendingUrl || '')) {
-      await stopRefresh(tabId);
-      return;
-    }
+    away = ARPRehydrate.isNavigateAway(job.startUrl, tab.url || tab.pendingUrl || '');
   }
 
   // now + the cycle's current interval, used by both the pause gate and the
@@ -463,9 +469,12 @@ async function fireRefresh(tabId) {
   // pages (tab.status only distinguishes loading/complete — no HTTP codes).
   const pauseReason =
     job._manualPause ? 'manual'
+    : away ? 'away'
     : (ARPQuietHours.quietAction(new Date(), job.settings.quietHours) === 'pause') ? 'quiet'
     : (isOffline() ? 'offline' : null);
   if (pauseReason) {
+    // Notify on the away EDGE only (not every recheck) — see notifyAwayPause.
+    const awayEdge = pauseReason === 'away' && job._pauseReason !== 'away';
     job._pauseReason = pauseReason;
     // Disarm the live-watch chain too — its ticks would otherwise keep the MV3
     // worker awake all night for a job that is deliberately dormant. Re-armed
@@ -475,6 +484,12 @@ async function fireRefresh(tabId) {
     job.nextRefresh = now + recheck;
     scheduleNext(tabId, recheck);
     broadcastStatus();
+    if (awayEdge) {
+      notifyAwayPause(tabId);
+      // Persist so an away pause survives a worker restart without re-notifying
+      // (saveJobToStorage reads _pauseReason; buildRehydratedJob restores it).
+      await saveJobToStorage(tabId, job.settings);
+    }
     return;
   }
   if (job._pauseReason) { job._pauseReason = null; scheduleDomScan(tabId); broadcastStatus(); } // resumed
@@ -767,6 +782,58 @@ function perItemMessage(settings, count) {
     : (count + ' new ' + noun + ' for "' + kw + '"');
 }
 
+// ── Navigate-away pause (#12): pause instead of stop, resume on return ──────
+// Navigating the watched tab off the job's original URL used to STOP the job —
+// silently. In the hunt workflow (alert fires → user clicks through → takes the
+// study → returns to the list) that meant the watch died at the exact moment it
+// proved useful, and everything arriving afterwards was missed with no signal
+// beyond a missing overlay. Now it PAUSES: the baseline is frozen (no reads
+// happen on the wrong page, so items arriving while away still diff as NEW on
+// return), a single notification announces the pause, and returning to the
+// watched URL resumes automatically. Three cooperating edges:
+//   • tabs.onUpdated (below)   — the fast path for both directions
+//   • fireRefresh's away gate  — alarm-driven backstop for missed SPA routes
+//   • doDomScan's tab check    — per-tick guard so a missed route can't let a
+//     live-watch read poison the frozen baseline
+function notifyAwayPause(tabId) {
+  notify('away', tabId, {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: 'Watch paused — you left the page',
+    message: 'Monitoring is paused while this tab is elsewhere. It resumes automatically when the tab returns to the watched page.',
+  });
+}
+
+// Event-edge entry (onUpdated URL change, live-watch tick). Idempotent — the
+// _pauseReason check also makes it one-notification-per-edge. Manual pause
+// dominates: the job is already dormant, so announcing an "away" pause on top
+// of it would be noise (fireRefresh's gate re-derives 'away' after RESUME_JOB).
+async function enterAwayPause(tabId, job) {
+  if (job._manualPause || job._pauseReason === 'away') return;
+  job._pauseReason = 'away';
+  clearDomScan(job); // freeze the baseline: no reads while on the wrong page
+  const recheck = Math.min(
+    job.settings.currentInterval || computeInterval(job.settings), PAUSE_RECHECK_MS);
+  job.nextRefresh = Date.now() + recheck;
+  scheduleNext(tabId, recheck); // keep the job alive (and rehydratable) while away
+  broadcastStatus();
+  notifyAwayPause(tabId);
+  await saveJobToStorage(tabId, job.settings); // away survives worker restarts
+}
+
+// The tab is back on the watched page: run a cycle almost immediately — its
+// detection diffs against the FROZEN pre-departure baseline, so items that
+// arrived while away alert within moments of returning.
+async function resumeFromAwayPause(tabId, job) {
+  if (job._pauseReason !== 'away') return;
+  job._pauseReason = null;
+  job.nextRefresh = Date.now() + AWAY_RESUME_DELAY_MS;
+  scheduleNext(tabId, AWAY_RESUME_DELAY_MS);
+  scheduleDomScan(tabId);
+  broadcastStatus();
+  await saveJobToStorage(tabId, job.settings); // clear the persisted away flag
+}
+
 // ── Live watch (#11): scan the DOM between reloads ──────────────────────────
 // A per-item job normally only observes the page once per reload cycle — but on
 // an SPA (Prolific, ticket queues) the site itself pushes new items into the DOM
@@ -802,9 +869,12 @@ function scheduleDomScan(tabId) {
   clearDomScan(job);
   if (!domScanEnabled(job)) return;
   // A manually-paused job (including one rehydrated as paused) stays disarmed;
-  // RESUME_JOB re-arms. Quiet/offline pauses are caught per tick instead —
-  // they're clock/network states with no message-driven resume edge here.
-  if (job._manualPause) return;
+  // RESUME_JOB re-arms. Same for an away-paused job (rehydrateJob calls this
+  // unconditionally — the chain must NOT re-arm while the tab is elsewhere, or
+  // its reads would poison the frozen baseline; resumeFromAwayPause re-arms).
+  // Quiet/offline pauses are caught per tick instead — they're clock/network
+  // states with no message-driven resume edge here.
+  if (job._manualPause || job._pauseReason === 'away') return;
   const raw = Number(job.settings.domWatchInterval);
   const delay = Math.min(DOM_SCAN_MAX_MS,
     Math.max(DOM_SCAN_MIN_MS, Number.isFinite(raw) && raw > 0 ? raw : DOM_SCAN_DEFAULT_MS));
@@ -828,10 +898,24 @@ async function doDomScan(tabId) {
   // keep the MV3 worker awake for a deliberately dormant job. Every resume edge
   // re-arms it (fireRefresh's resumed branch for quiet/offline — its pause gate
   // re-checks on a capped recheck alarm — and RESUME_JOB for manual pauses).
-  if (job._manualPause ||
+  if (job._manualPause || job._pauseReason === 'away' ||
       ARPQuietHours.quietAction(new Date(), job.settings.quietHours) === 'pause' ||
       isOffline()) {
     return;
+  }
+  // Away check (#12): an SPA route change can slip past the onUpdated listener;
+  // without this a tick on the wrong page reads zero items ([]) and advances the
+  // frozen baseline — on return, EVERYTHING would re-fire as new instead of just
+  // the items that arrived while away. tabs.get is cheap (no page process hop),
+  // and entering the away pause here also detects the departure within one tick
+  // (seconds) instead of waiting for the reload cycle's backstop.
+  if (job.startUrl) {
+    let tab = null;
+    try { tab = await chrome.tabs.get(tabId); } catch (e) { return; } // tab gone; onRemoved cleans up
+    if (ARPRehydrate.isNavigateAway(job.startUrl, tab.url || tab.pendingUrl || '')) {
+      await enterAwayPause(tabId, job);
+      return; // chain ends; the resume edges re-arm it
+    }
   }
   // Skip the read (but keep the chain alive) while a full refresh cycle's
   // detection is in flight — its read is seconds away and strictly fresher.
@@ -1331,6 +1415,12 @@ async function saveJobToStorage(tabId, settings) {
       // alarm-backed recheck lets the MV3 worker idle out). Quiet/offline pauses
       // are re-derived from the clock/navigator.onLine and need no persistence.
       manualPause: !!(job && job._manualPause),
+      // Navigate-away pause (#12): persist so an away pause survives a worker
+      // restart — the rehydrated job stays dormant on the wrong page (no baseline
+      // poisoning, no repeat notification) until a resume edge fires. Quiet/
+      // offline pauses are re-derived and need no persistence; 'away' can't be
+      // re-derived without a tabs.get, and losing it would re-notify per restart.
+      awayPause: !!(job && job._pauseReason === 'away'),
       // Snooze deadline (#2): persist so a 15-minute snooze outlives the
       // worker (which idles out in ~30s). Expired deadlines are dropped at
       // rehydrate time; the job's stop path deletes the whole entry.
@@ -1514,7 +1604,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-// ── Stop refresh if user navigates away from the original URL ──────────────
+// ── Pause when the user navigates away from the original URL (#12) ─────────
+// The fast path for both away edges: navigating off the watched page pauses the
+// job (baseline frozen, one notification), navigating back resumes it. The
+// fireRefresh gate and doDomScan's per-tick check are the backstops for SPA
+// route changes this listener can miss.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (!changeInfo.url) return; // only care about URL changes
   // Fast path: while the worker is warm and the store is known fresh, a tab with
@@ -1527,7 +1621,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   const job = activeJobs[tabId] || await rehydrateJob(tabId);
   if (!job || !job.startUrl) return;
   if (ARPRehydrate.isNavigateAway(job.startUrl, changeInfo.url)) {
-    await stopRefresh(tabId);
+    await enterAwayPause(tabId, job);
+  } else if (job._pauseReason === 'away') {
+    await resumeFromAwayPause(tabId, job);
   }
 });
 

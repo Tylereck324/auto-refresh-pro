@@ -29,7 +29,7 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 - **Hotkey** — `Alt+R` by default (customizable in Settings) to toggle refresh on/off from the keyboard
 - **Popup countdown** — the extension popup shows a live hero countdown synced to the actual remaining time
 - **Scroll preservation** — optionally restore the scroll position across refreshes
-- **Navigation detection** — automatically stops when you navigate away from the original URL
+- **Navigation detection** — pauses (with a notification) when you navigate away from the original URL, and resumes automatically when the tab returns to it; the detection baseline is frozen while away, so matches that arrived in the meantime still alert on return
 - **Manage All Tabs** — view and stop all active refresh jobs across every open tab
 - **Import / Export** — back up and restore all settings as JSON (imports are sanitized — see below)
 - **Auto-start URLs** — open specific URLs and start refreshing automatically when Chrome launches
@@ -106,5 +106,5 @@ Both `npm test` and `npm run lint` run in CI (GitHub Actions) on every push and 
 ## Notes
 
 - Sound alerts use Chrome's [Offscreen API](https://developer.chrome.com/docs/extensions/reference/offscreenDocuments/) to bypass autoplay restrictions — requires Chrome 116+
-- The extension stops automatically when you navigate to a different URL in the same tab
+- Navigating the watched tab to a different URL pauses the job (one notification, popup shows "Paused — away from page") rather than stopping it; returning the tab to the original URL resumes within seconds. Closing the tab or pressing Stop still ends the job
 - Keyword detection compares page content between cycles — by default it only alerts when the keyword *appears* (absent → present transition), not on every cycle it's present. With **per-item detection** (a selector + "Alert on each new match"), it instead diffs the *set* of matching items each cycle and alerts on each newly-arrived one, so a fresh match still fires while earlier matches remain on screen
