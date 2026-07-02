@@ -85,6 +85,10 @@
       // matched element is one item — but carried unconditionally so the toggle
       // round-trips even if the selector is added later.
       kwPerItem: !!s.kwPerItem,
+      // Per-item exclusion terms ("skip items containing …", comma-separated).
+      // The background compiles them as literal whole-word terms — see
+      // buildExcludeMatcher for why they never inherit substring/regex mode.
+      kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, 200) : '',
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       beepUntilAck: !!s.beepUntilAck,

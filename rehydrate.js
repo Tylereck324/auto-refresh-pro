@@ -57,6 +57,11 @@
       // Manual pause (#10) — restore so a paused job stays paused across a worker
       // restart until an explicit RESUME_JOB.
       _manualPause: !!stored.manualPause,
+      // Notification snooze (#2) — restore so a 15-minute snooze isn't cut short
+      // by the worker idling out mid-window (alerts would resume beeping while
+      // the user believes they're muted). An expired or non-numeric deadline
+      // degrades to 0 = not snoozed.
+      _snoozeUntil: (Number(stored.snoozeUntil) || 0) > now ? Number(stored.snoozeUntil) : 0,
       _matcher: opts.matcher,
       _lastRefresh: 0,
       _timer: null,

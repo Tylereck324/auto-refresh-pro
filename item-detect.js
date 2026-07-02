@@ -34,11 +34,15 @@
   //   • Whitespace is collapsed (the newlines innerText inserts between a card's
   //     title and its "By <author>" line must not change the key) — same idiom as
   //     normalize.js / keyword-match.normalizeWs.
-  //   • opts.collapseDigits optionally folds digit runs to '0' so relative
+  //   • opts.collapseDigits optionally folds digit runs to '0' — same semantics
+  //     as normalize.js (keep the two in sync) — so relative
   //     timestamps / counters that tick every reload ("2 min ago", view counts)
   //     don't make every item look new. OFF by default: with stable absolute
   //     timestamps (e.g. Prolific) two otherwise-identical items posted at
-  //     different times must stay distinct, and collapsing digits would merge them.
+  //     different times must stay distinct, and collapsing digits would merge
+  //     them. (The background wires this to the job's "Ignore noise" settings —
+  //     see itemKeyOpts — passed identically to the baseline and per-cycle
+  //     collects, since keys built with different options never compare equal.)
   // The normalized text is hashed (FNV-1a, 32-bit → base36) so the persisted
   // seen-set stays compact. Distinct items get distinct keys; identical items
   // share one and dedupe. (Hash collisions are theoretically possible — at ~32
@@ -64,14 +68,26 @@
   // matcher accepts. `matcher` is any object exposing .test(text)->bool (the
   // ARPKeyword compiled matcher). First-occurrence order is preserved so a caller
   // can surface a stable "first new match" sample.
-  function collectMatches(items, matcher, opts) {
+  //
+  // `exclude` (optional) is a second matcher-like: an item it accepts is DROPPED
+  // even though the keyword matched — the "skip items containing …" filter for
+  // listings that match the keyword but are known-bad (e.g. a study card whose
+  // "1 place" marks it as broken/unjoinable). Applied to the same raw text the
+  // keyword sees, BEFORE keying, so a skipped item never enters the seen-set:
+  // if its text later changes past the filter (places refilled), it keys fresh
+  // and fires as a new arrival — exactly the wanted behavior. Must be passed
+  // IDENTICALLY to the baseline and per-cycle collects (like opts), or items
+  // filtered on one side would diff as arrivals/departures on the other.
+  function collectMatches(items, matcher, opts, exclude) {
     const keys = [];
     if (!Array.isArray(items) || !matcher || typeof matcher.test !== 'function') return keys;
+    const skip = exclude && typeof exclude.test === 'function' ? exclude : null;
     const seen = new Set();
     for (let i = 0; i < items.length; i++) {
       const text = items[i];
       if (typeof text !== 'string' || !text) continue;
       if (!matcher.test(text)) continue;
+      if (skip && skip.test(text)) continue;
       const k = itemKey(text, opts);
       if (!k || seen.has(k)) continue;
       seen.add(k);

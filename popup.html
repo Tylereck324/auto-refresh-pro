@@ -563,6 +563,17 @@
     background: var(--border2);
   }
 
+  /* Storage-failure banner (hidden unless a settings write rejects). */
+  #saveError {
+    display: none;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: #f87171;
+    background: rgba(248,113,113,0.08);
+    border-top: 1px solid rgba(248,113,113,0.35);
+  }
+  #saveError.show { display: block; }
+
   /* ── Forced colors / High Contrast ──
      The status dot and logo mark are pure colour fills; in forced-colors their
      background collapses, so border them to stay visible. The active dot uses a
@@ -588,14 +599,20 @@
   </div>
   <div class="header-right">
     <div class="status-dot inactive" id="statusDot"></div>
-    <div class="status-label" id="statusLabel">IDLE</div>
+    <!-- Live so a screen reader hears the IDLE↔ACTIVE flip (start/stop is the
+         popup's core state change and is otherwise invisible non-visually). -->
+    <div class="status-label" id="statusLabel" aria-live="polite">IDLE</div>
   </div>
 </header>
 
 <!-- Hero countdown (shown when active) -->
 <div class="hero" id="hero">
-  <div class="hero-time" id="countdownDisplay">0:00</div>
-  <div class="hero-label">until next refresh</div>
+  <!-- role=timer conveys "this is a running countdown" without aria-live: a
+       live region here would be announced on every 1s tick, drowning out
+       everything else. Readable on focus; the polite regions below announce
+       the changes that are actually rare and meaningful. -->
+  <div class="hero-time" id="countdownDisplay" role="timer" aria-label="Time until next refresh">0:00</div>
+  <div class="hero-label" aria-hidden="true">until next refresh</div>
   <div class="hero-bar-wrap">
     <div class="hero-bar-fill" id="progressFill"></div>
   </div>
@@ -604,8 +621,11 @@
       <span class="hero-stat-val" id="statRefreshes">0</span>
       <span class="hero-stat-label">Refreshes</span>
     </div>
-    <!-- Shown only while the active tab's job has a keyword set (toggled in popup.js) -->
-    <div class="hero-stat" id="keywordStat" style="display: none;">
+    <!-- Shown only while the active tab's job has a keyword set (toggled in
+         popup.js). Live: a detection is the event the whole job exists for,
+         and it's rare — unlike the refresh tally, which would chatter on
+         every cycle if announced. -->
+    <div class="hero-stat" id="keywordStat" style="display: none;" aria-live="polite">
       <span class="hero-stat-val" id="statKeywords">0</span>
       <span class="hero-stat-label">Detections</span>
     </div>
@@ -825,16 +845,36 @@
              separate item and alert on every NEW match (e.g. each new listing),
              not just the first page-level appearance. Needs a selector to define
              item boundaries — disabled until one is entered. -->
-        <label class="kw-flag kw-flag-wide" id="perItemFlag" style="margin-top:10px;" title="Needs a selector. Treats each matched element as a separate item and alerts on every NEW match — e.g. each new listing — instead of only the first appearance.">
-          <input type="checkbox" id="optKwPerItem"> Alert on each new match (per item)
+        <label class="kw-flag kw-flag-wide" id="perItemFlag" style="margin-top:10px;opacity:.5;" title="Needs a selector. Treats each matched element as a separate item and alerts on every NEW match — e.g. each new listing — instead of only the first appearance. Tip: if items contain ticking numbers (spots left, '2 min ago'), also turn on Ignore noise so they aren't re-alerted as new.">
+          <!-- Ships disabled; validateSelector() (run on load and on every edit)
+               enables it once a valid selector exists, so the pre-loadSettings
+               paint can't offer a toggle that will immediately grey out. -->
+          <input type="checkbox" id="optKwPerItem" disabled> Alert on each new match (per item)
         </label>
         <div class="kw-regex-hint" id="perItemHint" style="margin-top:2px;">Enter a CSS selector above to enable per-item alerts.</div>
+        <!-- Per-item exclusion: a matching item is SKIPPED when it also contains
+             any of these comma-separated terms — e.g. "1 place" to ignore a
+             broken single-slot listing. Matched as whole words/phrases (never
+             substrings), so "1 place" does NOT skip "21 places"/"61 places";
+             see buildExcludeMatcher in background.js. Only meaningful in
+             per-item mode, so it enables/dims with the toggle above
+             (updatePerItemEnabled). -->
+        <div id="kwExcludeRow" style="margin-top:10px;opacity:.5;">
+          <div class="field-label field-subhead">SKIP ITEMS CONTAINING (OPTIONAL)</div>
+          <input class="keyword-input" type="text" id="optKwExclude" placeholder="e.g. 1 place" aria-label="Skip per-item matches containing these terms" style="width:100%;" disabled
+                 title="Comma-separated. A matching item is skipped if it also contains any of these terms — matched as whole words/phrases, so '1 place' skips a one-slot card but not one showing '21 places' or '120 places'.">
+        </div>
       </div>
 
     </div>
   </div>
 
 </div>
+
+<!-- Storage-failure banner: populated and shown by saveSettings() when a
+     chrome.storage write rejects (quota, corruption) — otherwise the popup
+     would silently revert the user's changes on next open. -->
+<div id="saveError" role="alert"></div>
 
 <!-- Footer -->
 <footer>

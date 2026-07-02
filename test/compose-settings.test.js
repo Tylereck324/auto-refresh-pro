@@ -37,7 +37,7 @@ const EXPECTED_KEYS = [
   'stopAfter', 'soundVolume', 'soundTone', 'soundRepeat', 'randomTimer',
   'randomMin', 'randomMax', 'stopOnClick', 'sound', 'monitorMode', 'noiseTolerant',
   'collapseDigits', 'minChangedFraction', 'keyword', 'kwCaseSensitive',
-  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'stopOnKeyword', 'stopOnChange',
+  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'stopOnKeyword', 'stopOnChange',
   'beepUntilAck', 'flashOnKeyword', 'watchSelector', 'adaptive', 'adaptiveMax',
   'webhookUrl', 'webhookFormat', 'quietHours', 'currentInterval',
 ].sort();
@@ -88,6 +88,7 @@ test('per-launch flags map straight through from popup state', () => {
     sound: true, monitor: true, noiseTolerant: true, stopOnKeyword: true,
     stopOnChange: true, beepUntilAck: true, flashOnKeyword: true, kwCaseSensitive: true,
     kwWholeWord: true, kwRegex: true, kwInverse: true, kwPerItem: true, keyword: 'price',
+    kwExclude: '1 place',
   }), globals());
   assert.equal(out.sound, true);
   assert.equal(out.monitorMode, true);    // popup 'monitor' -> job 'monitorMode'
@@ -101,6 +102,7 @@ test('per-launch flags map straight through from popup state', () => {
   assert.equal(out.kwRegex, true);
   assert.equal(out.kwInverse, true);
   assert.equal(out.kwPerItem, true);
+  assert.equal(out.kwExclude, '1 place');
   assert.equal(out.keyword, 'price');
 });
 

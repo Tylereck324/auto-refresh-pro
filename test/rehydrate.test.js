@@ -87,6 +87,29 @@ test('buildRehydratedJob coerces a string/garbage keywordCount to a number', () 
   }
 });
 
+// A notification snooze must outlive the worker: MV3 idles it out within ~30s
+// of the snooze click, so without restore the remaining ~14.5 minutes of a
+// 15-minute snooze would silently un-mute and alerts would resume beeping.
+test('buildRehydratedJob restores an unexpired snooze deadline', () => {
+  const job = R.buildRehydratedJob(
+    { settings: {}, snoozeUntil: 5000 },
+    1,
+    { matcher: MATCHER, now: 1000 }
+  );
+  assert.equal(job._snoozeUntil, 5000);
+});
+
+test('buildRehydratedJob drops an expired or garbage snooze deadline', () => {
+  for (const stale of [999, 1000, '5000?', {}, [], null, undefined]) {
+    const job = R.buildRehydratedJob(
+      { settings: {}, snoozeUntil: stale },
+      1,
+      { matcher: MATCHER, now: 1000 }
+    );
+    assert.equal(job._snoozeUntil, 0, `snoozeUntil=${JSON.stringify(stale)} should rehydrate as 0`);
+  }
+});
+
 test('buildRehydratedJob prefers the live startUrl over the stored one', () => {
   const job = R.buildRehydratedJob(
     { settings: {}, startUrl: 'https://old.com/' },

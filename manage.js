@@ -35,6 +35,18 @@ function pauseReasonLabel(reason) {
 
 // showToast comes from the shared toast.js (loaded before this script).
 
+// Persist to chrome.storage, surfacing failure as a toast. A rejected write
+// (quota exhaustion, storage corruption) would otherwise vanish as an unhandled
+// rejection while the list re-renders from storage — i.e. the user's edit
+// silently reverts with zero indication anything failed.
+async function persistOrToast(obj) {
+  try {
+    await chrome.storage.local.set(obj);
+  } catch (e) {
+    showToast('Save failed: ' + ((e && e.message) || 'storage error'), true);
+  }
+}
+
 // ── Load active jobs ─────────────────────────────────────────────────────
 // Invocations overlap freely (8s poll + post-action refreshes + cold-start
 // retries); only the NEWEST may touch the DOM. Each call takes a generation
@@ -192,7 +204,7 @@ async function loadAutoStart() {
       const idx = autoStartUrls.findIndex(item => item && item.url === btn.dataset.url);
       if (idx !== -1) {
         autoStartUrls.splice(idx, 1);
-        await chrome.storage.local.set({ autoStartUrls });
+        await persistOrToast({ autoStartUrls });
       }
       loadAutoStart();
     });
@@ -221,7 +233,7 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
     autoRefresh: sec > 0,
     refreshSettings: sec > 0 ? { interval: sec * 1000, hardRefresh: false, stopAfter: 0, notify: false, sound: false, monitorMode: false, randomTimer: false } : null
   });
-  await chrome.storage.local.set({ autoStartUrls });
+  await persistOrToast({ autoStartUrls });
   document.getElementById('asUrl').value = '';
   document.getElementById('asInterval').value = '';
   loadAutoStart();
@@ -255,7 +267,7 @@ async function loadRules() {
       const idx = urlRules.findIndex(r => r && r.pattern === btn.dataset.pattern);
       if (idx !== -1) {
         urlRules.splice(idx, 1);
-        await chrome.storage.local.set({ urlRules });
+        await persistOrToast({ urlRules });
       }
       loadRules();
     });
@@ -265,7 +277,7 @@ async function loadRules() {
       const { urlRules = [] } = await chrome.storage.local.get('urlRules');
       const rule = urlRules.find(r => r && r.pattern === box.dataset.pattern);
       if (rule) rule.enabled = box.checked;
-      await chrome.storage.local.set({ urlRules });
+      await persistOrToast({ urlRules });
     });
   });
 }
@@ -288,7 +300,7 @@ document.getElementById('addRule').addEventListener('click', async () => {
     enabled: true,
     settings: ARPValidators.sanitizeRuleSettings({ interval: Math.max(2, sec) * 1000 }),
   });
-  await chrome.storage.local.set({ urlRules });
+  await persistOrToast({ urlRules });
   document.getElementById('rulePattern').value = '';
   document.getElementById('ruleInterval').value = '30';
   loadRules();
@@ -319,7 +331,11 @@ async function loadAlerts() {
     const when = Number.isFinite(entry.ts) ? new Date(entry.ts).toLocaleString() : '';
     const typeLabel = entry.type === 'kw' ? 'Keyword' : 'Change';
     const heading = entry.title || entry.url || '(no title)';
-    const detail = entry.type === 'kw' ? (entry.keyword || '') : (entry.snippet || '');
+    // kw rows show the keyword, plus the snippet when one exists (per-item
+    // batches log "3 new"/"2 gone" there — without it the count is invisible).
+    const detail = entry.type === 'kw'
+      ? [entry.keyword, entry.snippet].filter(Boolean).join(' — ')
+      : (entry.snippet || '');
     const div = document.createElement('div');
     div.className = 'alert-item';
     div.innerHTML = `
@@ -396,7 +412,7 @@ async function loadDenylist() {
       const idx = domainDenylist.indexOf(btn.dataset.pattern);
       if (idx !== -1) {
         domainDenylist.splice(idx, 1);
-        await chrome.storage.local.set({ domainDenylist });
+        await persistOrToast({ domainDenylist });
       }
       loadDenylist();
     });
@@ -419,7 +435,7 @@ document.getElementById('addDeny').addEventListener('click', async () => {
   // sanitizeDenylist trims/lowercases, drops invalid, dedupes, and caps length —
   // store the canonical array so the editor and the worker agree on the shape.
   const cleaned = ARPValidators.sanitizeDenylist(domainDenylist);
-  await chrome.storage.local.set({ domainDenylist: cleaned });
+  await persistOrToast({ domainDenylist: cleaned });
   document.getElementById('denyPattern').value = '';
   loadDenylist();
 });

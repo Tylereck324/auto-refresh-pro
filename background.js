@@ -122,6 +122,24 @@ function buildMatcher(settings) {
   return ARPKeyword.compileMatcher(settings, { isSafeRegex: ARPValidators.isSafeRegex });
 }
 
+// Compile the per-item exclusion matcher from a job's kwExclude terms ("skip
+// items containing …" — comma-separated, like the keyword). An item the keyword
+// accepts is dropped when this matcher ALSO accepts it. Always compiled as
+// literal terms with whole-word boundaries — deliberately NOT inheriting
+// kwWholeWord/kwRegex: the headline use is excluding numeric phrases like
+// "1 place" (a broken single-slot listing), and as a plain substring that term
+// is CONTAINED in "21 places"/"61 places"/"121 places", silently skipping the
+// exact items the user is hunting. Case sensitivity does follow the keyword's
+// flag. Empty kwExclude compiles to the empty matcher (test() → false), which
+// collectMatches treats as "exclude nothing".
+function buildExcludeMatcher(settings) {
+  return ARPKeyword.compileMatcher({
+    keyword: (settings && typeof settings.kwExclude === 'string') ? settings.kwExclude : '',
+    kwCaseSensitive: !!(settings && settings.kwCaseSensitive),
+    kwWholeWord: true,
+  });
+}
+
 // ── Actionable notifications ────────────────────────────────────────────────
 // Clicking a keyword/change notification focuses the originating tab. The tab id
 // is both kept in this warm-path map and encoded in the notification id (so a
@@ -181,7 +199,13 @@ chrome.notifications.onButtonClicked.addListener(async (id, buttonIndex) => {
     await stopRefresh(tabId);
   } else if (buttonIndex === 1) {
     const job = activeJobs[tabId] || await rehydrateJob(tabId);
-    if (job) job._snoozeUntil = Date.now() + SNOOZE_MS; // in-memory; resets on restart (fine)
+    if (job) {
+      job._snoozeUntil = Date.now() + SNOOZE_MS;
+      // Persist: the MV3 worker idles out within ~30s, so an in-memory-only
+      // snooze would silently un-mute on the next alarm-driven restart — the
+      // one window where snooze matters most (user is away from the tab).
+      await saveJobToStorage(tabId, job.settings);
+    }
   }
 });
 
@@ -565,11 +589,18 @@ async function doRefresh(tabId, job) {
 // in the same call, so there is no visible flicker.
 //
 // Returns a STRING normally. When `perItem` is set (per-item detection) AND a
-// selector is given, returns an ARRAY instead — one entry per matched element —
-// so the background can diff WHICH matching items are present between cycles
-// rather than collapsing them into one blob. The caller knows which it requested.
+// selector is given, returns instead:
+//   • an ARRAY — one entry per matched element — on a successful read. An EMPTY
+//     array is a REAL observation: "the page rendered and zero items are present"
+//     (e.g. a studies list with nothing posted). It must stay distinguishable
+//     from a failed read, because an empty list is the normal starting state for
+//     the alert-on-arrival use case — collapsing the two made the FIRST arrival
+//     unable to ever fire (it just became the baseline).
+//   • null — no read: the body is missing, the selector is invalid, or the page
+//     hasn't rendered (zero matches AND no visible body text). Callers skip the
+//     cycle and keep their baseline.
 function readPageText(selector, perItem) {
-  if (!document.body) return perItem ? [] : '';
+  if (!document.body) return perItem ? null : '';
   const ov = document.getElementById('__ar_overlay');
   let parent = null, next = null;
   if (ov) { parent = ov.parentNode; next = ov.nextSibling; ov.remove(); }
@@ -583,18 +614,26 @@ function readPageText(selector, perItem) {
     // the set of matching items and alert on each NEW one. Both the item COUNT
     // and each item's LENGTH are bounded, so a broad selector ("li" on an endless
     // feed) can't blow up the structure-cloned message or the persisted seen-set.
-    // Invalid CSS throws here and degrades to an empty list, which callers treat
-    // as "no read this cycle" (skip detection, keep the baseline) — same policy
-    // as the scoped string read below.
-    const items = [];
+    let items = null; // null = no read (invalid selector / page not rendered)
     try {
       const nodes = document.querySelectorAll(selector);
       const MAX_ITEMS = 500, MAX_ITEM_LEN = 4000;
+      items = [];
       for (let i = 0; i < nodes.length && items.length < MAX_ITEMS; i++) {
         const t = nodes[i].innerText || nodes[i].textContent || '';
         if (t) items.push(t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t);
       }
-    } catch (e) { /* invalid selector → empty list (skip), never throw */ }
+      // Zero matches on a body with no visible text is a mid-load read, not a
+      // genuinely empty list — the selector had nothing to miss. Report "no
+      // read" so the caller keeps its baseline instead of treating the blank
+      // page as "every item departed" (inverse mode would false-fire, and the
+      // next full read would re-fire everything as new). The probe runs only in
+      // the ambiguous zero-match case; the overlay is already detached, so its
+      // ticking timer text can't make a blank page look rendered.
+      if (items.length === 0 && !(document.body.innerText || '').trim()) {
+        items = null;
+      }
+    } catch (e) { items = null; /* invalid selector → no read, never throw */ }
     result = items;
   } else if (selector && typeof selector === 'string') {
     // Scoped read (#4 CSS-selector detection): read only the matched region(s)
@@ -689,6 +728,21 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   return false;
 }
 
+// Identity options for per-item keys, mirroring the noise settings the change
+// path feeds isMeaningfulChange: with "Ignore noise" on (and digit-collapse not
+// explicitly off), digit runs fold to '0' so a counter ticking inside a matched
+// card ("24 places", "2 min ago") doesn't mint a fresh item key on every reload
+// — which would re-alert for the same card on every single cycle. Off by
+// default so two items distinct only by a number (an absolute timestamp, a
+// batch #) stay distinct. Must be passed IDENTICALLY to the baseline collect in
+// startRefresh and the per-cycle collect in doMonitorRefresh: keys built with
+// different options never compare equal.
+function itemKeyOpts(settings) {
+  return (settings.noiseTolerant && settings.collapseDigits !== false)
+    ? { collapseDigits: true }
+    : undefined;
+}
+
 // Desktop-notification body for a per-item batch: "3 new matches for '…'" (or
 // "…disappeared" in inverse mode). Distinct from the boolean path's single-line
 // message so the user can tell a fresh-arrival alert from a page-level one.
@@ -701,13 +755,25 @@ function perItemMessage(settings, count) {
 }
 
 async function doMonitorRefresh(tabId, job) {
+  // A keyword takes precedence over generic change-monitoring. When one is set,
+  // the keyword is the signal of interest, so we skip the page-change path
+  // entirely below — otherwise every dynamic page (timestamps, ads, counters)
+  // would beep on essentially every reload regardless of the keyword.
+  // The matcher (multi-keyword / whole-word / case / regex) is compiled once at
+  // job start and cached on job._matcher; recompile lazily if it's missing.
+  const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
+  const hasKeyword = matcher.ok && !matcher.empty;
+
   // Step 1: Read current page content BEFORE reloading.
   // Sound must also fire BEFORE reload — the content script is destroyed during navigation.
-  // Per-item detection ("alert on each new match") needs a keyword AND a selector
-  // (each matched element is one item); when on, readPageText returns one entry
-  // per element instead of a single blob so we can diff which items are present.
-  const perItem = !!(job.settings.kwPerItem && job.settings.watchSelector &&
-    typeof job.settings.keyword === 'string' && job.settings.keyword.trim());
+  // Per-item detection ("alert on each new match") needs a LIVE keyword matcher
+  // AND a selector (each matched element is one item); when on, readPageText
+  // returns one entry per element instead of a single blob so we can diff which
+  // items are present. Gated on the compiled matcher — not the raw keyword text
+  // — so a refused/broken regex or a degenerate keyword falls through to the
+  // string path, where change detection (monitorMode) still runs instead of
+  // being silently swallowed by an alert path that can never match.
+  const perItem = !!(job.settings.kwPerItem && job.settings.watchSelector && hasKeyword);
   let results;
   try {
     results = await chrome.scripting.executeScript({
@@ -727,14 +793,18 @@ async function doMonitorRefresh(tabId, job) {
   const currentContent = (results && results[0] && results[0].result) || '';
   const prevContent = job.previousContent; // null/undefined = no baseline yet
 
-  // An empty read means the page hadn't rendered when executeScript landed (slow
+  // A failed read means the page hadn't rendered when executeScript landed (slow
   // load at a short interval, mid-navigation) — it is not evidence about the
   // page. Treating it as real would fire false alerts in both directions: the
   // next full read looks like "keyword appeared"/"page changed", and in inverse
   // mode the empty read itself looks like "keyword disappeared" (worse, stop-on-
   // keyword/change would then kill the job). Same policy as startRefresh's
   // initialContent guard: skip detection, keep the old baseline, just reload.
-  if (currentContent.length === 0) {
+  // String path: a failed read IS the empty string. Per-item path: a failed read
+  // is null (→ '' above); an EMPTY ARRAY is a real "rendered page, zero items"
+  // observation and must flow through — it is the state an alert-on-arrival
+  // watch typically starts from, and in inverse mode it is the fire condition.
+  if (perItem ? !Array.isArray(currentContent) : currentContent.length === 0) {
     await doRefresh(tabId, job);
     return;
   }
@@ -749,41 +819,33 @@ async function doMonitorRefresh(tabId, job) {
   const snoozed = job._snoozeUntil && Date.now() < job._snoozeUntil;
   const muted = (channel) => !!snoozed || ARPQuietHours.isChannelMuted(nowDate, job.settings.quietHours, channel);
 
-  // A keyword takes precedence over generic change-monitoring. When one is set,
-  // the keyword is the signal of interest, so we skip the page-change path
-  // entirely below — otherwise every dynamic page (timestamps, ads, counters)
-  // would beep on essentially every reload regardless of the keyword.
-  // The matcher (multi-keyword / whole-word / case / regex) is compiled once at
-  // job start and cached on job._matcher; recompile lazily if it's missing.
-  const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
-  const hasKeyword = matcher.ok && !matcher.empty;
-
   // ── Per-item detection ("alert on each new match") ──
-  // currentContent is the per-element array from the perItem read. Rather than a
-  // page-level absent→present boolean, diff the SET of matching item keys against
-  // last cycle's set and alert on each NEW one (or each DEPARTED one in inverse
+  // currentContent is the per-element array from the perItem read (the guard
+  // above ensured it; [] = a real empty list). Rather than a page-level
+  // absent→present boolean, diff the SET of matching item keys against last
+  // cycle's set and alert on each NEW one (or each DEPARTED one in inverse
   // mode) — so a fresh matching card fires even while earlier matches stay on
   // screen. job._seenKeys is the baseline (persisted across worker restarts); a
   // null set means "no baseline yet" and never fires (cycle 1). Taken whenever the
   // read was per-item, so the item array never flows into the string path below.
   if (perItem) {
-    if (hasKeyword) {
-      const items = Array.isArray(currentContent) ? currentContent : [];
-      const currKeys = ARPItemDetect.collectMatches(items, matcher);
-      const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
-      const newKeys = prevKeys
-        ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
-        : [];
-      job._seenKeys = currKeys;   // advance the baseline every cycle
-      job.previousContent = null; // per-item uses _seenKeys, not the flat snapshot
-      if (newKeys.length > 0) {
-        const stopped = await deliverKeywordAlert(tabId, job, muted, {
-          count: newKeys.length,
-          message: perItemMessage(job.settings, newKeys.length),
-          snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
-        });
-        if (stopped) return; // stopOnKeyword stopped the job — no reload
-      }
+    // Exclusion filter, compiled once per job like _matcher (lazily after a
+    // worker restart — rehydrated jobs don't carry it).
+    const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
+    const currKeys = ARPItemDetect.collectMatches(currentContent, matcher, itemKeyOpts(job.settings), exclude);
+    const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+    const newKeys = prevKeys
+      ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
+      : [];
+    job._seenKeys = currKeys;   // advance the baseline every cycle
+    job.previousContent = null; // per-item uses _seenKeys, not the flat snapshot
+    if (newKeys.length > 0) {
+      const stopped = await deliverKeywordAlert(tabId, job, muted, {
+        count: newKeys.length,
+        message: perItemMessage(job.settings, newKeys.length),
+        snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
+      });
+      if (stopped) return; // stopOnKeyword stopped the job — no reload
     }
     // Reload + deliver any deferred (after-reload) flash, mirroring the tail of
     // the string path below.
@@ -919,12 +981,13 @@ async function startRefresh(tabId, settings) {
   }
 
   // Compiled once here so the per-item baseline below and the job's cached
-  // _matcher share one compile.
+  // _matcher / _excludeMatcher share one compile.
   const matcher = buildMatcher(settings);
+  const excludeMatcher = buildExcludeMatcher(settings);
   // Per-item baseline: seed the seen-set so cycle 1 doesn't alert for every
   // matching item already present at start (mirrors previousContent's role).
-  const perItem = !!(settings.kwPerItem && settings.watchSelector &&
-    typeof settings.keyword === 'string' && settings.keyword.trim());
+  // Same gate as doMonitorRefresh: a live compiled matcher, not raw keyword text.
+  const perItem = !!(settings.kwPerItem && settings.watchSelector && matcher.ok && !matcher.empty);
   let initialSeenKeys = null;
   try {
     const results = await chrome.scripting.executeScript({
@@ -934,14 +997,14 @@ async function startRefresh(tabId, settings) {
     });
     const raw = results && results[0] && results[0].result;
     if (perItem) {
-      // ≥1 item read ⇒ a real baseline — even if nothing matches yet ([]), that's
-      // a genuine "nothing present at start" so a later arrival fires. Zero items
-      // (couldn't read / not rendered) ⇒ null = skip cycle 1, same as below.
-      const items = Array.isArray(raw) ? raw : [];
-      if (items.length > 0) {
-        initialSeenKeys = (matcher.ok && !matcher.empty)
-          ? ARPItemDetect.collectMatches(items, matcher) : [];
-      }
+      // Any ARRAY read — including [] — is a real baseline. [] means "the page
+      // rendered and zero items are present", the normal starting state for an
+      // alert-on-arrival watch: the FIRST later arrival must fire against it.
+      // null (couldn't read / not rendered / bad selector) ⇒ no baseline yet =
+      // the first successful cycle re-baselines without firing, same as below.
+      initialSeenKeys = Array.isArray(raw)
+        ? ARPItemDetect.collectMatches(raw, matcher, itemKeyOpts(settings), excludeMatcher)
+        : null;
     } else {
       // Only use as baseline if we got real content (non-empty).
       // If empty/null, leave previousContent as null — the keyword check
@@ -963,6 +1026,7 @@ async function startRefresh(tabId, settings) {
     previousContent: initialContent,  // null = no baseline yet, skip first cycle
     _seenKeys: initialSeenKeys,       // per-item baseline (null = no baseline yet)
     _matcher: matcher,                // compiled once; reused every cycle
+    _excludeMatcher: excludeMatcher,  // per-item "skip items containing" filter
     _lastRefresh: 0,                  // no refresh has fired yet
     _timer: null,                     // short-interval setTimeout handle
   };
@@ -1133,6 +1197,10 @@ async function saveJobToStorage(tabId, settings) {
       // alarm-backed recheck lets the MV3 worker idle out). Quiet/offline pauses
       // are re-derived from the clock/navigator.onLine and need no persistence.
       manualPause: !!(job && job._manualPause),
+      // Snooze deadline (#2): persist so a 15-minute snooze outlives the
+      // worker (which idles out in ~30s). Expired deadlines are dropped at
+      // rehydrate time; the job's stop path deletes the whole entry.
+      snoozeUntil: (job && Number(job._snoozeUntil)) || 0,
       savedAt: Date.now(),
     };
   });
@@ -1461,6 +1529,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job.settings = { ...job.settings, ...msg.settings };
         job.nextRefresh = Date.now() + newInterval;
         job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
+        job._excludeMatcher = buildExcludeMatcher(job.settings); // kwExclude too
         job._prevFound = undefined; // cached verdict is for the OLD matcher — re-judge
         // Per-item seen-set is keyed by the OLD keyword/selector; a changed
         // keyword would make every new-keyword match look "new" and fire a burst.
