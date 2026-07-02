@@ -506,6 +506,11 @@
       kwWholeWord: !!s.kwWholeWord,
       kwRegex,
       kwInverse: !!s.kwInverse,
+      // Per-item detection (alert on each new matching item; needs watchSelector).
+      kwPerItem: !!s.kwPerItem,
+      // Per-item exclusion terms. Always matched as LITERAL whole words by the
+      // background (never regex), so length is the only thing to bound here.
+      kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, MAX_KEYWORD_LEN) : '',
       stopOnKeyword: !!s.stopOnKeyword,
       stopOnChange: !!s.stopOnChange,
       // Click-to-stop. Carried so a rule-started job honors it like a popup- or
@@ -653,6 +658,9 @@
         if (!isPlainObject(val)) { out.popupSettings = {}; continue; }
         const ps = safeShallowCopy(val);
         if (typeof ps.keyword === 'string') ps.keyword = sanitizeKeywordPattern(ps.keyword);
+        // Per-item exclusion terms: literal-only downstream (no regex mode to
+        // guard), so the length cap is the whole sanitation.
+        if (typeof ps.kwExclude === 'string') ps.kwExclude = sanitizeKeywordPattern(ps.kwExclude);
         if (ps.kwRegex && !isSafeRegex(ps.keyword)) {
           ps.kwRegex = false;
           errors.push('disabled an unsafe regex keyword');

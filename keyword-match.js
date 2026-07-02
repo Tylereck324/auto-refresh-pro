@@ -1,8 +1,8 @@
 // keyword-match.js — pure keyword-matching logic for the change/keyword monitor.
 //
 // Extracted from background.js so the matching rules (multi-keyword, whole-word,
-// case sensitivity, regex) are unit-testable and so the regex path is compiled
-// once per job rather than on every refresh cycle.
+// case sensitivity, regex, whitespace-normalized phrases) are unit-testable and
+// so the regex path is compiled once per job rather than on every refresh cycle.
 //
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('keyword-match.js') → globalThis.ARPKeyword
@@ -27,6 +27,20 @@
 
   function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Collapse every run of whitespace — spaces, tabs, and the newlines that
+  // innerText inserts between block elements — down to a single space, and trim.
+  // The text the matcher scans is document.body.innerText, where a card's bold
+  // title and the "By <author>" line beneath it are SEPARATE lines. So a pasted
+  // phrase that spans them ("… - Evaluation By Vortex Oasis") never appears as a
+  // literal substring of the raw text and could never match. Normalizing BOTH the
+  // needle and the haystack the same way makes phrase matching robust to line
+  // breaks and irregular spacing. Same idiom normalize.js uses for the
+  // change-detection path. Deliberately NOT applied in regex mode, where the user
+  // may match whitespace on purpose (\n, \s, runs of spaces).
+  function normalizeWs(s) {
+    return typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
   }
 
   // Split a raw keyword string into individual terms (comma-separated = match ANY).
@@ -80,7 +94,9 @@
     if (terms.length === 0) return { ok: true, empty: true, test: () => false };
 
     if (settings.kwWholeWord) {
-      const body = terms.map(escapeRegex).join('|');
+      // Normalize each term's internal whitespace before escaping so a phrase
+      // term ("in  stock") matches against the equally-normalized haystack.
+      const body = terms.map(t => escapeRegex(normalizeWs(t))).join('|');
       let re;
       try {
         // Unicode-aware word boundaries. \b is ASCII-only (\w), so with it a
@@ -100,21 +116,25 @@
       }
       return {
         ok: true, empty: false,
-        test: (text) => typeof text === 'string' && re.test(text),
+        test: (text) => typeof text === 'string' && re.test(normalizeWs(text)),
       };
     }
 
-    // Plain (case-insensitive by default) substring, ANY of the terms.
-    const needles = caseSensitive ? terms : terms.map(t => t.toLowerCase());
+    // Plain (case-insensitive by default) substring, ANY of the terms. Both the
+    // needle and the haystack are whitespace-normalized (see normalizeWs) so a
+    // phrase matches across the line breaks innerText inserts between a card's
+    // title and its "By <author>" line, and across any irregular spacing.
+    const fold = caseSensitive ? normalizeWs : (s) => normalizeWs(s).toLowerCase();
+    const needles = terms.map(fold);
     return {
       ok: true, empty: false,
       test: (text) => {
         if (typeof text !== 'string') return false;
-        const hay = caseSensitive ? text : text.toLowerCase();
+        const hay = fold(text);
         return needles.some(n => hay.includes(n));
       },
     };
   }
 
-  return { compileMatcher, parseKeywords, escapeRegex, MAX_REGEX_SCAN };
+  return { compileMatcher, parseKeywords, escapeRegex, normalizeWs, MAX_REGEX_SCAN };
 });

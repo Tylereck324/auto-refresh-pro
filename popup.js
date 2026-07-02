@@ -118,6 +118,9 @@ function bindEvents() {
   // is flagged (and refused) before it can be saved or started.
   document.getElementById('optKeyword').addEventListener('input', validateKeywordRegex);
   document.getElementById('optKwRegex').addEventListener('change', validateKeywordRegex);
+  // The per-item toggle's "needs a selector" hint is keyword-aware (it only nudges
+  // while keyword detection is in use), so refresh it as the keyword changes too.
+  document.getElementById('optKeyword').addEventListener('input', validateSelector);
 
   // Adaptive backoff is mutually exclusive with Randomize (one fixed-ish base
   // interval to ramp vs. a re-rolled random range). Toggling one clears the other,
@@ -128,6 +131,9 @@ function bindEvents() {
   // Live-validate the CSS selector so an invalid one is flagged before it silently
   // falls back to whole-page reads.
   document.getElementById('optWatchSelector').addEventListener('input', validateSelector);
+  // The exclude filter's enabled state follows the per-item toggle (see
+  // updatePerItemEnabled), so re-evaluate when it's flipped.
+  document.getElementById('optKwPerItem').addEventListener('change', validateSelector);
 
   // Adaptive-max cap: live-apply on edit (debounced).
   document.getElementById('optAdaptiveMax').addEventListener('input', applyAdaptiveMaxDebounced);
@@ -144,8 +150,8 @@ function bindEvents() {
 
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
-   'optKwCase','optKwWhole','optKwRegex','optKwInverse','optBeepUntilAck',
-   'optFlashOnKeyword','optWatchSelector',
+   'optKwCase','optKwWhole','optKwRegex','optKwInverse','optKwPerItem','optBeepUntilAck',
+   'optFlashOnKeyword','optWatchSelector','optKwExclude',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -171,6 +177,11 @@ function debounce(fn, ms) {
   // stale apply would fire ~500ms after the deliberate one.
   debounced.cancel = function () {
     if (t) { clearTimeout(t); t = null; }
+  };
+  // Run a pending call NOW (no-op when idle) — for the popup's pagehide flush,
+  // where a timer scheduled in a closing page would never fire.
+  debounced.flush = function () {
+    if (t) { clearTimeout(t); t = null; fn(); }
   };
   return debounced;
 }
@@ -322,6 +333,33 @@ function validateSelector() {
   }
   input.classList.toggle('invalid', bad);
   if (hint) hint.classList.toggle('show', bad);
+  updatePerItemEnabled(val.length > 0 && !bad);
+}
+
+// Per-item detection needs a (valid) selector to define item boundaries, so the
+// toggle is disabled until one is entered. Disabling also visually dims it (the
+// kw-flag picks up :disabled styling) and the "enter a selector" hint shows.
+function updatePerItemEnabled(hasSelector) {
+  const cb   = document.getElementById('optKwPerItem');
+  const flag = document.getElementById('perItemFlag');
+  const hint = document.getElementById('perItemHint');
+  if (!cb) return;
+  cb.disabled = !hasSelector;
+  if (flag) flag.style.opacity = hasSelector ? '' : '0.5';
+  // Explain the disabled state: per-item needs a selector for item boundaries.
+  // Surface the "enter a selector" nudge whenever the box is disabled while the
+  // user is actually doing keyword detection (or has ticked it) — otherwise a
+  // greyed checkbox reads as "the keyword disabled this", which it didn't.
+  const hasKeyword = document.getElementById('optKeyword').value.trim().length > 0;
+  if (hint) hint.classList.toggle('show', !hasSelector && (hasKeyword || cb.checked));
+  // The "skip items containing" filter only acts in per-item mode, so it follows
+  // the toggle: editable only while per-item is available AND checked (its
+  // stored value survives either way — disabling just dims it).
+  const ex = document.getElementById('optKwExclude');
+  const exRow = document.getElementById('kwExcludeRow');
+  const exEnabled = hasSelector && cb.checked;
+  if (ex) ex.disabled = !exEnabled;
+  if (exRow) exRow.style.opacity = exEnabled ? '' : '0.5';
 }
 
 // Editing the random range is part of the same live-apply contract as the
@@ -449,6 +487,8 @@ function readPopupState() {
     kwWholeWord: el('optKwWhole').checked,
     kwRegex: el('optKwRegex').checked,
     kwInverse: el('optKwInverse').checked,
+    kwPerItem: el('optKwPerItem').checked,
+    kwExclude: el('optKwExclude').value.trim().slice(0, 200),
     stopOnKeyword: el('optStopOnKeyword').checked,
     stopOnChange: el('optStopOnChange').checked,
     beepUntilAck: el('optBeepUntilAck').checked,
@@ -634,9 +674,30 @@ function applyStatus(resp) {
 // globalSettings (Settings page) and are merged back in at gather time, both
 // here and in the background's hotkey-toggle handler.
 function saveSettings() {
-  chrome.storage.local.set({ popupSettings: readPopupState() });
+  chrome.storage.local.set({ popupSettings: readPopupState() }, () => {
+    // Surface a rejected write (quota, corruption): the popup saves silently in
+    // the background on every edit, so without this banner a failed save means
+    // the user's changes just quietly revert the next time the popup opens.
+    const banner = document.getElementById('saveError');
+    if (!banner) return;
+    if (chrome.runtime.lastError) {
+      banner.textContent = '⚠ Settings not saved: ' + chrome.runtime.lastError.message;
+      banner.classList.add('show');
+    } else {
+      banner.classList.remove('show');
+    }
+  });
 }
 const saveSettingsDebounced = debounce(saveSettings, 300);
+
+// Flush the pending debounced save when the popup closes. The popup can be
+// dismissed (click-away, Esc, starting a job that focuses the page) within the
+// 300ms debounce window, and a timer in a closing popup never fires — the last
+// edit would silently revert. pagehide is the last event Chrome reliably
+// delivers to a closing popup, and the storage write outlives the page.
+window.addEventListener('pagehide', () => {
+  saveSettingsDebounced.flush();
+});
 
 // Render the interval preset pills and bind their click handlers. Called once
 // immediately with the built-in defaults (avoids an empty-grid flash) and again
@@ -721,6 +782,7 @@ function loadSettings() {
       setCheckbox('optKwWhole', s.kwWholeWord);
       setCheckbox('optKwRegex', s.kwRegex);
       setCheckbox('optKwInverse', s.kwInverse);
+      setCheckbox('optKwPerItem', s.kwPerItem);
       setCheckbox('optBeepUntilAck', s.beepUntilAck);
       setCheckbox('optFlashOnKeyword', s.flashOnKeyword);
       setCheckbox('optAdaptive', s.adaptive);
@@ -730,6 +792,7 @@ function loadSettings() {
 
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
       if (s.watchSelector) document.getElementById('optWatchSelector').value = s.watchSelector;
+      if (s.kwExclude) document.getElementById('optKwExclude').value = s.kwExclude;
     }
 
     highlightSelectedPreset();

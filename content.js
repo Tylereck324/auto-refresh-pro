@@ -4,6 +4,21 @@
   if (window.__autoRefreshInjected) return;
   window.__autoRefreshInjected = true;
 
+  // Sweep DOM left by an orphaned pre-reload copy of this script. After an
+  // extension reload/update the background re-injects content.js into a FRESH
+  // isolated world — the old world's window guard isn't visible here, and its
+  // script only removes its own overlay when it next touches a chrome API and
+  // notices the dead runtime (handleContextInvalidated). Until then the page
+  // would show two stacked overlays: the live one and the orphan's, frozen at
+  // whatever countdown it last painted. On a normal page load these elements
+  // can't exist, so this is a no-op. (#__ar_styles is swept too so an updated
+  // version's overlay isn't styled by the previous version's stale CSS; the
+  // flash element self-removes on a plain-DOM timer, so it needs no sweep.)
+  for (const id of ['__ar_overlay', '__ar_styles']) {
+    const stale = document.getElementById(id);
+    if (stale) stale.remove();
+  }
+
   let overlayEl  = null;
   let tickInterval = null;
   let deadline      = 0;  // absolute timestamp of the next refresh (job.nextRefresh)

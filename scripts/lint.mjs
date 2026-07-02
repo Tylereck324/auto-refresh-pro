@@ -46,6 +46,13 @@ if (manifest) {
   const csp = manifest.content_security_policy?.extension_pages || '';
   if (csp && /unsafe-inline|unsafe-eval|\bhttp:/.test(csp)) fail('CSP weakened: ' + csp);
   else ok('CSP present and strict');
+  // Version sync: a release zip is built from manifest.version, so the two
+  // declared versions drifting means a half-bumped release.
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    if (pkg.version === manifest.version) ok('version in sync (' + pkg.version + ')');
+    else fail(`version mismatch: manifest.json ${manifest.version} vs package.json ${pkg.version}`);
+  } catch (e) { fail('package.json invalid: ' + e.message); }
 }
 
 // 3. <script src> and importScripts targets resolve.

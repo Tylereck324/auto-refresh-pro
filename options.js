@@ -347,7 +347,15 @@ function gatherAndSave() {
   // above used to erase all of those on the first toggle flip.
   chrome.storage.local.get(['globalSettings'], function(data) {
     const merged = Object.assign({}, data.globalSettings, settings);
-    chrome.storage.local.set({ globalSettings: merged, customHotkey: currentHotkey || null }, showSaved);
+    chrome.storage.local.set({ globalSettings: merged, customHotkey: currentHotkey || null }, function() {
+      // A failed write (quota, corruption) surfaces only via lastError — without
+      // this check the page would flash "✓ Saved" over a save that didn't happen.
+      if (chrome.runtime.lastError) {
+        showToast('Save failed: ' + chrome.runtime.lastError.message, true);
+      } else {
+        showSaved();
+      }
+    });
   });
 }
 

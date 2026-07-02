@@ -6,6 +6,7 @@
   "description": "Auto Refresh Pro Chrome extension — security test suite",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "lint": "node scripts/lint.mjs"
+    "lint": "node scripts/lint.mjs",
+    "build": "node scripts/build.mjs"
   }
 }

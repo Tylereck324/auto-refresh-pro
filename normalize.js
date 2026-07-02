@@ -24,6 +24,11 @@
   // Collapse whitespace runs to a single space and trim. When collapseDigits is
   // set, runs of digits become a single '0' so timestamps/counters/IDs that tick
   // every reload don't read as a change.
+  // NOTE: item-detect.js's itemKey applies the same collapse-digits/whitespace
+  // idiom when building per-item keys (wired to the same "Ignore noise" settings
+  // via background.itemKeyOpts). If you change what counts as noise here, change
+  // it there too — otherwise the change path and the per-item path disagree on
+  // whether a ticking number makes an item "different".
   function normalize(text, opts) {
     opts = opts || {};
     if (typeof text !== 'string') return '';
