@@ -13,7 +13,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const PREFIXES = ['kw', 'chg', 'refresh'];
+  const PREFIXES = ['kw', 'chg', 'refresh', 'away'];
 
   // Build a notification id of the form `<prefix>_<tabId>_<stamp>`.
   function buildNotifId(prefix, tabId, stamp) {
@@ -24,7 +24,7 @@
   // scheme (e.g. an old auto-generated id).
   function parseNotifTabId(id) {
     if (typeof id !== 'string') return null;
-    const m = /^(kw|chg|refresh)_(\d+)_/.exec(id);
+    const m = /^(kw|chg|refresh|away)_(\d+)_/.exec(id);
     if (!m) return null;
     const tabId = parseInt(m[2], 10);
     return Number.isFinite(tabId) ? tabId : null;

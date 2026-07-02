@@ -57,6 +57,11 @@
       // Manual pause (#10) — restore so a paused job stays paused across a worker
       // restart until an explicit RESUME_JOB.
       _manualPause: !!stored.manualPause,
+      // Navigate-away pause (#12) — restore so a worker restart mid-absence
+      // neither re-notifies (the away EDGE checks _pauseReason) nor resumes
+      // reads on the wrong page (scheduleDomScan stays disarmed on 'away');
+      // cleared by the resume edges when the tab returns to the watched URL.
+      _pauseReason: stored.awayPause ? 'away' : null,
       // Notification snooze (#2) — restore so a 15-minute snooze isn't cut short
       // by the worker idling out mid-window (alerts would resume beeping while
       // the user believes they're muted). An expired or non-numeric deadline

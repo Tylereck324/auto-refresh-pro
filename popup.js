@@ -638,6 +638,7 @@ function applyStatus(resp) {
     if (job && job.paused) {
       const reasonText = job.pauseReason === 'offline' ? ' — offline'
         : job.pauseReason === 'quiet' ? ' — quiet hours'
+        : job.pauseReason === 'away' ? ' — away from page'
         : ''; // 'manual' (or unknown) → just "Paused"
       pauseNote.textContent = '⏸ Paused' + reasonText;
       pauseNote.classList.add('show');
