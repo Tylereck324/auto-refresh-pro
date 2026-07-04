@@ -583,6 +583,18 @@ function stopRenderLoop() {
   }
 }
 
+// Freeze the hero countdown while the job is paused: stop the ticking loop and
+// show a paused glyph instead of a time that would contradict the "⏸ Paused"
+// note. The hero's refresh/detection/active-tab stats stay live. The next
+// non-paused sync calls setDeadline, which restarts the loop and repaints.
+function showPausedCountdown() {
+  stopRenderLoop();
+  const display = document.getElementById('countdownDisplay');
+  const fill    = document.getElementById('progressFill');
+  if (display) display.textContent = '⏸';
+  if (fill)    fill.style.width = '100%';
+}
+
 function renderCountdown() {
   const display = document.getElementById('countdownDisplay');
   const fill    = document.getElementById('progressFill');
@@ -665,8 +677,16 @@ function applyStatus(resp) {
       setActiveUI(true);
     }
     optimisticUntil = 0; // state confirmed by the background
-    const total = (job.settings && (job.settings.currentInterval || job.settings.interval)) || jobTotal;
-    setDeadline(job.nextRefresh, total);
+    if (job.paused) {
+      // Paused: job.nextRefresh is a short re-check deadline (up to 5 min), not a
+      // real countdown to a refresh — draining it under "until next refresh"
+      // contradicts the "⏸ Paused" note above and stalls at 0:00. Freeze the hero
+      // timer instead; a later non-paused sync restarts it via setDeadline.
+      showPausedCountdown();
+    } else {
+      const total = (job.settings && (job.settings.currentInterval || job.settings.interval)) || jobTotal;
+      setDeadline(job.nextRefresh, total);
+    }
   } else if (isActive) {
     // Mirror case: UI optimistically active, broadcast has no job for this tab.
     // START_REFRESH inserts into activeJobs only after async work (tabs.get +

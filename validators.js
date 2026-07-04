@@ -71,13 +71,76 @@
     return raw.slice(0, MAX_KEYWORD_LEN);
   }
 
+  // A small alphabet spanning the character families a class or shorthand can
+  // pull in (lower/upper letter, digit, underscore, space, common punctuation,
+  // newline, non-ASCII). Used to approximate whether two alternation branches can
+  // match the SAME single character — see branchesCanOverlap.
+  const OVERLAP_SAMPLE = ['a', 'Z', '5', '_', ' ', ',', '.', '!', '-', '\n', 'é'];
+
+  function compileBranch(branch) {
+    try { return new RegExp('^(?:' + branch + ')'); }
+    catch (e) { return null; } // malformed in isolation → treated as non-overlapping
+  }
+
+  // Characters worth probing for overlap between two SPECIFIC branches: every
+  // literal / class-member / range-endpoint they mention (two overlapping ranges
+  // always share an endpoint, so testing endpoints catches them all), a
+  // representative for each shorthand, plus the generic OVERLAP_SAMPLE for the
+  // '.' / \w / \s cases. Deriving the probe set from the branches themselves
+  // closes the gap a fixed alphabet leaves — e.g. (b|[ab])+ overlaps only on 'b',
+  // ([a-c]|[b-d])+ only on 'b'/'c'. Over-producing is safe: every candidate is
+  // verified by a real one-char test, so a char neither branch matches can't
+  // create a false overlap and genuinely disjoint branches never flag.
+  function candidateOverlapChars(branch) {
+    const out = [];
+    for (let i = 0; i < branch.length; i++) {
+      const c = branch[i];
+      if (c === '\\') {
+        const n = branch[i + 1];
+        if (n === 'd' || n === 'D') out.push('5');
+        else if (n === 'w' || n === 'W') out.push('a', '5', '_');
+        else if (n === 's' || n === 'S') out.push(' ', '\n');
+        else if (n !== undefined) out.push(n); // escaped literal: \. \+ → '.' '+'
+        i++;
+        continue;
+      }
+      if (c === '.') { out.push('a', '5', ' '); continue; } // '.' matches almost anything
+      if ('[](){}^$|?*+'.indexOf(c) !== -1 || c === '-') continue; // regex syntax, not a literal
+      out.push(c); // a literal or class member
+    }
+    return out;
+  }
+
+  // Best-effort: can regex fragments `a` and `b` both match the same single
+  // character? Catches class / shorthand overlap that pure string comparison
+  // cannot — (a|[ab])+ , (b|[ab])+ , ([a-c]|[b-d])+ , (a|\w)+ , (a|[^b])+ — while
+  // leaving genuinely disjoint branches alone (\d vs ',' in (\d|,)+, 'a' vs 'b' in
+  // (a|b){2,4}, or [a-z] vs [A-Z]). Each branch is compiled once, anchored, and
+  // tested against ONE-character strings, so the probe can never backtrack; a
+  // branch that fails to compile in isolation is treated as non-overlapping (the
+  // other heuristics and the overall compile check still apply).
+  function branchesCanOverlap(a, b) {
+    const ra = compileBranch(a);
+    const rb = compileBranch(b);
+    if (!ra || !rb) return false;
+    const chars = new Set(OVERLAP_SAMPLE);
+    for (const c of candidateOverlapChars(a)) chars.add(c);
+    for (const c of candidateOverlapChars(b)) chars.add(c);
+    for (const c of chars) {
+      if (ra.test(c) && rb.test(c)) return true;
+    }
+    return false;
+  }
+
   // The exponential shape the nested-quantifier check misses: a QUANTIFIED
   // alternation group whose branches can match the same text, e.g. (a|a)+ ,
-  // (a|ab)* , and the common user idiom (.|\n)*keyword — none of which contain
-  // an inner quantifier. Branch overlap is approximated: an empty branch, an
-  // unescaped '.' in any branch (it overlaps every other branch), identical
-  // branches, or one branch a literal prefix of another. Only innermost
-  // (paren-free) groups are inspected — heuristic, not a proof.
+  // (a|ab)* , the common user idiom (.|\n)*keyword, and the character-class forms
+  // (a|[ab])+ / (a|\w)+ — none of which contain an inner quantifier. Branch
+  // overlap is approximated: an empty branch, an unescaped '.' in any branch (it
+  // overlaps every sibling), identical branches, one branch a literal prefix of
+  // another, OR two branches that can match the same single character
+  // (branchesCanOverlap — the class/shorthand case). Only innermost (paren-free)
+  // groups are inspected — heuristic, not a proof.
   function hasOverlappingAlternation(pattern) {
     const group = /\((?:\?:)?([^()]*\|[^()]*)\)(?:[+*]|\{\d+,?\d*\})/g;
     let m;
@@ -90,7 +153,48 @@
         for (let j = i + 1; j < branches.length; j++) {
           const b = branches[j];
           if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+          if (branchesCanOverlap(a, b)) return true; // class/shorthand overlap
         }
+      }
+    }
+    return false;
+  }
+
+  // Is there an UNBOUNDED quantifier (+ , * , or {n,}) at index `idx` of `s`?
+  function unboundedQuantAt(s, idx) {
+    const c = s[idx];
+    if (c === '+' || c === '*') return true;
+    if (c === '{') return /^\{\d+,\}/.test(s.slice(idx));
+    return false;
+  }
+
+  // True when an unbounded quantifier is applied to a GROUP whose interior also
+  // contains an unbounded quantifier — the (a+)+ family AND its paren-nested
+  // disguises ((a+))+ / (x(y+)z)+ that the flat [^)] regexes in isSafeRegex can't
+  // see past an inner ')'. Matches parens for real (skipping escaped chars and
+  // character classes) so extra wrapping can't hide the nesting.
+  function hasNestedQuantifier(pattern) {
+    const stack = [];
+    const groups = []; // [openIdx, closeIdx] for each matched pair
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === '\\') { i++; continue; }                 // skip an escaped char
+      if (c === '[') {                                    // skip a character class
+        i++;
+        while (i < pattern.length && pattern[i] !== ']') { if (pattern[i] === '\\') i++; i++; }
+        continue;
+      }
+      if (c === '(') stack.push(i);
+      else if (c === ')') { const open = stack.pop(); if (open !== undefined) groups.push([open, i]); }
+    }
+    for (const [open, close] of groups) {
+      if (!unboundedQuantAt(pattern, close + 1)) continue; // this group isn't unbounded-quantified
+      const inner = pattern.slice(open + 1, close);
+      for (let i = 0; i < inner.length; i++) {
+        const c = inner[i];
+        if (c === '\\') { i++; continue; }
+        if (c === '[') { i++; while (i < inner.length && inner[i] !== ']') { if (inner[i] === '\\') i++; i++; } continue; }
+        if (unboundedQuantAt(inner, i)) return true;
       }
     }
     return false;
@@ -106,6 +210,9 @@
     // Heuristic, not a proof.
     if (/\([^)]*[+*][^)]*\)\s*[+*]/.test(pattern)) return false;
     if (/\([^)]*[+*][^)]*\)\s*\{\d+,?\d*\}/.test(pattern)) return false;
+    // Deeper nested-quantifier check that sees THROUGH extra parentheses the flat
+    // [^)] heuristics above can't cross (e.g. ((a+))+ , (x(y+)z)+ , ((a*))* ).
+    if (hasNestedQuantifier(pattern)) return false;
     // Reject an unbounded open-ended repetition of a group: (...)+{n,} / (...){n,}
     if (/\)\s*\{\d+,\}/.test(pattern)) return false;
     // Reject quantified alternation groups with overlapping branches — the

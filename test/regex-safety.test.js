@@ -64,6 +64,37 @@ test('keeps accepting reasonable alternations', () => {
   assert.equal(V.isSafeRegex('\\$(\\d|,)+'), true);       // \d vs ',' — disjoint
 });
 
+test('rejects nested quantifiers hidden behind extra parentheses', () => {
+  // The exponential (a+)+ family disguised so the flat [^)] heuristic can't see
+  // the inner quantifier across an inner ')'. The paren-matching check must.
+  assert.equal(V.isSafeRegex('((a+))+z'), false);
+  assert.equal(V.isSafeRegex('((a*))*z'), false);
+  assert.equal(V.isSafeRegex('((a+))*z'), false);
+  assert.equal(V.isSafeRegex('(x(y+)z)+w'), false); // inner quantifier not adjacent to the outer ')'
+});
+
+test('rejects character-class / shorthand alternation overlap', () => {
+  // Exponential without a nested quantifier: a quantified alternation whose
+  // branches overlap through a class/shorthand, invisible to string comparison.
+  assert.equal(V.isSafeRegex('(a|[ab])+z'), false);
+  assert.equal(V.isSafeRegex('(a|[a-z])+z'), false);
+  assert.equal(V.isSafeRegex('(a|\\w)+z'), false);
+  assert.equal(V.isSafeRegex('([a-c]|[a-z])+z'), false);
+  assert.equal(V.isSafeRegex('(a|[^b])+z'), false);   // negated class still contains 'a'
+  assert.equal(V.isSafeRegex('(5|\\d)+z'), false);    // digit literal ⊂ \d
+  // Overlap on a character that a fixed probe alphabet would miss — the probe set
+  // is derived from the branches themselves (literals + range endpoints).
+  assert.equal(V.isSafeRegex('(b|[ab])+z'), false);      // overlap only on 'b'
+  assert.equal(V.isSafeRegex('([a-c]|[b-d])+z'), false); // ranges overlap on 'b'/'c'
+  assert.equal(V.isSafeRegex('([m-p]|[o-r])+z'), false); // ranges overlap on 'o'/'p'
+  // Genuinely DISJOINT branches must still be accepted (only polynomial, bounded
+  // by the match-time scan cap) so real keyword regexes aren't over-rejected.
+  assert.equal(V.isSafeRegex('(a|\\d)+9'), true);     // letter vs digit — disjoint
+  assert.equal(V.isSafeRegex('(\\d|,)+'), true);
+  assert.equal(V.isSafeRegex('([a-z]|[A-Z])+x'), true); // disjoint ranges (case)
+  assert.equal(V.isSafeRegex('([m-p]|[q-t])+x'), true); // adjacent, non-overlapping ranges
+});
+
 test('sanitizeKeywordPattern caps length and coerces non-strings', () => {
   assert.equal(V.sanitizeKeywordPattern('abc'), 'abc');
   assert.equal(V.sanitizeKeywordPattern('a'.repeat(V.MAX_KEYWORD_LEN + 50)).length, V.MAX_KEYWORD_LEN);

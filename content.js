@@ -321,6 +321,10 @@
       paused = p;
       pauseBtn.textContent = p ? '▶' : '⏸';
       if (sublabel) sublabel.textContent = p ? 'paused' : 'until next refresh';
+      // Freeze the countdown while paused so it doesn't keep draining toward a
+      // refresh that won't happen and then stall at 0:00. On resume a fresh
+      // COUNTDOWN_START supplies a new deadline and restarts the tick.
+      if (p) { stopTick(); if (timer) timer.textContent = '⏸'; }
     }
     overlayEl._setPaused = setPaused;
 
@@ -369,6 +373,7 @@
     // Store refs for renderTick
     overlayEl._timer = timer;
     overlayEl._fill  = fill;
+    overlayEl._sublabel = sublabel; // so a background PAUSED message can annotate the reason
 
     // ── Scale everything proportionally with overlay size ──
     // forcedW/forcedH let the resize handler pass the dimensions it just computed,
@@ -584,6 +589,28 @@
     setTimeout(() => { if (el && el.parentNode) el.remove(); }, 240);
   }
 
+  // ── Paused-state reflection ───────────────────────────────────────────────
+  // Freeze the overlay for a background-driven pause: the overlay's own
+  // _setPaused stops the tick and shows ⏸; here we annotate the reason. Shared by
+  // the PAUSED message AND the initial GET_STATUS sync, so a tab reloaded while
+  // its job is paused shows "paused" rather than a countdown draining to 0:00. A
+  // later COUNTDOWN_START (resume/refresh) clears it. No overlay yet ⇒ just record
+  // that we're paused so a freshly-built overlay starts in the right state.
+  function pausedSublabelText(reason) {
+    return reason === 'offline' ? 'paused — offline'
+      : reason === 'quiet' ? 'paused — quiet hours'
+      : reason === 'away' ? 'paused — away'
+      : 'paused';
+  }
+  function applyOverlayPaused(reason) {
+    if (overlayEl && overlayEl._setPaused) {
+      overlayEl._setPaused(true);
+      if (overlayEl._sublabel) overlayEl._sublabel.textContent = pausedSublabelText(reason);
+    } else {
+      paused = true;
+    }
+  }
+
   // ── Tick logic ────────────────────────────────────────────────────────────
   // Render the countdown as a pure function of the absolute deadline, mirroring
   // the popup. The tick is self-scheduled to land just past each wall-clock
@@ -700,6 +727,10 @@
           ensureOverlay();
           startCountdown(resp.job.nextRefresh, total);
           refreshHint();
+          // The job may already be paused (tab reloaded while paused, or an
+          // auto-pause is active): reflect it instead of a live-looking countdown
+          // that would just drain to 0:00. A later COUNTDOWN_START clears it.
+          if (resp.job.paused) applyOverlayPaused(resp.job.pauseReason);
         }
       } else if (attempt < 3) {
         // No job for this tab is the common case (most pages never start one),
@@ -912,6 +943,14 @@
           break;
         case 'KEYWORD_FLASH':
           startKeywordFlash();
+          sendResponse({ ok: true });
+          break;
+        case 'PAUSED':
+          // The background paused this job (quiet hours / offline / navigate-away).
+          // Reflect it so the overlay doesn't sit at a stale "until next refresh"
+          // or stall at 0:00. Manual pause is already handled by the overlay's own
+          // button; a duplicate signal here is idempotent.
+          applyOverlayPaused(msg.reason);
           sendResponse({ ok: true });
           break;
 

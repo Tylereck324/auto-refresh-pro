@@ -43,6 +43,25 @@ const ALARM_MIN_MS = 30000;
 // spin while paused.
 const PAUSE_RECHECK_MS = 5 * 60 * 1000;
 
+// Cadence (ms) at which a paused job wakes to re-check whether it can resume.
+//   • Upper cap: PAUSE_RECHECK_MS (60s when offline, which resumes a touch
+//     quicker after the network returns) so resume isn't delayed indefinitely by
+//     a very long configured interval.
+//   • Lower FLOOR: ALARM_MIN_MS. This is the fix for the "fast interval doesn't
+//     spin" intent above — without a floor, Math.min(curInterval, cap) makes a
+//     5s job re-check every 5s, and a sub-ALARM_MIN_MS delay runs on a
+//     setTimeout loop (scheduleNext) whose every tick resets the MV3 idle timer,
+//     keeping the worker awake for a job that is deliberately dormant. Flooring
+//     at ALARM_MIN_MS forces the recheck onto chrome.alarms, so the worker can
+//     sleep between wakes. Resume promptness is unaffected: away/manual resume
+//     via their own edges (onUpdated / RESUME_JOB), and 30s is ample for the
+//     clock-driven quiet/offline resumes.
+function pauseRecheckMs(baseInterval, offline) {
+  const cap = offline ? 60000 : PAUSE_RECHECK_MS;
+  const base = Number.isFinite(baseInterval) && baseInterval > 0 ? baseInterval : cap;
+  return Math.max(ALARM_MIN_MS, Math.min(base, cap));
+}
+
 // Delay before the resume cycle after the tab returns to the watched page (#12).
 // Long enough for the SPA shell to start rendering, short enough that an item
 // which arrived while away alerts within moments of coming back.
@@ -573,16 +592,21 @@ async function fireRefresh(tabId) {
     : (isOffline() ? 'offline' : null);
   if (pauseReason) {
     // Notify on the away EDGE only (not every recheck) — see notifyAwayPause.
-    const awayEdge = pauseReason === 'away' && job._pauseReason !== 'away';
+    const prevReason = job._pauseReason;
+    const awayEdge = pauseReason === 'away' && prevReason !== 'away';
     job._pauseReason = pauseReason;
     // Disarm the live-watch chain too — its ticks would otherwise keep the MV3
     // worker awake all night for a job that is deliberately dormant. Re-armed
     // on the resume edge below (and by RESUME_JOB for manual pauses).
     clearDomScan(job);
-    const recheck = Math.min(curInterval, pauseReason === 'offline' ? 60000 : PAUSE_RECHECK_MS);
+    const recheck = pauseRecheckMs(curInterval, pauseReason === 'offline');
     job.nextRefresh = now + recheck;
     scheduleNext(tabId, recheck);
     broadcastStatus();
+    // Reflect the pause on the in-page overlay (edge only — a long overnight pause
+    // must not message every recheck). Without this the overlay's countdown would
+    // drain to 0:00 and freeze, since broadcastStatus reaches only extension pages.
+    if (prevReason !== pauseReason) sendOverlayPaused(tabId, pauseReason);
     if (awayEdge) {
       notifyAwayPause(tabId);
       // Persist so an away pause survives a worker restart without re-notifying
@@ -936,6 +960,16 @@ function notifyAwayPause(tabId) {
   });
 }
 
+// Best-effort: tell the content script its job just paused, so the in-page
+// overlay freezes its countdown and shows the reason instead of draining to 0:00
+// as if still running. broadcastStatus() only reaches extension pages (popup /
+// Manage), so the overlay needs this dedicated signal. Fire-and-forget — no
+// retry/inject: if there's no content script the overlay isn't showing anyway,
+// and the resume path re-syncs it with a fresh COUNTDOWN_START.
+function sendOverlayPaused(tabId, reason) {
+  chrome.tabs.sendMessage(tabId, { type: 'PAUSED', reason }).catch(() => {});
+}
+
 // Event-edge entry (onUpdated URL change, live-watch tick). Idempotent — the
 // _pauseReason check also makes it one-notification-per-edge. Manual pause
 // dominates: the job is already dormant, so announcing an "away" pause on top
@@ -944,11 +978,11 @@ async function enterAwayPause(tabId, job) {
   if (job._manualPause || job._pauseReason === 'away') return;
   job._pauseReason = 'away';
   clearDomScan(job); // freeze the baseline: no reads while on the wrong page
-  const recheck = Math.min(
-    job.settings.currentInterval || computeInterval(job.settings), PAUSE_RECHECK_MS);
+  const recheck = pauseRecheckMs(job.settings.currentInterval || computeInterval(job.settings), false);
   job.nextRefresh = Date.now() + recheck;
   scheduleNext(tabId, recheck); // keep the job alive (and rehydratable) while away
   broadcastStatus();
+  sendOverlayPaused(tabId, 'away'); // freeze the overlay too (SPA route change: same tab, live overlay)
   notifyAwayPause(tabId);
   await saveJobToStorage(tabId, job.settings); // away survives worker restarts
 }
@@ -1951,6 +1985,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job._seenKeys = null;
         job._epoch = (job._epoch || 0) + 1; // invalidate any in-flight cycle's reschedule
 
+        // If the job is currently paused (manual / quiet / offline / away), apply
+        // the new settings + matcher but KEEP it paused: reschedule the RECHECK
+        // (not the new interval) and re-signal the paused overlay instead of an
+        // un-pausing COUNTDOWN_START — otherwise the overlay/popup would show the
+        // job running while the pause gate silently re-pauses it on the next tick.
+        // The new interval takes effect when the job actually resumes.
+        const pausedReason = job._manualPause ? 'manual' : (job._pauseReason || null);
+        if (pausedReason) {
+          const recheck = pauseRecheckMs(newInterval, pausedReason === 'offline');
+          job.nextRefresh = Date.now() + recheck;
+          scheduleNext(updateTabId, recheck);
+          clearDomScan(job); // keep live watch disarmed while paused (resume re-arms it)
+          sendOverlayPaused(updateTabId, pausedReason);
+          await saveJobToStorage(updateTabId, job.settings);
+          broadcastStatus();
+          sendResponse({ ok: true });
+          break;
+        }
+
         // Reschedule with the right mechanism for the new interval
         scheduleNext(updateTabId, newInterval);
         scheduleDomScan(updateTabId); // re-arm (or disarm) live watch per the new settings
@@ -2003,7 +2056,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         job._manualPause = true;
         clearAckBeeps(pTabId);
         clearDomScan(job); // paused = dormant; RESUME_JOB re-arms live watch
-        const recheck = Math.min(job.settings.currentInterval || computeInterval(job.settings), PAUSE_RECHECK_MS);
+        const recheck = pauseRecheckMs(job.settings.currentInterval || computeInterval(job.settings), false);
         job.nextRefresh = Date.now() + recheck;
         scheduleNext(pTabId, recheck);
         await saveJobToStorage(pTabId, job.settings); // persist the pause flag (survives worker restart)
@@ -2035,6 +2088,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!job) { sendResponse({ ok: false }); break; }
         const addMs = Math.min(60 * 60 * 1000, Math.max(1000, parseInt(msg.ms, 10) || 30000));
         job.nextRefresh = Math.max(job.nextRefresh, Date.now()) + addMs;
+        // Invalidate any in-flight cycle's reschedule (same guard UPDATE_INTERVAL
+        // uses). Without this, a +30s pressed while a refresh cycle is mid-flight
+        // (its executeScript + reload can take seconds) is clobbered when that
+        // cycle reaches its epoch-guarded reschedule and overwrites nextRefresh
+        // with the pre-extend deadline — silently dropping the user's extension.
+        job._epoch = (job._epoch || 0) + 1;
         scheduleNext(eTabId, Math.max(0, job.nextRefresh - Date.now()));
         sendCountdownStart(eTabId, 0);
         broadcastStatus();
