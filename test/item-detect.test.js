@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { itemKey, collectMatches, computeNewKeys } = require('../item-detect.js');
+const { itemKey, collectMatches, collectItems, computeNewKeys, parseItemMeta } = require('../item-detect.js');
 const { compileMatcher } = require('../keyword-match.js');
 
 // ── itemKey ──────────────────────────────────────────────────────────────────
@@ -172,4 +172,67 @@ test('end-to-end: a new card fires while persistent matches stay quiet', () => {
   const fired = computeNewKeys(k1, k2, false);
   assert.equal(fired.length, 1);
   assert.deepEqual(fired, [itemKey(cycle2[1])]);
+});
+
+// ── collectItems (link carry-through) ────────────────────────────────────────
+test('collectItems returns key/href/text per accepted item, deduped by key', () => {
+  const m = compileMatcher({ keyword: '- Evaluation' });
+  const items = [
+    { text: 'AI Videos - Evaluation\nBy Vortex Oasis', href: 'https://app.prolific.com/studies/abc' },
+    { text: 'Quick survey about coffee\nBy Someone', href: 'https://x/nomatch' }, // no keyword match
+    { text: 'AI Images - Evaluation\nBy Galactic Probe', href: 'https://app.prolific.com/studies/def' },
+    { text: 'AI Videos - Evaluation\nBy Vortex Oasis', href: 'https://dupe' },     // dupe of #0 by key
+  ];
+  const got = collectItems(items, m);
+  assert.equal(got.length, 2);
+  assert.deepEqual(got.map(c => c.key), [itemKey(items[0].text), itemKey(items[2].text)]);
+  // First occurrence wins the href; the later duplicate is dropped.
+  assert.equal(got[0].href, 'https://app.prolific.com/studies/abc');
+  assert.equal(got[1].href, 'https://app.prolific.com/studies/def');
+  // collectMatches is exactly the key-only view of the same result.
+  assert.deepEqual(collectMatches(items, m), got.map(c => c.key));
+});
+
+test('collectItems accepts bare strings too (href defaults to empty)', () => {
+  const m = compileMatcher({ keyword: 'x' });
+  assert.deepEqual(collectItems(['x'], m), [{ key: itemKey('x'), href: '', text: 'x' }]);
+  // Mixed/garbage entries are skipped just like collectMatches.
+  assert.deepEqual(collectItems([null, '', 42, { text: '' }, 'x'], m).map(c => c.key), [itemKey('x')]);
+  assert.deepEqual(collectItems(null, m), []);
+});
+
+test('collectItems href is dropped for a non-object item field', () => {
+  const m = compileMatcher({ keyword: 'x' });
+  // A matched string has no href; a matched object without href gets ''.
+  assert.deepEqual(collectItems([{ text: 'x' }], m)[0], { key: itemKey('x'), href: '', text: 'x' });
+});
+
+// ── parseItemMeta (best-effort alert enrichment) ─────────────────────────────
+test('parseItemMeta pulls title / £-per-hour / places / researcher', () => {
+  const meta = parseItemMeta('AI Videos - Evaluation\nBy Vortex Oasis\n£9.00 · £36.00/hr\n23 places');
+  assert.equal(meta.title, 'AI Videos - Evaluation');
+  assert.equal(meta.pay, '£36.00/hr');
+  assert.equal(meta.places, '23 places');
+  assert.equal(meta.researcher, 'Vortex Oasis');
+});
+
+test('parseItemMeta matches "per hour" wording and spots/place variants', () => {
+  assert.equal(parseItemMeta('Study\n$12 per hour\n1 spot').pay, '$12 per hour');
+  assert.equal(parseItemMeta('Study\n$12 per hour\n1 spot').places, '1 spot');
+  assert.equal(parseItemMeta('Study\n£8/hr\n5 places').pay, '£8/hr');
+});
+
+test('parseItemMeta omits fields it cannot find and is safe on junk', () => {
+  const meta = parseItemMeta('Just a plain title with nothing else');
+  assert.equal(meta.title, 'Just a plain title with nothing else');
+  assert.equal(meta.pay, undefined);
+  assert.equal(meta.places, undefined);
+  assert.equal(meta.researcher, undefined);
+  assert.deepEqual(parseItemMeta(''), {});
+  assert.deepEqual(parseItemMeta(42), {});
+});
+
+test('parseItemMeta does not mistake a bare total reward for an hourly rate', () => {
+  // "£9.00" alone (no /hr, no "per hour") must not be reported as pay.
+  assert.equal(parseItemMeta('Some study\n£9.00\n10 places').pay, undefined);
 });

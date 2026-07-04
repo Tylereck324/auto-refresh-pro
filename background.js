@@ -101,14 +101,34 @@ async function ensureOffscreen() {
   await creatingOffscreen;
 }
 
+// Tear the offscreen document down after a quiet spell. Without this it lived
+// forever after the first beep — a whole extra renderer process idling for the
+// rest of the browser session. The window is generous enough that the longest
+// repeat sequence (bounded ~10s in sounds.js) always finishes first; the next
+// beep just recreates the document via ensureOffscreen.
+const OFFSCREEN_IDLE_MS = 60000;
+let offscreenIdleTimer = null;
+function armOffscreenTeardown() {
+  if (offscreenIdleTimer) clearTimeout(offscreenIdleTimer);
+  offscreenIdleTimer = setTimeout(() => {
+    offscreenIdleTimer = null;
+    chrome.offscreen.closeDocument().catch(() => {});
+  }, OFFSCREEN_IDLE_MS);
+}
+
 async function playBeep(opts = {}) {
   const { volume = 0.9, tone = 'beep', repeat = 1 } = opts;
+  // Disarm any pending teardown BEFORE ensureOffscreen, so it can't close the
+  // document between the hasDocument() check and the message delivery.
+  if (offscreenIdleTimer) { clearTimeout(offscreenIdleTimer); offscreenIdleTimer = null; }
   try {
     await ensureOffscreen();
     return await deliverBeep({ volume, tone, repeat });
   } catch (e) {
     console.warn('Offscreen audio failed:', e);
     return false;
+  } finally {
+    armOffscreenTeardown();
   }
 }
 
@@ -354,6 +374,36 @@ async function tabMeta(tabId) {
 // was validated on input — defense in depth against a poisoned storage value.
 // fetch is AWAITED (a fire-and-forget fetch is cut off when the worker idles out)
 // behind an AbortController timeout so a hung endpoint can't wedge the cycle.
+//
+// When the alert carries per-item arrivals (info.items — each { href, text }),
+// the message is upgraded to a one-tap form: a Discord embed / Slack link per
+// study, so tapping it on a phone lands on the study itself, not the listing
+// page. With no items it emits exactly the legacy flat message.
+//
+// Per-item alert renders at most this many arrivals inline; a larger burst is
+// summarized as "…and N more" so one cycle can't exceed Discord/Slack limits.
+const WEBHOOK_ITEM_CAP = 5;
+
+// Slack mrkdwn treats & < > as control characters and uses <url|label> for
+// links, so a label carrying any of them corrupts parsing. Escape the three and
+// neutralize a stray pipe.
+function slackEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '/');
+}
+
+// Parse one arrival's card text into { meta, detail }: meta is the raw optional
+// fields (title/pay/places/researcher); detail is a compact "£/hr · N places ·
+// By X" one-liner for the alert body ('' when nothing parsed).
+function webhookItemDetail(text) {
+  const meta = ARPItemDetect.parseItemMeta(text || '');
+  const parts = [];
+  if (meta.pay) parts.push(meta.pay);
+  if (meta.places) parts.push(meta.places);
+  if (meta.researcher) parts.push('By ' + meta.researcher);
+  return { meta, detail: parts.join(' · ') };
+}
+
 async function sendWebhook(job, info) {
   const url = job.settings && job.settings.webhookUrl;
   if (!url || !ARPValidators.isSafeWebhookUrl(url)) return;
@@ -362,14 +412,63 @@ async function sendWebhook(job, info) {
     ? ('🔔 Keyword ' + (info.inverse ? 'disappeared from' : 'found on') + ' “' + info.title + '”: ' + info.keyword)
     : ('🔔 Page changed: “' + info.title + '”' + (info.snippet ? ('\n' + info.snippet) : ''));
   const message = line + '\n' + info.url;
+
+  // Per-item arrivals carry their own deep-link (the study), so when present we
+  // render a richer one-tap payload instead of the flat listing-page line. Only
+  // arrivals reach here (inverse/departures pass no items), so an item with no
+  // usable link still shows its title. Absent items ⇒ exactly the legacy message.
+  const items = Array.isArray(info.items) ? info.items.filter(it => it && it.text) : [];
+  const shown = items.slice(0, WEBHOOK_ITEM_CAP);
+  const more = items.length - shown.length;
+  const summary = '🔔 ' + items.length + ' new for “' + (info.keyword || '') + '”'
+    + (info.title ? (' on ' + info.title) : '');
+
   let body;
-  if (fmt === 'discord') body = { content: message };
-  else if (fmt === 'slack') body = { text: message };
-  else body = {
-    event: info.type === 'kw' ? 'keyword' : 'change',
-    title: info.title, url: info.url, keyword: info.keyword,
-    snippet: info.snippet || '', count: info.count, timestamp: Date.now(),
-  };
+  if (fmt === 'discord') {
+    if (shown.length) {
+      const embeds = shown.map((it) => {
+        const { meta, detail } = webhookItemDetail(it.text);
+        const embed = { title: (meta.title || info.keyword || 'New match').slice(0, 256) };
+        if (it.href && ARPValidators.isSafeNavigableUrl(it.href)) embed.url = it.href;
+        if (detail) embed.description = detail.slice(0, 4096);
+        return embed;
+      });
+      let content = summary;
+      if (more > 0) content += '\n…and ' + more + ' more';
+      body = { content: content.slice(0, 2000), embeds };
+    } else {
+      body = { content: message };
+    }
+  } else if (fmt === 'slack') {
+    if (shown.length) {
+      const rows = shown.map((it) => {
+        const { meta, detail } = webhookItemDetail(it.text);
+        const label = slackEscape((meta.title || 'match').slice(0, 200));
+        const linked = (it.href && ARPValidators.isSafeNavigableUrl(it.href))
+          ? ('<' + it.href + '|' + label + '>') : label;
+        return '• ' + linked + (detail ? (' — ' + slackEscape(detail)) : '');
+      });
+      if (more > 0) rows.push('…and ' + more + ' more');
+      body = { text: slackEscape(summary) + '\n' + rows.join('\n') };
+    } else {
+      body = { text: message };
+    }
+  } else {
+    body = {
+      event: info.type === 'kw' ? 'keyword' : 'change',
+      title: info.title, url: info.url, keyword: info.keyword,
+      snippet: info.snippet || '', count: info.count, timestamp: Date.now(),
+      items: shown.map((it) => {
+        const { meta } = webhookItemDetail(it.text);
+        return {
+          title: meta.title || '',
+          url: (it.href && ARPValidators.isSafeNavigableUrl(it.href)) ? it.href : '',
+          pay: meta.pay || '', places: meta.places || '', researcher: meta.researcher || '',
+        };
+      }),
+      itemsTruncated: more > 0 ? more : 0,
+    };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
@@ -648,8 +747,26 @@ function readPageText(selector, perItem) {
       const MAX_ITEMS = 500, MAX_ITEM_LEN = 4000;
       items = [];
       for (let i = 0; i < nodes.length && items.length < MAX_ITEMS; i++) {
-        const t = nodes[i].innerText || nodes[i].textContent || '';
-        if (t) items.push(t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t);
+        const node = nodes[i];
+        const t = node.innerText || node.textContent || '';
+        if (!t) continue;
+        // Best-effort deep-link for THIS card so an alert can open the item
+        // directly (the study), not just the listing page: the node itself if it's
+        // a link, else a link inside it, else an ancestor link. The DOM .href is
+        // already absolute. Accept only http(s) — a javascript:/mailto: href must
+        // not ride into a webhook (Discord rejects a non-http embed url and would
+        // drop the whole alert). href is decorative: text alone still drives
+        // detection, so any failure just yields ''.
+        let href = '';
+        try {
+          const a = (node.tagName === 'A' && node.href) ? node
+            : (node.querySelector && node.querySelector('a[href]'))
+            || (node.closest && node.closest('a[href]'));
+          if (a && typeof a.href === 'string' && /^https?:\/\//i.test(a.href)) {
+            href = a.href.length > 2000 ? a.href.slice(0, 2000) : a.href;
+          }
+        } catch (e) { /* selector-engine edge / detached node — href stays '' */ }
+        items.push({ text: t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t, href });
       }
       // Zero matches on a body with no visible text is a mid-load read, not a
       // genuinely empty list — the selector had nothing to miss. Report "no
@@ -726,7 +843,7 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' });
   // Outbound webhook (not awaited: its internal fetch is timed-out, and blocking
   // the reload on a slow endpoint would stall the cycle).
-  if (!muted('notify')) sendWebhook(job, { type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount });
+  if (!muted('notify')) sendWebhook(job, { type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount, items: opts.items });
   if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
   const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
   if (!muted('notify')) notify('kw', tabId, {
@@ -780,6 +897,21 @@ function perItemMessage(settings, count) {
   return settings.kwInverse
     ? (count + ' ' + noun + ' for "' + kw + '" disappeared')
     : (count + ' new ' + noun + ' for "' + kw + '"');
+}
+
+// Map the just-fired new keys back to their per-item detail ({ key, href, text })
+// so an alert can deep-link each arrival to its own study. Departures (inverse
+// mode) aren't in the current set and have no live link, so return none there.
+// Order follows newKeys. `currDetails` is a collectItems() result for this cycle.
+function arrivalItems(currDetails, newKeys, inverse) {
+  if (inverse || !Array.isArray(currDetails) || !Array.isArray(newKeys) || !newKeys.length) return [];
+  const byKey = new Map(currDetails.map(c => [c.key, c]));
+  const out = [];
+  for (let i = 0; i < newKeys.length; i++) {
+    const d = byKey.get(newKeys[i]);
+    if (d) out.push(d);
+  }
+  return out;
 }
 
 // ── Navigate-away pause (#12): pause instead of stop, resume on return ──────
@@ -937,7 +1069,8 @@ async function doDomScan(tabId) {
       // cycle path).
       if (activeJobs[tabId] === job && Array.isArray(raw)) {
         const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
-        const currKeys = ARPItemDetect.collectMatches(raw, matcher, itemKeyOpts(job.settings), exclude);
+        const curr = ARPItemDetect.collectItems(raw, matcher, itemKeyOpts(job.settings), exclude);
+        const currKeys = curr.map(c => c.key);
         const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
         const newKeys = prevKeys
           ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
@@ -952,6 +1085,7 @@ async function doDomScan(tabId) {
             count: newKeys.length,
             message: perItemMessage(job.settings, newKeys.length),
             snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
+            items: arrivalItems(curr, newKeys, job.settings.kwInverse),
           });
           if (stopped) return; // stopOnKeyword — stopRefresh already cleared the chain
           // No reload is coming, so a flash the deliverer deferred to
@@ -1047,7 +1181,8 @@ async function doMonitorRefresh(tabId, job) {
     // Exclusion filter, compiled once per job like _matcher (lazily after a
     // worker restart — rehydrated jobs don't carry it).
     const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
-    const currKeys = ARPItemDetect.collectMatches(currentContent, matcher, itemKeyOpts(job.settings), exclude);
+    const curr = ARPItemDetect.collectItems(currentContent, matcher, itemKeyOpts(job.settings), exclude);
+    const currKeys = curr.map(c => c.key);
     const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
     const newKeys = prevKeys
       ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
@@ -1059,6 +1194,7 @@ async function doMonitorRefresh(tabId, job) {
         count: newKeys.length,
         message: perItemMessage(job.settings, newKeys.length),
         snippet: newKeys.length + (job.settings.kwInverse ? ' gone' : ' new'),
+        items: arrivalItems(curr, newKeys, job.settings.kwInverse),
       });
       if (stopped) return; // stopOnKeyword stopped the job — no reload
     }
@@ -1374,12 +1510,34 @@ async function stopRefresh(tabId) {
 // job so it's lost on the next worker restart. withJobsStore re-reads inside the
 // lock, so each mutation sees the previous one's result.
 const jobsStoreMutex = ARPSerialize.createMutex();
+// Count of our own in-flight activeJobs writes, so the storage.onChanged
+// listener can tell them apart from an out-of-band write. Without this, every
+// saveJobToStorage (one per refresh cycle) flipped jobsStoreFresh and forced the
+// next message to re-read the whole activeJobs blob — including each job's
+// up-to-200k-char detection baseline — for data this worker just wrote itself.
+let selfJobsWrites = 0;
 function withJobsStore(mutate) {
   return jobsStoreMutex(async () => {
     const data = await chrome.storage.local.get('activeJobs');
     const jobs = data.activeJobs || {};
     await mutate(jobs);
-    await chrome.storage.local.set({ activeJobs: jobs });
+    selfJobsWrites++;
+    try {
+      await chrome.storage.local.set({
+        activeJobs: jobs,
+        // Tiny URL index for the content script's page-load gate: it reads this
+        // (a storage read never wakes the worker) and only sends GET_STATUS when
+        // the page's origin+path matches a job — instead of waking the worker on
+        // every page load in every tab. Kept in the same set() as activeJobs so
+        // the two can't drift.
+        activeJobUrls: [...new Set(
+          Object.values(jobs).map((j) => j && j.startUrl).filter(Boolean)
+        )],
+      });
+    } catch (e) {
+      selfJobsWrites--;
+      throw e;
+    }
   });
 }
 
@@ -1504,7 +1662,17 @@ async function rehydrateAll() {
 // out-of-band import (manage.js writes activeJobs straight to storage).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.activeJobs) jobsStoreFresh = false;
+  if (changes.activeJobs) {
+    // Our own writes (withJobsStore mirrors every mutation in memory first)
+    // don't invalidate freshness — only an out-of-band write does.
+    if (selfJobsWrites > 0) selfJobsWrites--;
+    else jobsStoreFresh = false;
+  }
+  // Keep the URL-rules cache (used by the tab-complete listener below) current
+  // without re-reading storage per navigation.
+  if (changes.urlRules) {
+    urlRulesCache = Array.isArray(changes.urlRules.newValue) ? changes.urlRules.newValue : [];
+  }
   // Keep the badge in sync with the persisted unacked counter — covers this
   // worker's own writes (idempotent) AND an out-of-band clear from the Manage
   // page's "Clear" button, which writes unackedAlerts straight to storage (#1/#3).
@@ -1632,18 +1800,29 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 // above (which fires earlier, on changeInfo.url) and with autoStartUrls (the
 // activeJobs guard prevents double-starting). ──────────────────────────────
 const startingTabs = new Set(); // in-flight guard against duplicate 'complete' events
+let urlRulesCache = null; // null = not read yet this worker life; storage.onChanged keeps it current
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab || !tab.url) return;
   if (activeJobs[tabId] || startingTabs.has(tabId)) return; // don't stomp an existing/in-flight job
   if (!ARPValidators.isSafeNavigableUrl(tab.url)) return;
 
-  // One read for both keys (this handler already paid a storage.get for rules).
-  const data = await chrome.storage.local.get(['urlRules', 'activeJobs']);
   // Don't stomp a job persisted before a worker restart — restore it instead.
-  const storedJob = (data.activeJobs || {})[tabId];
-  if (storedJob && await rehydrateJob(tabId, storedJob)) return;
+  // Only consulted while the store may be stale: when jobsStoreFresh the
+  // in-memory map (checked above) is authoritative, and this handler fires on
+  // EVERY completed page load in every tab — reading the whole activeJobs blob
+  // (with per-job detection baselines up to 200k chars) here was a per-
+  // navigation tax the steady state never needed to pay.
+  if (!jobsStoreFresh) {
+    const data = await chrome.storage.local.get('activeJobs');
+    const storedJob = (data.activeJobs || {})[tabId];
+    if (storedJob && await rehydrateJob(tabId, storedJob)) return;
+  }
 
-  const rules = Array.isArray(data.urlRules) ? data.urlRules : [];
+  if (urlRulesCache === null) {
+    const data = await chrome.storage.local.get('urlRules');
+    urlRulesCache = Array.isArray(data.urlRules) ? data.urlRules : [];
+  }
+  const rules = urlRulesCache;
   if (rules.length === 0) return;
 
   for (const rule of rules) {
