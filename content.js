@@ -110,16 +110,21 @@
       const style = document.createElement('style');
       style.id = '__ar_styles';
       style.textContent = `
+        /* Opacity-only pulse: opacity animates on the compositor, while the old
+           box-shadow keyframes forced a main-thread repaint every frame for the
+           overlay's whole lifetime. The dot keeps a static glow below. */
         @keyframes __ar_pulse {
-          0%,100% { opacity:1; box-shadow:0 0 5px rgba(52,211,153,0.6); }
-          50%      { opacity:0.7; box-shadow:0 0 12px rgba(52,211,153,1); }
+          0%,100% { opacity:1; }
+          50%      { opacity:0.55; }
         }
         #__ar_overlay, #__ar_overlay * { box-sizing:border-box; margin:0; padding:0; }
         #__ar_overlay {
           position:fixed; z-index:2147483647;
-          /* parity with theme.css --bg #0a0c10 = rgb(10,12,16) */
+          /* parity with theme.css --bg #0a0c10 = rgb(10,12,16). No backdrop-filter:
+             at 0.97 alpha a blur is essentially invisible, but it forced the GPU to
+             re-blur the page region under the overlay on every underlying paint —
+             a constant tax on exactly the pages this extension watches. */
           background:rgba(10,12,16,0.97);
-          backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
           border:1px solid rgba(255,255,255,0.12);
           box-shadow:0 12px 48px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.07) inset;
           border-radius:18px;
@@ -210,7 +215,11 @@
           height:100%;
           background:linear-gradient(90deg,#4f9eff,#a78bfa);
           border-radius:4px; width:100%;
-          transition:width 1s linear;
+          /* Drain via transform, not width: a width transition re-triggered every
+             second means continuous layout+paint for the page's whole job lifetime;
+             scaleX stays on the compositor. */
+          transform-origin:left;
+          transition:transform 1s linear;
         }
         #__ar_hint {
           font-weight:500;
@@ -604,8 +613,8 @@
     if (!overlayEl) return;
     const remaining = Math.max(0, deadline - Date.now());
     if (overlayEl._timer) overlayEl._timer.textContent = formatTime(remaining);
-    if (overlayEl._fill)  overlayEl._fill.style.width  = totalDuration > 0
-      ? Math.max(0, Math.min(100, remaining / totalDuration * 100)) + '%' : '0%';
+    if (overlayEl._fill)  overlayEl._fill.style.transform = 'scaleX(' + (totalDuration > 0
+      ? Math.max(0, Math.min(1, remaining / totalDuration)) : 0) + ')';
   }
 
   function formatTime(ms) {
@@ -704,7 +713,24 @@
       }
     });
   }
-  syncWithBackground(0);
+  // Gate the initial sync on a tiny URL-index read straight from storage —
+  // chrome.storage reads are served by the browser process, so unlike
+  // sendMessage they do NOT wake the MV3 service worker. Without this gate the
+  // sync (plus its retries) fired on EVERY page load in every tab, waking the
+  // worker each time even though most pages never host a job. activeJobUrls is
+  // maintained by the background alongside every activeJobs write; a page whose
+  // origin+path matches no job's startUrl skips the sync entirely — a job
+  // started later still reaches it via the background's COUNTDOWN_START push
+  // (sendCountdownStart retries until this script answers).
+  safeStorageGet('activeJobUrls', (data) => {
+    const urls = (data && data.activeJobUrls) || [];
+    const here = location.origin + location.pathname;
+    const mayHaveJob = Array.isArray(urls) && urls.some((u) => {
+      try { const p = new URL(u); return p.origin + p.pathname === here; }
+      catch (e) { return false; }
+    });
+    if (mayHaveJob) syncWithBackground(0);
+  });
 
   // ── Custom keybinding ─────────────────────────────────────────────────────
   // The in-page hotkey is the single source of truth for toggling refresh.

@@ -64,10 +64,23 @@
     return h.toString(36);
   }
 
-  // From an array of item texts, return the de-duplicated keys of the items the
-  // matcher accepts. `matcher` is any object exposing .test(text)->bool (the
-  // ARPKeyword compiled matcher). First-occurrence order is preserved so a caller
-  // can surface a stable "first new match" sample.
+  // An item is either a bare text string (the Node tests and any string-array
+  // caller) or a { text, href } object (the in-page per-item read, which also
+  // captures each card's own link so an alert can deep-link straight to it).
+  // These read the two fields tolerantly so both shapes flow through one path.
+  function itemText(el) {
+    if (typeof el === 'string') return el;
+    return el && typeof el === 'object' && typeof el.text === 'string' ? el.text : '';
+  }
+  function itemHref(el) {
+    return el && typeof el === 'object' && typeof el.href === 'string' ? el.href : '';
+  }
+
+  // From an array of items, return one detail record { key, href, text } per item
+  // the matcher accepts, de-duplicated by key in first-occurrence order — so a
+  // caller can recover the source link/text for a key that computeNewKeys later
+  // flags as newly-arrived (to deep-link the alert). `matcher` is any object
+  // exposing .test(text)->bool (the ARPKeyword compiled matcher).
   //
   // `exclude` (optional) is a second matcher-like: an item it accepts is DROPPED
   // even though the keyword matched — the "skip items containing …" filter for
@@ -78,22 +91,28 @@
   // and fires as a new arrival — exactly the wanted behavior. Must be passed
   // IDENTICALLY to the baseline and per-cycle collects (like opts), or items
   // filtered on one side would diff as arrivals/departures on the other.
-  function collectMatches(items, matcher, opts, exclude) {
-    const keys = [];
-    if (!Array.isArray(items) || !matcher || typeof matcher.test !== 'function') return keys;
+  function collectItems(items, matcher, opts, exclude) {
+    const out = [];
+    if (!Array.isArray(items) || !matcher || typeof matcher.test !== 'function') return out;
     const skip = exclude && typeof exclude.test === 'function' ? exclude : null;
     const seen = new Set();
     for (let i = 0; i < items.length; i++) {
-      const text = items[i];
-      if (typeof text !== 'string' || !text) continue;
+      const text = itemText(items[i]);
+      if (!text) continue;
       if (!matcher.test(text)) continue;
       if (skip && skip.test(text)) continue;
       const k = itemKey(text, opts);
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      keys.push(k);
+      out.push({ key: k, href: itemHref(items[i]), text });
     }
-    return keys;
+    return out;
+  }
+
+  // The de-duplicated keys of the accepted items — the key-only view of
+  // collectItems, kept as the baseline seed and the stable detection/test API.
+  function collectMatches(items, matcher, opts, exclude) {
+    return collectItems(items, matcher, opts, exclude).map(c => c.key);
   }
 
   // The keys that should fire this cycle, given the previous and current matching
@@ -111,5 +130,25 @@
     return (Array.isArray(currKeys) ? currKeys : []).filter(k => !prev.has(k));
   }
 
-  return { itemKey, collectMatches, computeNewKeys, MAX_ITEM_TEXT };
+  // Best-effort presentation metadata pulled from one item's visible text, used
+  // ONLY to enrich an outbound alert (a Discord embed / Slack line) — never for
+  // detection or keying. Every field is optional: a card that doesn't match a
+  // pattern simply omits it, so this stays robust to layout changes. Tuned for
+  // study-listing cards (title line, "£…/hr" reward-per-hour, "N places",
+  // "By <researcher>") but degrades gracefully to just a title on anything else.
+  function parseItemMeta(text) {
+    const meta = {};
+    if (typeof text !== 'string' || !text) return meta;
+    const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
+    if (lines.length) meta.title = lines[0].slice(0, 200);
+    const pay = text.match(/[£$€]\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*(?:hr|hour)\b|per\s+hour\b)/i);
+    if (pay) meta.pay = pay[0].replace(/\s+/g, ' ').trim().slice(0, 40);
+    const places = text.match(/\b\d[\d,]*\s+(?:places?|spots?)\b/i);
+    if (places) meta.places = places[0].replace(/\s+/g, ' ').trim().slice(0, 40);
+    const by = lines.find(l => /^by\s+\S/i.test(l));
+    if (by) meta.researcher = by.replace(/^by\s+/i, '').trim().slice(0, 120);
+    return meta;
+  }
+
+  return { itemKey, collectMatches, collectItems, computeNewKeys, parseItemMeta, MAX_ITEM_TEXT };
 });
