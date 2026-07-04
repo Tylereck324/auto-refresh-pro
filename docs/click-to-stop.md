@@ -1,7 +1,7 @@
 # Feature Spec: Click-to-Stop ("Stop when I click the page")
 
 > Status: Implemented — the toggle lives in the popup's Refresh Behavior section
-> Last updated: 2026-06-08
+> Last updated: 2026-07-04 (listener is `pointerdown`, not `click` — see below)
 
 Let the user stop an active refresh job by clicking anywhere on the page that's
 currently refreshing. Opt-in, per-job.
@@ -11,16 +11,21 @@ currently refreshing. Opt-in, per-job.
 - **Opt-in, per-job** stop-condition, **defaults off**. Lives in the popup's
   Refresh Behavior section (`optStopOnClick`), a per-launch decision alongside
   Randomize interval.
-- When enabled, a **left-click anywhere in the top document** stops that tab's
-  refresh job.
-- **Pass-through:** the click is never cancelled — clicking a link still
-  navigates, clicking the body just stops the job. No `preventDefault` /
-  `stopPropagation`.
+- When enabled, a **primary (left) press anywhere in the top document** stops
+  that tab's refresh job. The listener is `pointerdown` (capture), not `click` —
+  see [Implementation](#implementation) for why.
+- **Pass-through:** the press is never cancelled — clicking a link still
+  navigates, a press that begins a text selection still selects, the job just
+  also stops. No `preventDefault` / `stopPropagation`.
 - **Excluded from triggering a stop:**
-  - clicks inside `#__ar_overlay` (the widget keeps its own dedicated Stop button)
-  - right-click (`contextmenu`) and middle-click (`auxclick`) — only `click`
-    (left button) counts
-  - scroll, text-selection drags, and keyboard input
+  - presses inside `#__ar_overlay` (the widget keeps its own dedicated Stop button)
+  - any non-primary button and secondary touch points — the handler bails on
+    `e.button || !e.isPrimary`, so right- and middle-clicks are ignored; only a
+    primary (left) press counts
+  - keyboard input (a `pointerdown` is required)
+  - NOTE: unlike a `click`-based design, a press that begins a text-selection
+    drag **does** stop the job (it is still a `pointerdown`). That is deliberate —
+    see Implementation.
 - **Feedback:** overlay-vanish only — the countdown widget sliding away is the
   sole cue. No toast, no system notification (the action is user-initiated, so a
   notification would be noisy).
@@ -28,12 +33,19 @@ currently refreshing. Opt-in, per-job.
 ## Implementation
 
 ### `content.js`
-- Attach **one** document-level **capture-phase `click` listener** once, on
+- Attach **one** document-level **capture-phase `pointerdown` listener** once, on
   injection. Gate it on a cached module-level `stopOnClickEnabled` boolean
   (same pattern the file already uses for `customHotkey`).
-- Handler: if `stopOnClickEnabled` and `!e.target.closest('#__ar_overlay')` →
-  `safeMessage({ type: 'STOP_REFRESH', tabId: null })` + `hideOverlay()`
-  (mirrors the existing Stop button at line ~195).
+  - **Why `pointerdown`, not `click`:** a `click` only fires after a full
+    press+release on the *same* element with no movement, so it silently misses
+    drags, text selections, and presses on elements that re-render between down
+    and up (menus, feeds, SPA content) — most of why a click "didn't stop it."
+    `pointerdown` fires on press, every time, and a beat sooner.
+- Handler: bail on `!stopOnClickEnabled`, on `e.button || !e.isPrimary`
+  (primary/left press, first touch point only), and on
+  `e.target.closest('#__ar_overlay')`; otherwise
+  `safeMessage({ type: 'STOP_REFRESH', tabId: null }, …)` (disarm on ack) +
+  `hideOverlay()`.
 - Set `stopOnClickEnabled`:
   - from the `GET_STATUS` sync — `resp.job.settings.stopOnClick`
   - from `COUNTDOWN_START` — `msg.stopOnClick`

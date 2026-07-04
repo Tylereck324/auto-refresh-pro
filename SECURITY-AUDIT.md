@@ -94,10 +94,45 @@ loads (manifest + all referenced files validated).
   and clamped.
 - **manage.js card rows:** every interpolation passes through `escapeHtml`.
 - **offscreen.js:** plays a locally-synthesized WAV; no external/remote input.
-- **Network:** the extension makes no `fetch`/XHR and loads no remote fonts/code.
+- **Network:** loads no remote fonts/code and uses no `eval` / `new Function`.
+  The only network egress is the optional **outbound webhook** (added after this
+  audit — see Follow-up), which is https-only + SSRF-guarded and refuses redirects.
 
 ## Verification
 - `npm test` → 35/35 pass (`node --test`).
 - `npm run lint` → JS syntax-check, manifest reference integrity, script-src
   resolution, and CSP-strictness all pass.
 - Bundled icons confirmed valid PNGs by `file(1)` and by `isValidPng`.
+
+---
+
+## Follow-up (2026-07-04)
+
+Review of features added since the original audit, plus a hardening fix.
+
+### F7 — ReDoS-guard bypasses in `isSafeRegex` (MEDIUM) — FIXED
+- **Location:** `validators.js` — `isSafeRegex` / `hasOverlappingAlternation`.
+- **Root cause:** the best-effort catastrophic-backtracking guard had two blind
+  spots, so a user-entered regex keyword (or a crafted import with `kwRegex:true`)
+  could pass validation and then freeze the service worker — the keyword matcher
+  runs synchronously against page text every refresh cycle:
+  1. alternation overlap expressed through a **character class / shorthand**
+     (`(a|[ab])+`, `(a|\w)+`, `([a-c]|[a-z])+`) was invisible to the literal-string
+     branch comparison; and
+  2. the nested-quantifier check used `[^)]`, so wrapping the classic `(a+)+` in an
+     extra paren layer — `((a+))+`, `(x(y+)z)+` — hid the inner quantifier.
+- **Fix:** `hasOverlappingAlternation` now also flags branches that can match the
+  same single character (the class/shorthand case), and a new paren-matching
+  `hasNestedQuantifier` sees an inner quantifier through arbitrary nesting.
+  Genuinely disjoint branches (`(\d|,)+`, `(a|\d)+`) stay accepted; the residual
+  is bounded-polynomial, capped at match time by `MAX_REGEX_SCAN` (20k chars).
+- **Tests:** `test/regex-safety.test.js` — two new blocks covering both families.
+
+### Outbound webhooks — reviewed, no change required
+- The Discord/Slack/JSON webhook is the extension's only network egress. The URL
+  is validated on input **and** re-validated at send time by `isSafeWebhookUrl`
+  (https-only; rejects loopback / link-local / cloud-metadata / RFC1918 / CGNAT
+  and every IPv6-embedded IPv4 form; rejects creds-in-URL), and the POST sets
+  `redirect: 'error'` so a 30x can't bounce the body to an internal target. Item
+  deep-links placed in the message body are `isSafeNavigableUrl`-gated (http/s
+  only), so a `javascript:`/`mailto:` card link can't ride into the payload.

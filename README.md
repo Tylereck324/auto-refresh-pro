@@ -70,6 +70,7 @@ Open **Settings** from the popup footer → Keyboard Shortcut → click **⏺ Re
 ├── options.html/js      # Settings page (hotkey recorder, defaults, presets)
 ├── manage.html/js       # Manage all active tabs, auto-start URLs, URL rules, import/export
 ├── offscreen.html/js    # Hidden page used for audio playback (offscreen API)
+├── toast.js             # Shared toast notifications (Settings + Manage pages)
 │
 │   # Pure, dependency-free modules (loaded via importScripts in the worker,
 │   # <script src> in pages, and require() in the Node test suite):
@@ -77,7 +78,9 @@ Open **Settings** from the popup footer → Keyboard Shortcut → click **⏺ Re
 ├── compose-settings.js  # Canonical job-settings constructor (shared by popup + hotkey launch)
 ├── interval.js          # Refresh-interval computation (fixed / random, NaN-hardened)
 ├── keyword-match.js     # Keyword matcher (multi-term, whole-word, case, regex)
+├── item-detect.js       # Per-item detection (alert on each new matching item)
 ├── normalize.js         # Noise-tolerant change-significance helpers
+├── quiet-hours.js       # Quiet-hours window logic (mute/pause by time + weekday)
 ├── monitor-decision.js  # "Should an alert fire this cycle?" keyword/change logic
 ├── refresh-guards.js    # Refresh-loop timing guards (backstop dedup, notify throttle)
 ├── rehydrate.js         # Rebuild job state after a service-worker restart

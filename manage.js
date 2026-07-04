@@ -26,10 +26,14 @@ function jobModeLabel(settings) {
 }
 
 // Human label for why a job is paused. Reason is a fixed background-controlled
-// enum, so the result is a safe constant string.
+// enum (serializeJob → 'manual' | 'away' | 'quiet' | 'offline'), so the result
+// is a safe constant string. Must cover every reason the worker can emit — a
+// missed one (e.g. 'away', added with the navigate-away pause) falls through to
+// the wrong "manual" label.
 function pauseReasonLabel(reason) {
   if (reason === 'offline') return 'offline';
   if (reason === 'quiet') return 'quiet hours';
+  if (reason === 'away') return 'away from page';
   return 'manual';
 }
 
