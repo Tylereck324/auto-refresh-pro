@@ -55,6 +55,16 @@ test('exact host + path prefix matches as expected', () => {
   assert.equal(m.test('http://news.site/x'), false); // scheme is https-only here
 });
 
+test('pattern host casing is normalized (tab URLs have lowercase hosts)', () => {
+  // isSafeUrlGlob accepts mixed-case hosts, but the URL a rule is tested
+  // against is browser-normalized to lowercase — a rule typed with a capital
+  // letter used to silently never match anything.
+  assert.equal(V.compileUrlGlob('https://Example.com/*').test('https://example.com/page'), true);
+  assert.equal(V.compileUrlGlob('*://*.Prolific.co/*').test('https://app.prolific.co/studies'), true);
+  // Paths stay case-sensitive — they are on the server side too.
+  assert.equal(V.compileUrlGlob('https://example.com/Studies').test('https://example.com/studies'), false);
+});
+
 test('invalid glob compiles to a non-matcher', () => {
   const m = V.compileUrlGlob('not a pattern');
   assert.equal(m.ok, false);

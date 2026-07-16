@@ -178,7 +178,10 @@ async function loadJobs() {
 
   document.querySelectorAll('.btn-sm-go').forEach(btn => {
     btn.addEventListener('click', () => {
-      chrome.tabs.update(parseInt(btn.dataset.id), { active: true });
+      // The tab can close between the 8s poll and the click; update() REJECTS
+      // (async) on a stale id, which no try/catch around the call can see.
+      chrome.tabs.update(parseInt(btn.dataset.id), { active: true })
+        .catch(() => showToast('That tab is no longer open.', true));
     });
   });
 }
@@ -231,6 +234,13 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
   }
 
   const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+  // Same cap the import sanitizer enforces (it hard-truncates with slice) —
+  // without this check, entries past the cap save fine here but silently
+  // vanish on an export→import round-trip.
+  if (autoStartUrls.length >= ARPValidators.MAX_AUTOSTART) {
+    showToast('Too many auto-start URLs (max ' + ARPValidators.MAX_AUTOSTART + ').', true);
+    return;
+  }
   autoStartUrls.push({
     url,
     intervalSec: sec,
@@ -359,14 +369,15 @@ async function loadAlerts() {
     list.appendChild(div);
   });
 
-  // The originating tab may be gone — update() rejects on a stale id, so guard it.
+  // The originating tab may be gone — update() rejects (async, so a try/catch
+  // around the call can't see it) on a stale id. Surface it instead of an
+  // unhandled rejection with zero feedback.
   list.querySelectorAll('.alert-go').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = parseInt(btn.dataset.id);
       if (!Number.isInteger(id)) return;
-      try {
-        chrome.tabs.update(id, { active: true });
-      } catch (e) { /* tab gone — nothing to focus */ }
+      chrome.tabs.update(id, { active: true })
+        .catch(() => showToast('That tab is no longer open.', true));
     });
   });
 }
@@ -452,12 +463,7 @@ document.getElementById('stopAllBtn').addEventListener('click', async () => {
 
 // ── Export ───────────────────────────────────────────────────────────────
 document.getElementById('exportBtn').addEventListener('click', async () => {
-  const data = await chrome.storage.local.get(null);
-  // Exports are settings backups, not session dumps. activeJobs is runtime job
-  // state keyed by session-scoped tab ids — meaningless on another machine/
-  // session, and the import side strips it anyway (a replayed entry would
-  // attach a refresh job to whatever tab holds that id after a restart).
-  delete data.activeJobs;
+  const data = ARPSettingsExport.pick(await chrome.storage.local.get(null));
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -501,6 +507,7 @@ document.getElementById('importFile').addEventListener('change', async (e) => {
     loadJobs();
     loadAutoStart();
     loadRules();
+    loadDenylist(); // an import can replace domainDenylist too (alertLog re-renders via storage.onChanged)
   } catch {
     showToast('Failed to save imported settings.', true);
   }

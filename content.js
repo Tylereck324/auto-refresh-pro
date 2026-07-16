@@ -275,6 +275,7 @@
     pauseBtn.textContent = paused ? '▶' : '⏸';
     pauseBtn.setAttribute('aria-label', 'Pause or resume');
     pauseBtn.addEventListener('click', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       e.stopPropagation();
       if (paused) {
         safeMessage({ type: 'RESUME_JOB', tabId: null });
@@ -293,6 +294,7 @@
     extendBtn.textContent = '+30s';
     extendBtn.setAttribute('aria-label', 'Add 30 seconds');
     extendBtn.addEventListener('click', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       e.stopPropagation();
       safeMessage({ type: 'EXTEND_JOB', tabId: null, ms: 30000 });
     });
@@ -302,6 +304,7 @@
     stopBtn.setAttribute('data-ar-stop', '1');
     stopBtn.textContent = 'Stop';
     stopBtn.addEventListener('click', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       e.stopPropagation();
       safeMessage({ type: 'STOP_REFRESH', tabId: null });
       hideOverlay();
@@ -493,6 +496,7 @@
   // and registered once, after makeResizable.
   function makeDraggable(el, handle) {
     handle.addEventListener('mousedown', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       // Skip if the click is on the stop button (or any descendant of it)
       if (e.target.closest && e.target.closest('[data-ar-stop]')) return;
       e.preventDefault();
@@ -513,6 +517,7 @@
   // wired here; the shared document move/up listeners below do the work.
   function makeResizable(el, handle, onResize) {
     handle.addEventListener('mousedown', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
       resizeState = {
@@ -535,7 +540,8 @@
   // fires on every pointer move for the page's whole lifetime.
   let pointerListenersWired = false;
   let pointerListenersAbort = null; // lets handleContextInvalidated unwire them
-  function endPointerInteraction() {
+  function endPointerInteraction(e) {
+    if (e && !isTrustedActionEvent(e)) return;
     if (dragState) {
       const el = dragState.el;
       el.style.cursor    = 'grab';
@@ -556,6 +562,7 @@
     pointerListenersAbort = new AbortController();
     const signal = pointerListenersAbort.signal;
     document.addEventListener('mousemove', (e) => {
+      if (!isTrustedActionEvent(e)) return;
       if (!dragState && !resizeState) return;
       // The button was released OUTSIDE the window (we never got that mouseup),
       // so the first move back in arrives with no buttons down. Without this the
@@ -835,9 +842,18 @@
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   }
 
+  function isTrustedActionEvent(event) {
+    return !!(event && event.isTrusted);
+  }
+
   document.addEventListener('keydown', (e) => {
-    if (!contextValid) return;
-    if (isEditableTarget(e.target)) return;
+    if (!contextValid || !isTrustedActionEvent(e)) return;
+    // e.target is retargeted to the shadow HOST for keystrokes inside a shadow
+    // root (web-component search boxes etc.), which is never INPUT/TEXTAREA —
+    // composedPath()[0] is the real innermost target. (Closed shadow roots
+    // still retarget; nothing more can be seen into those from here.)
+    const target = e.composedPath ? e.composedPath()[0] : e.target;
+    if (isEditableTarget(target)) return;
     if (matchesHotkey(e, activeHotkey())) {
       e.preventDefault();
       safeMessage({ type: 'HOTKEY_TOGGLE' });
@@ -854,7 +870,7 @@
   // Pass-through: the press is NOT cancelled, so links/buttons/selection still work.
   // Presses inside the overlay are ignored — it has its own Stop button.
   document.addEventListener('pointerdown', (e) => {
-    if (!contextValid || !stopOnClickEnabled) return;
+    if (!contextValid || !isTrustedActionEvent(e) || !stopOnClickEnabled) return;
     if (e.button || !e.isPrimary) return; // primary button / first touch point only
     if (e.target && e.target.closest && e.target.closest('#__ar_overlay')) return;
     // Stop the job, then disarm only once the stop is acknowledged. Disarming

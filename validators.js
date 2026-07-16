@@ -168,14 +168,30 @@
     return false;
   }
 
-  // True when an unbounded quantifier is applied to a GROUP whose interior also
-  // contains an unbounded quantifier — the (a+)+ family AND its paren-nested
-  // disguises ((a+))+ / (x(y+)z)+ that the flat [^)] regexes in isSafeRegex can't
-  // see past an inner ')'. Matches parens for real (skipping escaped chars and
-  // character classes) so extra wrapping can't hide the nesting.
-  function hasNestedQuantifier(pattern) {
+  // True when the quantifier at idx can match a variable number of characters.
+  // Exact repetitions ({n}) have fixed width and are safe to nest; open-ended
+  // and bounded ranges ({m,} / {m,n} where n > m) are not.
+  function variableWidthQuantAt(s, idx) {
+    const c = s[idx];
+    if (c === '?') {
+      // `?:`, `?=`, `?!`, and `?<...>` are group syntax, not quantifiers.
+      if ((idx > 0 && s[idx - 1] === '(') || /[:=!<]/.test(s[idx + 1] || '')) return false;
+      return true;
+    }
+    if (c === '+' || c === '*') return true;
+    if (c !== '{') return false;
+    const m = /^\{(\d+)(?:,(\d*))?\}/.exec(s.slice(idx));
+    if (!m || m[2] === undefined) return false; // exact {n}
+    if (m[2] === '') return true;               // open-ended {m,}
+    return Number(m[2]) > Number(m[1]);
+  }
+
+  // Match parens for real — skipping escaped chars and character classes, so
+  // extra wrapping or a '(' inside [...] can't confuse the pairing. Returns
+  // [openIdx, closeIdx] for each balanced pair.
+  function parseGroups(pattern) {
     const stack = [];
-    const groups = []; // [openIdx, closeIdx] for each matched pair
+    const groups = [];
     for (let i = 0; i < pattern.length; i++) {
       const c = pattern[i];
       if (c === '\\') { i++; continue; }                 // skip an escaped char
@@ -187,14 +203,50 @@
       if (c === '(') stack.push(i);
       else if (c === ')') { const open = stack.pop(); if (open !== undefined) groups.push([open, i]); }
     }
-    for (const [open, close] of groups) {
+    return groups;
+  }
+
+  // True when an unbounded quantifier is applied to a GROUP whose interior also
+  // contains a variable-width quantifier — the (a+)+ family and bounded-inner
+  // disguises (a{1,2})+ / (a?)+ that can still backtrack exponentially.
+  function hasNestedQuantifier(pattern) {
+    for (const [open, close] of parseGroups(pattern)) {
       if (!unboundedQuantAt(pattern, close + 1)) continue; // this group isn't unbounded-quantified
       const inner = pattern.slice(open + 1, close);
       for (let i = 0; i < inner.length; i++) {
         const c = inner[i];
         if (c === '\\') { i++; continue; }
         if (c === '[') { i++; while (i < inner.length && inner[i] !== ']') { if (inner[i] === '\\') i++; i++; } continue; }
-        if (unboundedQuantAt(inner, i)) return true;
+        if (variableWidthQuantAt(inner, i)) return true;
+      }
+    }
+    return false;
+  }
+
+  // hasOverlappingAlternation only analyzes paren-FREE innermost groups, so it
+  // never sees a quantified group whose alternation involves nested groups —
+  // ((a)|a)+b, (?:(a)|a)+b, (x(a|a)y)+b — which contain no nested quantifier
+  // yet backtrack exponentially all the same. Branch-overlap analysis across
+  // nested groups is beyond a heuristic, so any quantified group containing
+  // BOTH an alternation and a nested group is rejected outright (fail closed:
+  // a refused-but-safe pattern costs a re-phrase; an accepted-but-exponential
+  // one freezes the worker). '?' is exempt — one iteration can't backtrack
+  // combinatorially.
+  function hasOpaqueQuantifiedAlternation(pattern) {
+    for (const [open, close] of parseGroups(pattern)) {
+      const next = pattern[close + 1];
+      const quantified = next === '+' || next === '*' ||
+        (next === '{' && /^\{\d+,?\d*\}/.test(pattern.slice(close + 1)));
+      if (!quantified) continue;
+      const inner = pattern.slice(open + 1, close);
+      let hasAlt = false, hasGroup = false;
+      for (let i = 0; i < inner.length; i++) {
+        const c = inner[i];
+        if (c === '\\') { i++; continue; }
+        if (c === '[') { i++; while (i < inner.length && inner[i] !== ']') { if (inner[i] === '\\') i++; i++; } continue; }
+        if (c === '|') hasAlt = true;
+        else if (c === '(') hasGroup = true;
+        if (hasAlt && hasGroup) return true;
       }
     }
     return false;
@@ -218,6 +270,9 @@
     // Reject quantified alternation groups with overlapping branches — the
     // exponential family ((a|a)+x, (.|\n)*x) that has no nested quantifier.
     if (hasOverlappingAlternation(pattern)) return false;
+    // Reject quantified alternations the overlap heuristic can't see into
+    // (nested groups inside the alternation): ((a)|a)+b and friends.
+    if (hasOpaqueQuantifiedAlternation(pattern)) return false;
     // Cap total quantifier count — many stacked quantifiers compound backtracking.
     const quant = (pattern.match(/[+*?]|\{\d+,?\d*\}/g) || []).length;
     if (quant > 12) return false;
@@ -253,7 +308,10 @@
     if (!isSafeUrlGlob(pattern)) return { ok: false, test: () => false };
     const m = /^(\*|https?):\/\/([^/]+)(\/.*)$/.exec(pattern);
     if (!m) return { ok: false, test: () => false };
-    const scheme = m[1], host = m[2], pathPart = m[3];
+    // Hosts are compared against browser-normalized (lowercase) tab URLs, so a
+    // pattern host typed with any capital letter would otherwise never match.
+    // Paths stay case-sensitive — they are on the server side too.
+    const scheme = m[1], host = m[2].toLowerCase(), pathPart = m[3];
     const schemeRe = scheme === '*' ? 'https?' : scheme;
     let hostRe;
     if (host === '*') {
@@ -830,5 +888,6 @@
     MAX_URL_RULES,
     MAX_SELECTOR_LEN,
     MAX_DENYLIST,
+    MAX_AUTOSTART,
   };
 });

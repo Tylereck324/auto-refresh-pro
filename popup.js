@@ -436,6 +436,11 @@ async function startRefresh() {
       stopRenderLoop();
       jobDeadline = 0;
       if (deniedNote) deniedNote.classList.add('show');
+    } else if (resp && resp.cancelled) {
+      // A concurrent Stop can cancel Start while the background is still
+      // reading the tab/baseline. Reconcile immediately instead of leaving the
+      // optimistic active state visible until the next poll.
+      refreshStatus();
     }
   });
 
@@ -724,12 +729,18 @@ function saveSettings() {
 }
 const saveSettingsDebounced = debounce(saveSettings, 300);
 
-// Flush the pending debounced save when the popup closes. The popup can be
-// dismissed (click-away, Esc, starting a job that focuses the page) within the
-// 300ms debounce window, and a timer in a closing popup never fires — the last
-// edit would silently revert. pagehide is the last event Chrome reliably
-// delivers to a closing popup, and the storage write outlives the page.
+// Flush every pending debounced apply/save when the popup closes. The popup can
+// be dismissed (click-away, Esc, starting a job that focuses the page) within a
+// debounce window, and a timer in a closing popup never fires — the last edit
+// would silently revert. pagehide is the last event Chrome reliably delivers to
+// a closing popup, and the storage write outlives the page. The three live-apply
+// debouncers each own their fields' only persistence path (their inputs are
+// deliberately excluded from the plain saveSettings listener list), so all four
+// must flush — not just the plain save.
 window.addEventListener('pagehide', () => {
+  applyIntervalChangeDebounced.flush();
+  applyRandomRangeDebounced.flush();
+  applyAdaptiveMaxDebounced.flush();
   saveSettingsDebounced.flush();
 });
 
@@ -770,6 +781,25 @@ function highlightSelectedPreset() {
   document.querySelectorAll('.pill').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.ms) === selectedMs);
   });
+}
+
+// A restored interval that matches no preset pill came from the custom row —
+// repopulate that row (value + unit) so the reopened popup shows the interval
+// Start will actually use. Without this, no pill highlights and the custom box
+// sits empty: the UI reads "nothing chosen" while gatherSettings ships the
+// stored custom value.
+function syncCustomRowToSelected() {
+  const isPreset = Array.from(document.querySelectorAll('.pill'))
+    .some(btn => parseInt(btn.dataset.ms) === selectedMs);
+  if (isPreset || !(selectedMs > 0)) return;
+  const unitSel = document.getElementById('customUnit');
+  const input   = document.getElementById('customValue');
+  if (!unitSel || !input) return;
+  const unit = selectedMs % 3600000 === 0 ? 3600000
+    : selectedMs % 60000 === 0 ? 60000
+    : 1000;
+  unitSel.value = String(unit);
+  input.value = String(selectedMs / unit);
 }
 
 function loadSettings() {
@@ -834,6 +864,7 @@ function loadSettings() {
     }
 
     highlightSelectedPreset();
+    syncCustomRowToSelected();
     updateConditionalRows();
     updateKeywordLock();
     validateKeywordRegex();

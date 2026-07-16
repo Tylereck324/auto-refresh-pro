@@ -28,10 +28,15 @@ importScripts('monitor-decision.js');
 importScripts('refresh-guards.js');
 // Pure quiet-hours window logic (ARPQuietHours.isWithinQuietHours / quietAction).
 importScripts('quiet-hours.js');
+// Pure lifecycle cancellation tokens for asynchronous Start/Stop ordering.
+importScripts('lifecycle-generation.js');
+// Pure detection identity comparison for safe timing-only updates.
+importScripts('detection-identity.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
 const activeJobs = {};
+const lifecycleRegistry = ARPLifecycle.createRegistry();
 
 // chrome.alarms clamps any delay below this to the floor in packed builds, so a
 // true sub-30s refresh can't be driven by alarms. Intervals below it use a
@@ -109,6 +114,7 @@ function clearTimerLoop(job) {
 // onto one creation.
 let creatingOffscreen = null;
 async function ensureOffscreen() {
+  if (closingOffscreen) await closingOffscreen; // let an in-flight teardown finish, then recreate
   if (await chrome.offscreen.hasDocument().catch(() => false)) return;
   if (!creatingOffscreen) {
     creatingOffscreen = chrome.offscreen.createDocument({
@@ -127,11 +133,19 @@ async function ensureOffscreen() {
 // beep just recreates the document via ensureOffscreen.
 const OFFSCREEN_IDLE_MS = 60000;
 let offscreenIdleTimer = null;
+// In-flight closeDocument. Disarming the timer only helps while it hasn't
+// fired; a beep landing while the close is already in flight would otherwise
+// see hasDocument() still true (message lost to a closing document) or hit
+// createDocument's "only a single offscreen document" rejection. ensureOffscreen
+// awaits this first so a coinciding beep recreates the document instead.
+let closingOffscreen = null;
 function armOffscreenTeardown() {
   if (offscreenIdleTimer) clearTimeout(offscreenIdleTimer);
   offscreenIdleTimer = setTimeout(() => {
     offscreenIdleTimer = null;
-    chrome.offscreen.closeDocument().catch(() => {});
+    closingOffscreen = chrome.offscreen.closeDocument()
+      .catch(() => {})
+      .finally(() => { closingOffscreen = null; });
   }, OFFSCREEN_IDLE_MS);
 }
 
@@ -254,9 +268,14 @@ chrome.notifications.onButtonClicked.addListener(async (id, buttonIndex) => {
   }
 });
 
-chrome.notifications.onClosed.addListener((id) => {
+chrome.notifications.onClosed.addListener((id, byUser) => {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
   delete notifTabMap[id];
+  // Only a USER dismissal is an acknowledgement. The OS auto-dismisses banners
+  // after a few seconds (the norm on macOS even with requireInteraction) with
+  // byUser=false — treating that as an ack would clear the overnight unacked
+  // badge and kill the beep-until-ack loop with nobody at the keyboard.
+  if (!byUser) return;
   clearUnacked();
   if (tabId != null) clearAckBeeps(tabId);
 });
@@ -717,9 +736,16 @@ async function doRefresh(tabId, job) {
   // Notification (clickable → focuses this tab). Throttled: at a short interval
   // a per-refresh notification would spam (e.g. 12/min at 5s). Post at most once
   // per REFRESH_NOTIFY_MIN_GAP_MS; the message still shows the cumulative count.
+  // Honors the same mutes as the kw/chg alert paths: quiet-hours suppress mode
+  // muting the notify channel, and a notification-button snooze — without this
+  // gate, "Notify on refresh" kept posting all night through both.
   if (job.settings.notify) {
     const now = Date.now();
-    if (ARPGuards.shouldNotifyRefresh(job._lastRefreshNotify, now, REFRESH_NOTIFY_MIN_GAP_MS)) {
+    const snoozed = job._snoozeUntil && now < job._snoozeUntil;
+    const refreshNotifyMuted = !!snoozed ||
+      ARPQuietHours.isChannelMuted(new Date(), job.settings.quietHours, 'notify');
+    if (!refreshNotifyMuted &&
+        ARPGuards.shouldNotifyRefresh(job._lastRefreshNotify, now, REFRESH_NOTIFY_MIN_GAP_MS)) {
       job._lastRefreshNotify = now;
       notify('refresh', tabId, {
         type: 'basic',
@@ -1329,106 +1355,122 @@ async function doMonitorRefresh(tabId, job) {
 const computeInterval = ARPInterval.computeInterval;
 
 // ── Start refresh ──────────────────────────────────────────────────────────
-async function startRefresh(tabId, settings) {
-  // Stop any existing job
-  if (activeJobs[tabId]) {
-    await stopRefresh(tabId);
-  }
-
-  const interval = computeInterval(settings);
-  settings.currentInterval = interval;
-
-  // Snapshot the current URL and page content at start time.
-  // URL: so we can stop if the user navigates away.
-  // Content: so cycle 1 has a baseline — prevents false-positive keyword/change
-  //          alerts on content that was already present before refresh started.
-  let startUrl = null;
-  let initialContent = null;
+async function startRefresh(tabId, settings, suppliedToken) {
+  const token = suppliedToken === undefined
+    ? lifecycleRegistry.begin(tabId)
+    : suppliedToken;
+  const isCancelled = () => !lifecycleRegistry.isCurrent(tabId, token);
   try {
-    const tab = await chrome.tabs.get(tabId);
-    // pendingUrl: an auto-start job is created right after chrome.tabs.create,
-    // while the tab is still loading — url is '' but pendingUrl has the target.
-    // Without the fallback such jobs get startUrl null, permanently disabling
-    // the navigate-away stop and the restart-time identity check (restoreJobs).
-    startUrl = tab.url || tab.pendingUrl || null;
-  } catch (e) {}
-
-  // Domain denylist (#7): never attach a job to a user-blocked origin. This ONE
-  // guard covers every launch path — popup, hotkey, URL rule, auto-start — because
-  // they all funnel through startRefresh. Checked BEFORE the baseline executeScript
-  // so a denied page (bank, webmail, health portal) is never even read.
-  if (startUrl) {
-    const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
-    if (ARPValidators.isUrlDenied(startUrl, domainDenylist)) {
-      chrome.tabs.sendMessage(tabId, { type: 'STOPPED' }).catch(() => {}); // clear any overlay
-      return false;
+    // Stop any existing job without invalidating this new Start's token.
+    if (activeJobs[tabId]) {
+      await teardownJob(tabId);
+      if (isCancelled()) return 'cancelled';
     }
-  }
 
-  // Compiled once here so the per-item baseline below and the job's cached
-  // _matcher / _excludeMatcher share one compile.
-  const matcher = buildMatcher(settings);
-  const excludeMatcher = buildExcludeMatcher(settings);
-  // Per-item baseline: seed the seen-set so cycle 1 doesn't alert for every
-  // matching item already present at start (mirrors previousContent's role).
-  // Same gate as doMonitorRefresh: a live compiled matcher, not raw keyword text.
-  const perItem = !!(settings.kwPerItem && settings.watchSelector && matcher.ok && !matcher.empty);
-  let initialSeenKeys = null;
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: readPageText,
-      args: [settings.watchSelector || '', perItem], // scoped baseline read ('' = whole body)
-    });
-    const raw = results && results[0] && results[0].result;
-    if (perItem) {
-      // Any ARRAY read — including [] — is a real baseline. [] means "the page
-      // rendered and zero items are present", the normal starting state for an
-      // alert-on-arrival watch: the FIRST later arrival must fire against it.
-      // null (couldn't read / not rendered / bad selector) ⇒ no baseline yet =
-      // the first successful cycle re-baselines without firing, same as below.
-      initialSeenKeys = Array.isArray(raw)
-        ? ARPItemDetect.collectMatches(raw, matcher, itemKeyOpts(settings), excludeMatcher)
-        : null;
-    } else {
-      // Only use as baseline if we got real content (non-empty).
-      // If empty/null, leave previousContent as null — the keyword check
-      // will skip alerting on cycle 1 and wait for cycle 2 when the page
-      // has had a chance to fully render.
-      initialContent = (raw && raw.length > 0) ? raw : null;
+    const interval = computeInterval(settings);
+    settings.currentInterval = interval;
+
+    // Snapshot the current URL and page content at start time.
+    // URL: so we can stop if the user navigates away.
+    // Content: so cycle 1 has a baseline — prevents false-positive keyword/change
+    //          alerts on content that was already present before refresh started.
+    let startUrl = null;
+    let initialContent = null;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (isCancelled()) return 'cancelled';
+      // pendingUrl: an auto-start job is created right after chrome.tabs.create,
+      // while the tab is still loading — url is '' but pendingUrl has the target.
+      // Without the fallback such jobs get startUrl null, permanently disabling
+      // the navigate-away stop and the restart-time identity check (restoreJobs).
+      startUrl = tab.url || tab.pendingUrl || null;
+    } catch (e) {}
+    if (isCancelled()) return 'cancelled';
+
+    // Domain denylist (#7): never attach a job to a user-blocked origin. This ONE
+    // guard covers every launch path — popup, hotkey, URL rule, auto-start — because
+    // they all funnel through startRefresh. Checked BEFORE the baseline executeScript
+    // so a denied page (bank, webmail, health portal) is never even read.
+    if (startUrl) {
+      const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+      if (isCancelled()) return 'cancelled';
+      if (ARPValidators.isUrlDenied(startUrl, domainDenylist)) {
+        chrome.tabs.sendMessage(tabId, { type: 'STOPPED' }).catch(() => {}); // clear any overlay
+        return 'denied';
+      }
     }
-  } catch (e) {
-    initialContent = null; // not scriptable — skip alert on first cycle (seenKeys stays null too)
+
+    // Compiled once here so the per-item baseline below and the job's cached
+    // _matcher / _excludeMatcher share one compile.
+    const matcher = buildMatcher(settings);
+    const excludeMatcher = buildExcludeMatcher(settings);
+    // Per-item baseline: seed the seen-set so cycle 1 doesn't alert for every
+    // matching item already present at start (mirrors previousContent's role).
+    // Same gate as doMonitorRefresh: a live compiled matcher, not raw keyword text.
+    const perItem = !!(settings.kwPerItem && settings.watchSelector && matcher.ok && !matcher.empty);
+    let initialSeenKeys = null;
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: readPageText,
+        args: [settings.watchSelector || '', perItem], // scoped baseline read ('' = whole body)
+      });
+      if (isCancelled()) return 'cancelled';
+      const raw = results && results[0] && results[0].result;
+      if (perItem) {
+        // Any ARRAY read — including [] — is a real baseline. [] means "the page
+        // rendered and zero items are present", the normal starting state for an
+        // alert-on-arrival watch: the FIRST later arrival must fire against it.
+        // null (couldn't read / not rendered / bad selector) ⇒ no baseline yet =
+        // the first successful cycle re-baselines without firing, same as below.
+        initialSeenKeys = Array.isArray(raw)
+          ? ARPItemDetect.collectMatches(raw, matcher, itemKeyOpts(settings), excludeMatcher)
+          : null;
+      } else {
+        // Only use as baseline if we got real content (non-empty).
+        // If empty/null, leave previousContent as null — the keyword check
+        // will skip alerting on cycle 1 and wait for cycle 2 when the page
+        // has had a chance to fully render.
+        initialContent = (raw && raw.length > 0) ? raw : null;
+      }
+    } catch (e) {
+      if (isCancelled()) return 'cancelled';
+      initialContent = null; // not scriptable — skip alert on first cycle (seenKeys stays null too)
+    }
+
+    if (isCancelled()) return 'cancelled';
+
+    activeJobs[tabId] = {
+      settings,
+      refreshCount: 0,
+      keywordCount: 0,
+      nextRefresh: Date.now() + interval,
+      alarmName: `refresh_${tabId}`,
+      startUrl,
+      previousContent: initialContent,  // null = no baseline yet, skip first cycle
+      _seenKeys: initialSeenKeys,       // per-item baseline (null = no baseline yet)
+      _matcher: matcher,                // compiled once; reused every cycle
+      _excludeMatcher: excludeMatcher,  // per-item "skip items containing" filter
+      _lastRefresh: 0,                  // no refresh has fired yet
+      _timer: null,                     // short-interval setTimeout handle
+      _domTimer: null,                  // live-watch scan chain handle
+    };
+
+    scheduleNext(tabId, interval);
+    scheduleDomScan(tabId); // live watch (#11): no-op unless domWatch + per-item are on
+
+    // Notify content script — retry until it responds, since the content script
+    // may not be injected yet (tab still loading) when Start is pressed.
+    sendCountdownStart(tabId, 0);
+
+    // Persist to storage
+    await saveJobToStorage(tabId, settings);
+    broadcastStatus();
+    refreshBadge(); // active-job count changed
+    return 'started';
+  } finally {
+    lifecycleRegistry.finish(tabId, token);
   }
-
-  activeJobs[tabId] = {
-    settings,
-    refreshCount: 0,
-    keywordCount: 0,
-    nextRefresh: Date.now() + interval,
-    alarmName: `refresh_${tabId}`,
-    startUrl,
-    previousContent: initialContent,  // null = no baseline yet, skip first cycle
-    _seenKeys: initialSeenKeys,       // per-item baseline (null = no baseline yet)
-    _matcher: matcher,                // compiled once; reused every cycle
-    _excludeMatcher: excludeMatcher,  // per-item "skip items containing" filter
-    _lastRefresh: 0,                  // no refresh has fired yet
-    _timer: null,                     // short-interval setTimeout handle
-    _domTimer: null,                  // live-watch scan chain handle
-  };
-
-  scheduleNext(tabId, interval);
-  scheduleDomScan(tabId); // live watch (#11): no-op unless domWatch + per-item are on
-
-  // Notify content script — retry until it responds, since the content script
-  // may not be injected yet (tab still loading) when Start is pressed.
-  sendCountdownStart(tabId, 0);
-
-  // Persist to storage
-  await saveJobToStorage(tabId, settings);
-  broadcastStatus();
-  refreshBadge(); // active-job count changed
-  return true;
 }
 
 async function sendCountdownStart(tabId, attempt) {
@@ -1521,7 +1563,7 @@ async function sendKeywordFlash(tabId, attempt) {
   });
 }
 
-async function stopRefresh(tabId) {
+async function teardownJob(tabId) {
   if (activeJobs[tabId]) {
     clearAckBeeps(tabId); // stop any repeat-until-ack loop before dropping the job
     clearTimerLoop(activeJobs[tabId]); // stop the short-interval setTimeout loop
@@ -1535,6 +1577,13 @@ async function stopRefresh(tabId) {
   await removeJobFromStorage(tabId);
   broadcastStatus();
   refreshBadge(); // active-job count changed
+}
+
+async function stopRefresh(tabId) {
+  // Invalidate any asynchronous Start before doing any awaits. A suspended
+  // start will observe the stale generation and exit without publishing state.
+  lifecycleRegistry.invalidate(tabId);
+  await teardownJob(tabId);
 }
 
 // ── Storage helpers ────────────────────────────────────────────────────────
@@ -1585,6 +1634,13 @@ async function saveJobToStorage(tabId, settings) {
     (typeof settings.keyword === 'string' && settings.keyword.trim())));
   await withJobsStore((jobs) => {
     const job = activeJobs[tabId];
+    // The job can be stopped between a save being requested and this mutate
+    // running on the mutex (e.g. a live-watch alert is mid-delivery when the
+    // user clicks Stop; its saveJobToStorage queues AFTER the stop's remove).
+    // Writing anyway would resurrect the entry with defaults — startUrl: null —
+    // and the next rehydrate would re-attach the stopped job to whatever URL
+    // the tab shows then. A stopped job stays stopped.
+    if (!job) return;
     jobs[tabId] = {
       settings,
       refreshCount: (job && job.refreshCount) || 0,
@@ -1631,7 +1687,23 @@ async function removeJobFromStorage(tabId) {
 // per-job alarm persists. These rebuild a job's runtime state from what
 // saveJobToStorage persisted, so the refresh loop (and the UI) survive a restart
 // rather than dying silently the first time the worker idles out.
-async function rehydrateJob(tabId, prefetched) {
+// Single-flight per tab: rehydrateJob awaits twice (storage.get, tabs.get)
+// before assigning activeJobs[tabId], so two concurrent callers (an alarm's
+// fireRefresh racing the popup's GET_STATUS → rehydrateAll) would each build
+// their own job object — the last assignment wins while the first caller keeps
+// mutating a detached object, and its baseline/count updates are then persisted
+// from the other (stale) one → duplicate alerts, lost stopAfter counting.
+const rehydrateInflight = {};
+function rehydrateJob(tabId, prefetched) {
+  if (activeJobs[tabId]) return Promise.resolve(activeJobs[tabId]);
+  if (rehydrateInflight[tabId]) return rehydrateInflight[tabId];
+  const p = doRehydrateJob(tabId, prefetched)
+    .finally(() => { delete rehydrateInflight[tabId]; });
+  rehydrateInflight[tabId] = p;
+  return p;
+}
+
+async function doRehydrateJob(tabId, prefetched) {
   let stored = prefetched;
   if (stored === undefined) {
     const data = await chrome.storage.local.get('activeJobs');
@@ -1650,6 +1722,10 @@ async function rehydrateJob(tabId, prefetched) {
     chrome.alarms.clear(`refresh_${tabId}`);
     return null;
   }
+
+  // A START_REFRESH can land during the awaits above and build a fresh job —
+  // that one is newer (new baseline, count reset); don't clobber it.
+  if (activeJobs[tabId]) return activeJobs[tabId];
 
   activeJobs[tabId] = ARPRehydrate.buildRehydratedJob(stored, tabId, {
     startUrl,
@@ -1772,7 +1848,13 @@ async function restoreJobs(opts) {
     const job = await rehydrateJob(tabId, stored);
     if (job) {
       scheduleNext(tabId, Math.max(1000, job.nextRefresh - Date.now()));
-      sendCountdownStart(tabId, 0);
+      // A job restored in a paused state must not get an un-pausing
+      // COUNTDOWN_START. For an away pause this would stick forever: the
+      // fireRefresh gate only re-signals PAUSED on a reason EDGE, and the
+      // rehydrated reason is already 'away'.
+      const restoredPaused = job._manualPause ? 'manual' : (job._pauseReason || null);
+      if (restoredPaused) sendOverlayPaused(tabId, restoredPaused);
+      else sendCountdownStart(tabId, 0);
     }
   }
   broadcastStatus();
@@ -1924,20 +2006,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // sender.tab) to controlling its own tab. The popup/options/manage pages have
   // no sender.tab and keep using msg.tabId.
   const senderTabId = sender.tab && sender.tab.id;
+  const resolvedCommandTabId = senderTabId ?? msg.tabId;
+  const startToken = msg.type === 'START_REFRESH' && resolvedCommandTabId != null
+    ? lifecycleRegistry.begin(resolvedCommandTabId)
+    : null;
+  const stopAllTabs = msg.type === 'STOP_ALL'
+    ? [...new Set([
+      ...Object.keys(activeJobs).map(Number),
+      ...lifecycleRegistry.pendingTabIds(),
+    ])]
+    : [];
+  if (msg.type === 'STOP_REFRESH' && resolvedCommandTabId != null) {
+    lifecycleRegistry.invalidate(resolvedCommandTabId);
+  } else if (msg.type === 'STOP_ALL') {
+    for (const tabId of stopAllTabs) lifecycleRegistry.invalidate(tabId);
+  }
   (async () => {
     await rehydrateAll(); // a restarted worker has an empty activeJobs; refill it
     switch (msg.type) {
       case 'START_REFRESH': {
-        // startRefresh returns false when the URL is on the domain denylist (#7),
-        // so the popup can surface "disabled on this site" instead of silently
-        // showing no job.
-        const started = await startRefresh(senderTabId || msg.tabId, msg.settings);
-        sendResponse({ ok: started !== false, denied: started === false });
+        const started = await startRefresh(resolvedCommandTabId, msg.settings, startToken);
+        if (started === 'denied') sendResponse({ ok: false, denied: true });
+        else if (started === 'cancelled') sendResponse({ ok: false, cancelled: true });
+        else sendResponse({ ok: true, started: true });
         break;
       }
       case 'STOP_REFRESH': {
-        const stopTabId = senderTabId || msg.tabId;
-        if (stopTabId) await stopRefresh(stopTabId);
+        const stopTabId = resolvedCommandTabId;
+        if (stopTabId != null) await stopRefresh(stopTabId);
         sendResponse({ ok: true });
         break;
       }
@@ -1955,9 +2051,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       }
       case 'STOP_ALL':
-        for (const tabId of Object.keys(activeJobs)) {
-          await stopRefresh(parseInt(tabId));
-        }
+        // Rehydration can repopulate activeJobs between the synchronous
+        // invalidation above and this awaited branch. Include those entries so
+        // a worker-restart Stop All cannot leave a persisted job alive.
+        const allStopTabs = [...new Set([
+          ...stopAllTabs,
+          ...Object.keys(activeJobs).map(Number),
+        ])];
+        for (const tabId of allStopTabs) await stopRefresh(tabId);
         sendResponse({ ok: true });
         break;
       case 'UPDATE_INTERVAL': {
@@ -1973,16 +2074,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Merge new settings, keeping existing state
         const newInterval = computeInterval(msg.settings);
         msg.settings.currentInterval = newInterval;
-        job.settings = { ...job.settings, ...msg.settings };
+        const mergedSettings = { ...job.settings, ...msg.settings };
+        const detectionChanged = !ARPDetectionIdentity.same(job.settings, mergedSettings);
+        job.settings = mergedSettings;
         job.nextRefresh = Date.now() + newInterval;
-        job._matcher = buildMatcher(job.settings); // keyword/flags may have changed
-        job._excludeMatcher = buildExcludeMatcher(job.settings); // kwExclude too
-        job._prevFound = undefined; // cached verdict is for the OLD matcher — re-judge
-        // Per-item seen-set is keyed by the OLD keyword/selector; a changed
-        // keyword would make every new-keyword match look "new" and fire a burst.
-        // Drop it so the next cycle re-establishes a fresh baseline (no fire),
-        // mirroring the _prevFound reset above.
-        job._seenKeys = null;
+        if (detectionChanged) {
+          job._matcher = buildMatcher(job.settings); // keyword/flags changed
+          job._excludeMatcher = buildExcludeMatcher(job.settings); // kwExclude changed
+          job._prevFound = undefined; // cached verdict is for the OLD matcher — re-judge
+          // Per-item keys are derived from the OLD keyword/selector/options. Drop
+          // them so the next cycle establishes a quiet baseline for new identity.
+          job._seenKeys = null;
+        }
         job._epoch = (job._epoch || 0) + 1; // invalidate any in-flight cycle's reschedule
 
         // If the job is currently paused (manual / quiet / offline / away), apply
@@ -2054,11 +2157,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const job = activeJobs[pTabId] || await rehydrateJob(pTabId);
         if (!job) { sendResponse({ ok: false }); break; }
         job._manualPause = true;
+        // Set the reason NOW rather than waiting for the next fireRefresh gate:
+        // the gate's overlay notification is edge-only, and serializeJob reads
+        // this for the popup/Manage paused badge.
+        job._pauseReason = 'manual';
         clearAckBeeps(pTabId);
         clearDomScan(job); // paused = dormant; RESUME_JOB re-arms live watch
         const recheck = pauseRecheckMs(job.settings.currentInterval || computeInterval(job.settings), false);
         job.nextRefresh = Date.now() + recheck;
         scheduleNext(pTabId, recheck);
+        // Freeze the in-page overlay too. A pause from the popup/Manage page
+        // otherwise leaves the tab's countdown running until it drains to 0:00
+        // and stalls (broadcastStatus reaches only extension pages, and the
+        // fireRefresh gate won't re-signal — its edge already passed). Harmless
+        // no-op when the pause originated from the overlay's own ⏸ button.
+        sendOverlayPaused(pTabId, 'manual');
         await saveJobToStorage(pTabId, job.settings); // persist the pause flag (survives worker restart)
         broadcastStatus();
         sendResponse({ ok: true });
@@ -2095,7 +2208,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // with the pre-extend deadline — silently dropping the user's extension.
         job._epoch = (job._epoch || 0) + 1;
         scheduleNext(eTabId, Math.max(0, job.nextRefresh - Date.now()));
-        sendCountdownStart(eTabId, 0);
+        // A paused job stays paused-looking: re-signal PAUSED instead of an
+        // un-pausing COUNTDOWN_START (same contract as UPDATE_INTERVAL above).
+        // The content script treats any COUNTDOWN_START as a real resume, and
+        // the fireRefresh gate re-sends PAUSED only on a reason EDGE — so an
+        // overlay un-paused here would show a live countdown draining to 0:00
+        // for a job that never refreshes, with the pause button inverted.
+        const extendPaused = job._manualPause ? 'manual' : (job._pauseReason || null);
+        if (extendPaused) sendOverlayPaused(eTabId, extendPaused);
+        else sendCountdownStart(eTabId, 0);
+        await saveJobToStorage(eTabId, job.settings); // persist the extended deadline across worker restarts
         broadcastStatus();
         sendResponse({ ok: true });
         break;

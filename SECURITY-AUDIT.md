@@ -85,9 +85,12 @@ loads (manifest + all referenced files validated).
   Lint asserts it is never weakened (`unsafe-inline`/`unsafe-eval`/`http:`).
 
 ## Reviewed — no change required
-- **Permissions / `<all_urls>`:** broad but functionally required for a
-  refresh-any-tab tool; no narrower scope is feasible. No `externally_connectable`,
-  no `web_accessible_resources`, no remote code, no `eval`/`new Function`.
+- **Permissions / `<all_urls>`:** broad and still an accepted architectural
+  risk for this pass. A narrower permission/content-script design is deferred
+  to a separate project because it affects auto-start rules, global hotkeys,
+  installation warnings, and content-script availability. No
+  `externally_connectable`, no `web_accessible_resources`, no remote code, no
+  `eval`/`new Function`.
 - **content.js:** all overlay DOM built via `createElement`/`textContent`; the
   only `innerHTML` is a static inline SVG. Reads page text via `innerText` only
   (no injection). Storage values it reads (`__ar_overlay_pos`, size) are numeric
@@ -136,3 +139,31 @@ Review of features added since the original audit, plus a hardening fix.
   `redirect: 'error'` so a 30x can't bounce the body to an internal target. Item
   deep-links placed in the message body are `isSafeNavigableUrl`-gated (http/s
   only), so a `javascript:`/`mailto:` card link can't ride into the payload.
+
+## Severe audit remediations (2026-07-15)
+
+The following five High-severity findings were fixed without changing the
+universal-site permission model:
+
+- **Regex ReDoS guard bypass:** `isSafeRegex` now rejects repeated groups whose
+  interiors contain variable-width nested quantifiers, including bounded forms
+  such as `^(?:a{1,2})+b$`, while retaining exact-width controls. Covered by
+  `test/regex-safety.test.js`.
+- **Synthetic content events:** overlay controls, hotkeys, click-to-stop, and
+  drag/resize handlers require trusted browser events. Host/page-created DOM
+  events can no longer invoke extension actions. Covered by the Chrome smoke
+  harness and `content.js` checks.
+- **Start/Stop lifecycle race:** per-tab lifecycle generations are acquired and
+  invalidated synchronously at message receipt. A suspended Start returns
+  `{ cancelled: true }` and cannot publish a job, timer, alarm, overlay, or
+  persisted record after Stop. Covered by `test/background-lifecycle.test.js`.
+- **Per-item baseline loss:** timing-only interval updates preserve matcher and
+  `_seenKeys` state. Detection-setting changes rebuild matchers and re-baseline
+  intentionally. Covered by `test/background-lifecycle.test.js` and
+  `test/detection-identity.test.js`.
+- **Private settings export:** Manage exports an explicit settings allowlist and
+  excludes active jobs, alert history, counters, URL indexes, and unknown
+  future runtime keys. Covered by `test/settings-export.test.js`.
+
+Validation for this remediation: `npm test` (265 passing), `npm run lint`,
+`npm run build`, and `node audit-proof/verify-severe-fixes.mjs` all pass.

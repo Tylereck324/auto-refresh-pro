@@ -73,6 +73,33 @@ test('rejects nested quantifiers hidden behind extra parentheses', () => {
   assert.equal(V.isSafeRegex('(x(y+)z)+w'), false); // inner quantifier not adjacent to the outer ')'
 });
 
+test('rejects variable-width bounded nested quantifiers', () => {
+  assert.equal(V.isSafeRegex('^(?:a{1,2})+b$'), false);
+  assert.equal(V.isSafeRegex('(a?)+$'), false);
+  assert.equal(V.isSafeRegex('((a{2,3}))+z'), false);
+});
+
+test('accepts exact nested repetitions', () => {
+  assert.equal(V.isSafeRegex('(ab{2})+z'), true);
+  assert.equal(V.isSafeRegex('(?:a{2})+b'), true);
+  assert.equal(V.isSafeRegex('colou?r'), true);
+});
+
+test('rejects quantified alternations hidden behind nested groups', () => {
+  // Exponential with NO nested quantifier and branches the overlap heuristic
+  // can't compare because the alternation involves nested groups — its group
+  // regex only inspects paren-free interiors. Verified: ((a)|a)+b took >40s
+  // against 26 'a's before this check existed. Fail closed on the whole shape.
+  assert.equal(V.isSafeRegex('((a)|a)+b'), false);      // capturing-group branch
+  assert.equal(V.isSafeRegex('(?:(a)|a)+b'), false);    // non-capturing outer
+  assert.equal(V.isSafeRegex('((a)|a){2,20}b'), false); // bounded-but-large repeat
+  assert.equal(V.isSafeRegex('(x(a|a)y)+b'), false);    // overlap nested one level down
+  // '?' can't iterate, and alternation-free nested groups stay fine.
+  assert.equal(V.isSafeRegex('((a)|b)?c'), true);
+  assert.equal(V.isSafeRegex('(?:foo(bar))+'), true);
+  assert.equal(V.isSafeRegex('[(|)]+x'), true);         // '|' and '(' inside a class are literals
+});
+
 test('rejects character-class / shorthand alternation overlap', () => {
   // Exponential without a nested quantifier: a quantified alternation whose
   // branches overlap through a class/shorthand, invisible to string comparison.
