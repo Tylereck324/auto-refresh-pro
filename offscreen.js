@@ -6,7 +6,7 @@
 // loaded before this script and exposes the global `AlertSounds`.
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === 'PLAY_BEEP') {
+  if (msg && msg.target === 'offscreen' && msg.type === 'PLAY_BEEP') {
     AlertSounds.playTone(msg.tone, { volume: msg.volume, repeat: msg.repeat });
     // Acknowledge synchronously so the background knows this document's listener
     // is live and the message landed. Without this, the background can't tell a

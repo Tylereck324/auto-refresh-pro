@@ -101,6 +101,37 @@
   const clampVolume = (raw) => clamp(parseInt(raw, 10) / 100, 0, 1, 0.9);
   const clampRepeat = (raw) => clamp(parseInt(raw, 10), 1, 5, 1);
 
+  // Keep playing elements strongly reachable until they finish. A detached
+  // `new Audio()` can be collected while its play promise is still pending in
+  // a hidden/offscreen document, which makes sparse alert tones intermittent.
+  // Appending the element also gives Chrome's AUDIO_PLAYBACK document a live
+  // media node to track; it has no controls and is invisible in extension pages.
+  const activeAudio = new Set();
+  function retainAudio(audio, lenMs) {
+    activeAudio.add(audio);
+    try {
+      if (typeof document !== 'undefined' && document.body && audio && !audio.parentNode) {
+        audio.setAttribute?.('aria-hidden', 'true');
+        document.body.appendChild(audio);
+      }
+    } catch (_) {}
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeAudio.delete(audio);
+      try { audio.parentNode?.removeChild(audio); } catch (_) {}
+    };
+    if (typeof audio.addEventListener === 'function') {
+      audio.addEventListener('ended', release, { once: true });
+      audio.addEventListener('error', release, { once: true });
+      audio.addEventListener('abort', release, { once: true });
+    }
+    // A defensive cleanup for a media implementation that never emits ended.
+    setTimeout(release, Math.max(1000, (Number(lenMs) || 600) + 5000));
+    return release;
+  }
+
   // Play a tone, optionally repeated. Returns immediately; repeats are spaced by
   // the clip length so they don't overlap. `repeat` is clamped to 1–5 here too,
   // so poisoned storage can't turn an alert into an audio DoS.
@@ -112,7 +143,22 @@
     const playOnce = () => {
       const audio = new Audio(tone.uri);
       audio.volume = volume;
-      audio.play().catch((e) => console.warn('Alert audio error:', e));
+      audio.preload = 'auto';
+      const release = retainAudio(audio, tone.lenMs);
+      let playback;
+      try {
+        playback = audio.play();
+      } catch (e) {
+        release();
+        console.warn('Alert audio error:', e);
+        return;
+      }
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch((e) => {
+          release();
+          console.warn('Alert audio error:', e);
+        });
+      }
     };
     playOnce();
     for (let i = 1; i < repeat; i++) setTimeout(playOnce, i * (tone.lenMs + 60));

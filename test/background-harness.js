@@ -31,6 +31,7 @@ function createHarness(options = {}) {
   const storage = { ...(options.storage || {}) };
   const tab = { id: 7, url: 'https://example.test/list', pendingUrl: '', status: 'complete', title: 'Example' };
   const calls = [];
+  const tabsOnUpdated = event();
   const gates = {
     tabGetCalled: deferred(),
     tabGetRelease: null,
@@ -44,7 +45,12 @@ function createHarness(options = {}) {
     onMessage: event(),
     onInstalled: event(),
     onStartup: event(),
-    sendMessage: async () => undefined,
+    async sendMessage(...args) {
+      calls.push({ api: 'runtime.sendMessage', args });
+      const callback = args[args.length - 1];
+      if (typeof callback === 'function') callback({ ok: true });
+      return { ok: true };
+    },
   };
   const storageArea = {
     async get(keys) {
@@ -68,7 +74,7 @@ function createHarness(options = {}) {
     storage: { local: storageArea, onChanged: event() },
     tabs: {
       onRemoved: event(),
-      onUpdated: event(),
+      onUpdated: tabsOnUpdated,
       async get(tabId) {
         tabGetCallCount++;
         calls.push({ api: 'tabs.get', tabId });
@@ -86,7 +92,21 @@ function createHarness(options = {}) {
         if (callback) callback({ ok: true });
         return Promise.resolve({ ok: true });
       },
-      reload: async (tabId) => { calls.push({ api: 'tabs.reload', tabId }); },
+      async reload(tabId, reloadProperties) {
+        calls.push({ api: 'tabs.reload', tabId, reloadProperties });
+        tab.status = 'loading';
+        for (const listener of [...tabsOnUpdated.listeners]) {
+          await listener(tabId, { status: 'loading' }, { ...tab, id: tabId });
+        }
+        if (typeof options.onReload === 'function') {
+          await options.onReload({ tabId, reloadProperties, tab, calls });
+        }
+        if (options.completeReload === false) return;
+        tab.status = 'complete';
+        for (const listener of [...tabsOnUpdated.listeners]) {
+          await listener(tabId, { status: 'complete' }, { ...tab, id: tabId });
+        }
+      },
       create: async (createProperties) => {
         calls.push({ api: 'tabs.create', createProperties });
         return { ...tab, id: 8, url: createProperties.url, pendingUrl: createProperties.url };
@@ -99,6 +119,9 @@ function createHarness(options = {}) {
     scripting: {
       async executeScript(details) {
         calls.push({ api: 'scripting.executeScript', details });
+        if (typeof options.onExecuteScript === 'function') {
+          await options.onExecuteScript({ details, calls });
+        }
         return [{ result: options.executeScriptResult === undefined ? '' : options.executeScriptResult }];
       },
     },

@@ -147,6 +147,11 @@ function armOffscreenTeardown() {
       .catch(() => {})
       .finally(() => { closingOffscreen = null; });
   }, OFFSCREEN_IDLE_MS);
+  // Node's test harness should not stay alive for the browser-only idle
+  // cleanup timer; Chrome timers do not expose `unref`, so this is a no-op there.
+  if (offscreenIdleTimer && typeof offscreenIdleTimer.unref === 'function') {
+    offscreenIdleTimer.unref();
+  }
 }
 
 async function playBeep(opts = {}) {
@@ -539,7 +544,17 @@ async function sendWebhook(job, info) {
 // replayed — no double beep.
 function deliverBeep(opts = {}, attempt = 0) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'PLAY_BEEP', volume: opts.volume, tone: opts.tone, repeat: opts.repeat }, () => {
+    chrome.runtime.sendMessage({
+      // runtime.sendMessage broadcasts to extension contexts. The explicit
+      // target keeps the service worker's generic message handler from winning
+      // the response race and falsely acknowledging a beep the offscreen page
+      // never received.
+      target: 'offscreen',
+      type: 'PLAY_BEEP',
+      volume: opts.volume,
+      tone: opts.tone,
+      repeat: opts.repeat,
+    }, () => {
       if (chrome.runtime.lastError) {
         // No live listener yet (or no receiver responded). Back off briefly and
         // retry, capped so we never spin forever if the document failed to load.
@@ -904,17 +919,13 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
     requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
     buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
   });
-  // Screen-edge flash: with stopOnKeyword the page stays put, so flash the
-  // still-live content script now. Otherwise the reload below would destroy the
-  // flash mid-animation — defer it until after doRefresh (see _pendingFlash).
-  // Muted-flash collapses to flashOnKeyword=false ⇒ computeFlashDelivery 'none'.
+  // The alert is evaluated after the reload, so the live content script can
+  // receive the screen-edge flash immediately.
   const flashPlan = ARPMonitor.computeFlashDelivery({
     fired: true,
     flashOnKeyword: job.settings.flashOnKeyword && !muted('flash'),
-    stopOnKeyword: job.settings.stopOnKeyword,
   });
   if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
-  else if (flashPlan === 'after-reload') job._pendingFlash = true;
   if (job.settings.stopOnKeyword) {
     await stopRefresh(tabId);
     return true;
@@ -1148,9 +1159,6 @@ async function doDomScan(tabId) {
             items: arrivalItems(curr, newKeys, job.settings.kwInverse),
           });
           if (stopped) return; // stopOnKeyword — stopRefresh already cleared the chain
-          // No reload is coming, so a flash the deliverer deferred to
-          // "after-reload" (it assumes the cycle path) must fire now.
-          if (job._pendingFlash) { job._pendingFlash = false; sendKeywordFlash(tabId, 0); }
           // Persist the advanced baseline so a worker death right after the
           // alert can't rehydrate the OLD seen-set and re-alert the same items.
           // Per-tick persistence would hammer storage; alert-frequency writes
@@ -1163,6 +1171,88 @@ async function doDomScan(tabId) {
   scheduleDomScan(tabId);
 }
 
+const RELOAD_COMPLETE_TIMEOUT_MS = 15_000;
+// App-shell pages can finish their document load before the API-backed list is
+// rendered. Give the new document a minimum hold plus a short quiet window so a
+// card inserted just after `status: complete` is included in THIS cycle instead
+// of waiting for the next reload. The timeout keeps a busy/live page from
+// delaying a refresh forever.
+const POST_LOAD_SETTLE_QUIET_MS = 300;
+const POST_LOAD_SETTLE_MIN_MS = 750;
+const POST_LOAD_SETTLE_TIMEOUT_MS = 3_000;
+
+function createReloadCompletionWaiter(tabId, timeoutMs = RELOAD_COMPLETE_TIMEOUT_MS) {
+  let settled = false;
+  let timer = null;
+  let finish = () => {};
+  const onUpdated = (updatedTabId, changeInfo) => {
+    if (updatedTabId === tabId && changeInfo.status === 'complete') finish(true);
+  };
+  const promise = new Promise((resolve) => {
+    finish = (completed) => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      if (timer) clearTimeout(timer);
+      resolve(completed);
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    timer = setTimeout(() => finish(false), timeoutMs);
+  });
+  return { promise, cancel: () => finish(false) };
+}
+
+// Injected into the page after a reload completes. Resolve after the DOM has
+// been quiet for a short window, or at the bounded timeout. Ignore mutations
+// inside our own countdown overlay; its clock ticks independently of the page
+// content and must not keep every detecting refresh at the timeout.
+function waitForPageSettle(quietMs, timeoutMs, minimumMs) {
+  if (!document.body || typeof MutationObserver !== 'function') return Promise.resolve(false);
+  const quiet = Math.max(0, Number(quietMs) || 0);
+  const timeout = Math.max(quiet, Number(timeoutMs) || quiet);
+  const minimum = Math.min(timeout, Math.max(0, Number(minimumMs) || 0));
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    let settled = false;
+    let quietTimer = null;
+    let timeoutTimer = null;
+    const insideOverlay = (node) => {
+      const element = node && node.nodeType === 1 ? node : node && node.parentElement;
+      return !!(element && element.closest && element.closest('#__ar_overlay'));
+    };
+    const observer = new MutationObserver((records) => {
+      const pageMutation = records.some((record) => {
+        if (insideOverlay(record.target)) return false;
+        if (record.type !== 'childList') return true;
+        const nodes = [...record.addedNodes, ...record.removedNodes];
+        return nodes.some((node) => !insideOverlay(node));
+      });
+      if (pageMutation) armQuietTimer();
+    });
+    const finish = (didSettle) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      if (quietTimer) clearTimeout(quietTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      resolve(didSettle);
+    };
+    const armQuietTimer = () => {
+      if (quietTimer) clearTimeout(quietTimer);
+      const holdRemaining = Math.max(0, minimum - (Date.now() - startedAt));
+      quietTimer = setTimeout(() => finish(true), Math.max(quiet, holdRemaining));
+    };
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+    armQuietTimer();
+    timeoutTimer = setTimeout(() => finish(false), timeout);
+  });
+}
+
 async function doMonitorRefresh(tabId, job) {
   // A keyword takes precedence over generic change-monitoring. When one is set,
   // the keyword is the signal of interest, so we skip the page-change path
@@ -1173,8 +1263,10 @@ async function doMonitorRefresh(tabId, job) {
   const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
   const hasKeyword = matcher.ok && !matcher.empty;
 
-  // Step 1: Read current page content BEFORE reloading.
-  // Sound must also fire BEFORE reload — the content script is destroyed during navigation.
+  // Reload first, then evaluate the document produced by THIS scheduled cycle.
+  // The start-time snapshot remains the previous baseline, so content introduced
+  // by reload 1 can alert during cycle 1 without treating content already present
+  // when Start was pressed as a new arrival.
   // Per-item detection ("alert on each new match") needs a LIVE keyword matcher
   // AND a selector (each matched element is one item); when on, readPageText
   // returns one entry per element instead of a single blob so we can diff which
@@ -1183,6 +1275,35 @@ async function doMonitorRefresh(tabId, job) {
   // string path, where change detection (monitorMode) still runs instead of
   // being silently swallowed by an alert path that can never match.
   const perItem = !!(job.settings.kwPerItem && job.settings.watchSelector && hasKeyword);
+  const reloadWaiter = createReloadCompletionWaiter(tabId);
+  try {
+    await doRefresh(tabId, job);
+  } catch (error) {
+    reloadWaiter.cancel();
+    throw error;
+  }
+  const reloadCompleted = await reloadWaiter.promise;
+  if (!reloadCompleted || activeJobs[tabId] !== job) {
+    if (activeJobs[tabId] === job) {
+      job._consecutiveFailures = (job._consecutiveFailures || 0) + 1;
+    }
+    return;
+  }
+
+  // `tabs.onUpdated` reports the document load, not completion of an app's
+  // client-side data fetch. Wait for a bounded quiet window before the read so
+  // React/Vue/other SPA cards inserted just after load are evaluated in cycle 1.
+  // This is best-effort: if the settle probe cannot run, the normal read below
+  // still provides the existing scriptability/error handling.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: waitForPageSettle,
+      args: [POST_LOAD_SETTLE_QUIET_MS, POST_LOAD_SETTLE_TIMEOUT_MS, POST_LOAD_SETTLE_MIN_MS],
+    });
+  } catch (e) {}
+  if (activeJobs[tabId] !== job) return;
+
   let results;
   try {
     results = await chrome.scripting.executeScript({
@@ -1193,9 +1314,8 @@ async function doMonitorRefresh(tabId, job) {
   } catch (e) {
     // Page won't script (chrome://, web store, error page, hang). Count it so the
     // failure backoff (#9) in fireRefresh ramps the interval instead of hammering
-    // a page that will never yield a read.
+    // a page that will never yield a read. The scheduled reload already happened.
     job._consecutiveFailures = (job._consecutiveFailures || 0) + 1;
-    await doRefresh(tabId, job);
     return;
   }
 
@@ -1208,13 +1328,12 @@ async function doMonitorRefresh(tabId, job) {
   // next full read looks like "keyword appeared"/"page changed", and in inverse
   // mode the empty read itself looks like "keyword disappeared" (worse, stop-on-
   // keyword/change would then kill the job). Same policy as startRefresh's
-  // initialContent guard: skip detection, keep the old baseline, just reload.
+  // initialContent guard: skip detection and keep the old baseline.
   // String path: a failed read IS the empty string. Per-item path: a failed read
   // is null (→ '' above); an EMPTY ARRAY is a real "rendered page, zero items"
   // observation and must flow through — it is the state an alert-on-arrival
   // watch typically starts from, and in inverse mode it is the fire condition.
   if (perItem ? !Array.isArray(currentContent) : currentContent.length === 0) {
-    await doRefresh(tabId, job);
     return;
   }
   job._consecutiveFailures = 0; // a real read landed — clear any failure backoff
@@ -1258,10 +1377,6 @@ async function doMonitorRefresh(tabId, job) {
       });
       if (stopped) return; // stopOnKeyword stopped the job — no reload
     }
-    // Reload + deliver any deferred (after-reload) flash, mirroring the tail of
-    // the string path below.
-    await doRefresh(tabId, job);
-    if (job._pendingFlash) { job._pendingFlash = false; sendKeywordFlash(tabId, 0); }
     return;
   }
 
@@ -1336,17 +1451,9 @@ async function doMonitorRefresh(tabId, job) {
     }
   }
 
-  // Save snapshot then reload (non-empty — the empty-read guard above returned
-  // early, so '' can never become the baseline).
+  // Save the non-empty snapshot for the next reload cycle. The empty-read guard
+  // above returned early, so '' can never become the baseline.
   job.previousContent = currentContent;
-  await doRefresh(tabId, job);
-
-  // Deliver the flash deferred at fire time. Cleared on consumption (not on
-  // ack) so a delivery that exhausts its retries can't flash on a later cycle.
-  if (job._pendingFlash) {
-    job._pendingFlash = false;
-    sendKeywordFlash(tabId, 0);
-  }
 }
 
 // Refresh-interval computation lives in interval.js (ARPInterval.computeInterval)
@@ -1990,6 +2097,11 @@ function serializeJobs() {
 
 // ── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // PLAY_BEEP is addressed to the offscreen document. If Chrome also delivers
+  // the broadcast back to this worker, do not answer it here: the first
+  // response wins, and an "unknown message type" response would make the
+  // caller believe audio was delivered when it was not.
+  if (msg && msg.target === 'offscreen') return false;
   // Trust boundary: only honour messages from this extension's own surfaces
   // (popup/options/manage pages and our injected content scripts). All of those
   // carry sender.id === chrome.runtime.id; a web page or another extension does
