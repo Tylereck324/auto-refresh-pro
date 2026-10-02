@@ -1,0 +1,26 @@
+{
+  // Type-checks the worker and the pure modules (npm run typecheck). The page
+  // scripts (popup/options/manage/content/offscreen) are not included yet: their
+  // untyped getElementById(...).value access would need casts throughout.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "types": ["node", "chrome"],
+    "skipLibCheck": true
+  },
+  "include": [
+    "globals.d.ts",
+    "background.js", "bg-alerts.js", "bg-store.js", "bg-messages.js",
+    "compose-settings.js", "detection-identity.js", "interval.js", "item-detect.js",
+    "keyword-match.js", "lifecycle-generation.js", "monitor-decision.js", "normalize.js",
+    "notif-id.js", "quiet-hours.js", "refresh-guards.js", "rehydrate.js",
+    "runtime-checkpoint.js", "serialize.js", "settings-export.js", "validators.js",
+    "webhook-delivery.js", "webhook-format.js"
+  ]
+}

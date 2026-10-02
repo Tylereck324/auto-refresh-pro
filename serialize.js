@@ -12,7 +12,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('serialize.js') → globalThis.ARPSerialize
 //   • Node test runner: require('./serialize.js')       → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPSerialize = api;

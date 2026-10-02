@@ -9,7 +9,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('normalize.js') → globalThis.ARPNormalize
 //   • Node test runner: require('./normalize.js')      → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPNormalize = api;

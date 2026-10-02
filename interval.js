@@ -9,7 +9,7 @@
 // Loaded two ways, so it stays dependency-free and side-effect-free:
 //   • service worker:   importScripts('interval.js')   → globalThis.ARPInterval
 //   • Node test runner: require('./interval.js')        → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPInterval = api;

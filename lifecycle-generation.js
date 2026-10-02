@@ -7,7 +7,7 @@
 // Loaded two ways:
 //   • service worker: importScripts('lifecycle-generation.js') → globalThis.ARPLifecycle
 //   • Node tests: require('./lifecycle-generation.js') → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPLifecycle = api;

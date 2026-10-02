@@ -6,7 +6,7 @@
 // Loaded two ways:
 //   • extension pages: <script src="settings-export.js"> → window.ARPSettingsExport
 //   • Node tests: require('./settings-export.js') → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPSettingsExport = api;
