@@ -134,29 +134,80 @@ const MAX_NOTIF_ENTRIES = 100;
 // Minimum gap between per-refresh notifications, so a fast interval can't spam.
 const REFRESH_NOTIFY_MIN_GAP_MS = 30000;
 
-function notify(prefix, tabId, options) {
+// `openUrl` (optional): a study deep-link the click should open instead of
+// focusing the tab. Kept in the warm map AND in session storage, because the
+// click often comes minutes later, after the worker has idled out.
+function notify(prefix, tabId, options, openUrl) {
   const id = ARPNotif.buildNotifId(prefix, tabId, Date.now());
-  notifTabMap[id] = { tabId };
+  notifTabMap[id] = openUrl ? { tabId, openUrl } : { tabId };
   // Evict oldest (insertion-ordered keys) once over the cap.
   const ids = Object.keys(notifTabMap);
   if (ids.length > MAX_NOTIF_ENTRIES) delete notifTabMap[ids[0]];
+  if (openUrl) rememberNotifUrl(id, openUrl);
   chrome.notifications.create(id, options);
   return id;
 }
 
+// Session-persisted notification id → study URL (bounded, newest kept).
+const NOTIF_URLS_KEY = 'arpNotifUrls';
+const MAX_NOTIF_URLS = 50;
+const notifUrlMutex = ARPSerialize.createMutex();
+function rememberNotifUrl(id, url) {
+  return notifUrlMutex(async () => {
+    try {
+      const map = /** @type {Record<string, string>} */ ((await chrome.storage.session.get(NOTIF_URLS_KEY))[NOTIF_URLS_KEY] || {});
+      map[id] = url;
+      const ids = Object.keys(map);
+      for (let i = 0; i < ids.length - MAX_NOTIF_URLS; i++) delete map[ids[i]];
+      await chrome.storage.session.set({ [NOTIF_URLS_KEY]: map });
+    } catch (e) { /* session storage unavailable — the warm map still works */ }
+  });
+}
+// Look up and forget a notification's study URL ('' if none).
+function takeNotifUrl(id) {
+  const warm = notifTabMap[id] && notifTabMap[id].openUrl;
+  return notifUrlMutex(async () => {
+    let url = warm || '';
+    try {
+      const map = /** @type {Record<string, string>} */ ((await chrome.storage.session.get(NOTIF_URLS_KEY))[NOTIF_URLS_KEY] || {});
+      if (!url && typeof map[id] === 'string') url = map[id];
+      if (id in map) { delete map[id]; await chrome.storage.session.set({ [NOTIF_URLS_KEY]: map }); }
+    } catch (e) {}
+    return url;
+  });
+}
+
 async function handleNotifClick(id) {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  const openUrl = await takeNotifUrl(id);
   delete notifTabMap[id];
   chrome.notifications.clear(id);
   clearUnacked(); // viewing an alert acknowledges the unacked badge count
-  if (tabId == null) return;
+  if (tabId == null && !openUrl) return;
   // A click is an acknowledgement — stop any repeat-until-ack beeping.
-  clearAckBeeps(tabId);
+  if (tabId != null) clearAckBeeps(tabId);
+  let windowId;
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    windowId = tab.windowId;
+    if (windowId != null) await chrome.windows.update(windowId, { focused: true });
+    // A single new study: open IT (one click to the study) in a new tab beside
+    // the watch, which keeps refreshing undisturbed. Re-validated: the link
+    // came from page content.
+    if (openUrl && ARPValidators.isSafeNavigableUrl(openUrl)) {
+      await chrome.tabs.create({
+        url: openUrl, active: true, windowId,
+        index: Number.isInteger(tab.index) ? tab.index + 1 : undefined,
+      });
+      return;
+    }
     await chrome.tabs.update(tabId, { active: true });
-  } catch (e) { /* tab gone */ }
+  } catch (e) {
+    // Watched tab gone: still honor the study link.
+    if (openUrl && ARPValidators.isSafeNavigableUrl(openUrl)) {
+      try { await chrome.tabs.create({ url: openUrl, active: true }); } catch (_) {}
+    }
+  }
 }
 
 chrome.notifications.onClicked.addListener(handleNotifClick);
@@ -169,6 +220,7 @@ chrome.notifications.onClicked.addListener(handleNotifClick);
 // so the buttons still work after a worker restart.
 chrome.notifications.onButtonClicked.addListener(async (id, buttonIndex) => {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  takeNotifUrl(id); // forget any study link
   delete notifTabMap[id];
   chrome.notifications.clear(id);
   clearUnacked();
@@ -190,6 +242,7 @@ chrome.notifications.onButtonClicked.addListener(async (id, buttonIndex) => {
 
 chrome.notifications.onClosed.addListener((id, byUser) => {
   const tabId = (notifTabMap[id] && notifTabMap[id].tabId) || ARPNotif.parseNotifTabId(id);
+  takeNotifUrl(id); // forget any study link
   delete notifTabMap[id];
   // Only a USER dismissal is an acknowledgement. The OS auto-dismisses banners
   // after a few seconds (the norm on macOS even with requireInteraction) with

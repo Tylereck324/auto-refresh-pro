@@ -455,14 +455,19 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   if (!muted('notify')) sendWebhook(job, { tabId, type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount, items: opts.items });
   if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
   const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
+  // Exactly one new study with a usable link: name it in the notification and
+  // make the click open it directly.
+  const study = singleStudy(opts.items);
   if (!muted('notify')) notify('kw', tabId, {
     type: 'basic',
     iconUrl: 'icons/icon48.png',
-    title: 'Keyword Detected!',
-    message: opts.message || ('"' + job.settings.keyword + '" ' + verb + ' page!'),
+    title: study ? 'New study' : 'Keyword Detected!',
+    message: study
+      ? (study.title + (study.detail ? '\n' + study.detail : '') + '\nClick to open it')
+      : (opts.message || ('"' + job.settings.keyword + '" ' + verb + ' page!')),
     requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
     buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
-  });
+  }, study ? study.url : undefined);
   // The alert is evaluated after the reload, so the live content script can
   // receive the screen-edge flash immediately.
   const flashPlan = ARPMonitor.computeFlashDelivery({
@@ -502,6 +507,16 @@ function perItemMessage(settings, count) {
   return settings.kwInverse
     ? (count + ' ' + noun + ' for "' + kw + '" disappeared')
     : (count + ' new ' + noun + ' for "' + kw + '"');
+}
+
+// The one arrival a notification can open directly: exactly one item with a
+// safe http(s) link. Returns { url, title, detail } or null.
+function singleStudy(items) {
+  if (!Array.isArray(items) || items.length !== 1) return null;
+  const it = items[0];
+  if (!it || !it.href || !ARPValidators.isSafeNavigableUrl(it.href)) return null;
+  const { meta, detail } = ARPWebhookFormat.webhookItemDetail(it.text);
+  return { url: it.href, title: (meta.title || 'New match').slice(0, 120), detail: detail.slice(0, 120) };
 }
 
 // Map the just-fired new keys back to their per-item detail ({ key, href, text })
