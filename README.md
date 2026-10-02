@@ -10,6 +10,9 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 - **Scoped detection** — an optional CSS selector limits keyword/change detection to a single element (e.g. `#price`, `.stock-status`) so a one-word change isn't drowned out by unrelated page churn
 - **Per-item detection** — with a selector set, treat each matched element as a separate item and alert on *every new match* (e.g. each new listing in a feed), not just the first page-level appearance — so arrivals aren't missed while earlier matches stay on screen; pairs with **Ignore noise** so an item whose numbers tick between reloads (spots left, “2 min ago”) isn't re-alerted as new. An optional **“Skip items containing”** filter drops a matching item that also contains any of the given comma-separated terms (e.g. `1 place` to ignore a broken single-slot listing) — terms are matched as whole words/phrases, so `1 place` doesn't accidentally skip a card showing `21 places` or `120 places`. A **Min reward/hr** filter likewise skips a matching card whose hourly rate (e.g. `£9.00/hr`) is below the minimum; cards that show no readable rate always alert
 - **Live watch** — with per-item detection on, optionally re-scan the already-loaded page for new matching items every few seconds *between* reloads. Each scan reads the page's current DOM — **zero requests to the site** — so items the site pushes into an open page (SPA live updates) are caught within seconds while the reload interval stays slow and rate-limiter-friendly; the periodic reload remains as the safety net for anything the live push misses
+- **Instant detection** — with Live watch on, the job page reports its own DOM changes, so a study the site inserts into the open page alerts within about a second instead of on the next scan tick (still zero requests to the site; the timed scan and reloads remain as backstops)
+- **Dead-watch alerts** — if a watched page turns into a sign-in screen, a captcha / bot check, or stops loading, you get one **Watch blocked** alert (notification, journal, webhook) instead of silent missed studies; a **Watch resumed** entry is logged when it recovers. Signals already present when the job started are ignored
+- **Open the study from the notification** — when exactly one new study arrives, the desktop notification names it (title, pay, places, researcher) and clicking it opens that study in a new tab beside the watch
 - **Noise-tolerant change detection** — optionally ignore whitespace/digit churn (clocks, counters, ads) and require a minimum changed fraction before alerting
 - **Alert journal** — a persistent, exportable log of every keyword/change detection (timestamp, tab, what changed), viewable on the Manage page; the toolbar badge shows a live job count and an unacknowledged-alert count
 - **Actionable notifications** — keyword/change desktop notifications carry **Stop** and **Snooze 15m** buttons
@@ -90,6 +93,7 @@ Open **Settings** from the popup footer → Keyboard Shortcut → **Change**. Th
 ├── runtime-checkpoint.js # Per-job session records + coalesced local checkpoint
 ├── webhook-delivery.js  # Webhook POST with status checks and 429/5xx retry
 ├── webhook-format.js    # Discord / Slack / JSON body builder
+├── watch-health.js      # Dead-watch decisions (sign-in / captcha / unreadable)
 ├── serialize.js         # Async mutex for storage read-modify-write
 ├── notif-id.js          # Encode/decode tab id in a notification id
 ├── preset-row.js        # Preset row builder + shared DEFAULT_PRESETS
