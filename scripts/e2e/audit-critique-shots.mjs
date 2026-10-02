@@ -1,7 +1,7 @@
 // Design-critique capture harness.
 // Loads the unpacked extension in Chrome for Testing and renders every UI
 // surface + state I'm evaluating to PNG. Pass a label arg ("before"/"after")
-// to choose the output subdir. Output → ./audit-proof/<label>/*.png
+// to choose the output subdir. Output → ./docs/evidence/audit/<label>/*.png
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -13,8 +13,8 @@ const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/
 const puppeteer = require('puppeteer');
 
 const LABEL = process.argv[2] || 'before';
-const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const OUT = path.join(REPO, 'audit-proof', LABEL);
+const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const OUT = path.join(REPO, 'docs', 'evidence', 'audit', LABEL);
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('•', ...a);

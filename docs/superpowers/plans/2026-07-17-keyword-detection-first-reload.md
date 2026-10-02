@@ -526,10 +526,10 @@ git commit -m "fix: flash the document that triggered keyword detection"
 **Files:**
 
 - Modify: `README.md:109-113`
-- Create: `audit-proof/capture-keyword-first-reload.mjs`
-- Create during verification: `artifacts/keyword-first-reload/before-start.png`
-- Create during verification: `artifacts/keyword-first-reload/after-first-reload-alert.png`
-- Create during verification: `artifacts/keyword-first-reload/after-first-reload-alert-popup.png`
+- Create: `scripts/e2e/capture-keyword-first-reload.mjs`
+- Create during verification: `docs/evidence/keyword-first-reload/before-start.png`
+- Create during verification: `docs/evidence/keyword-first-reload/after-first-reload-alert.png`
+- Create during verification: `docs/evidence/keyword-first-reload/after-first-reload-alert-popup.png`
 
 - [x] **Step 1: Update the README behavior note**
 
@@ -547,7 +547,7 @@ Run:
 npm test
 npm run lint
 npm run build
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 git diff --check
 ```
 
@@ -563,13 +563,13 @@ Expected:
 
 Use the built unpacked extension in Chrome on a page where the keyword is absent initially and appears after the next server-backed reload:
 
-1. Run `node audit-proof/capture-keyword-first-reload.mjs` (it creates the output directory and captures all three PNGs).
+1. Run `node scripts/e2e/capture-keyword-first-reload.mjs` (it creates the output directory and captures all three PNGs).
 2. Configure an 8-second interval, keyword `- Evaluation`, Sound alert on, Stop on found off, and Flash screen on alert on.
-3. Save a real PNG screenshot before pressing Start as `artifacts/keyword-first-reload/before-start.png`.
+3. Save a real PNG screenshot before pressing Start as `docs/evidence/keyword-first-reload/before-start.png`.
 4. Press Start and observe the first automatic reload.
 5. Confirm the sound/notification/flash occurs after reload 1 and before any reload 2 begins.
 6. Open the popup and confirm `Refreshes: 1` and `Detections: 1`.
-7. Save a real PNG screenshot showing the detected state as `artifacts/keyword-first-reload/after-first-reload-alert.png` and the popup state as `artifacts/keyword-first-reload/after-first-reload-alert-popup.png`.
+7. Save a real PNG screenshot showing the detected state as `docs/evidence/keyword-first-reload/after-first-reload-alert.png` and the popup state as `docs/evidence/keyword-first-reload/after-first-reload-alert-popup.png`.
 8. Visually inspect all three PNGs: they must not be blank, must show the correct screen, must have readable text and visible important controls, and must have no obvious overlap or clipping.
 9. If the page or alert is not ready after reload 1, inspect extension service-worker errors, page console errors, failed tests, and the recorded call ordering before changing timing. The bounded post-complete DOM-settle wait and delayed-hydration harness regression are now implemented; replace the affected PNG rather than retaining stale proof after any future timing change.
 
@@ -588,7 +588,7 @@ Expected: only the files named in this plan plus the three verification PNGs are
 - [ ] **Step 5: Commit documentation and verification artifacts**
 
 ```bash
-git add README.md artifacts/keyword-first-reload/before-start.png artifacts/keyword-first-reload/after-first-reload-alert.png
+git add README.md docs/evidence/keyword-first-reload/before-start.png docs/evidence/keyword-first-reload/after-first-reload-alert.png
 git commit -m "docs: record first-reload keyword verification"
 ```
 

@@ -1,7 +1,7 @@
 // Audit proof capture harness.
 // Loads the unpacked extension in Chrome for Testing, renders the passing
 // test/lint runs to PNG, captures the working UI, and demonstrates the
-// empty-presets fix (LOW-2). Output → ./audit-proof/*.png
+// empty-presets fix (LOW-2). Output → ./docs/evidence/audit/*.png
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -13,8 +13,8 @@ import { createRequire } from 'node:module';
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
 
-const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const OUT = path.join(REPO, 'audit-proof');
+const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const OUT = path.join(REPO, 'docs', 'evidence', 'audit');
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('•', ...a);

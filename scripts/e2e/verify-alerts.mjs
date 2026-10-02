@@ -12,8 +12,8 @@ import { createRequire } from 'node:module';
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
 
-const REPO = '/Users/tylereck/Documents/auto-refresh-pro-repo';
-const OUT  = path.join(REPO, '.agents', 'proof');
+const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const OUT  = path.join(REPO, 'scripts', 'e2e', 'out');
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('•', ...a);

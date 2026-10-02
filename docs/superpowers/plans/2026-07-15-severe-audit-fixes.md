@@ -17,7 +17,7 @@
 - Create `settings-export.js`: pure settings-only storage projection.
 - Create `test/background-harness.js`: deterministic Chrome API and message-router harness.
 - Create `test/lifecycle-generation.test.js`, `test/detection-identity.test.js`, `test/settings-export.test.js`, and `test/background-lifecycle.test.js`.
-- Create `audit-proof/verify-severe-fixes.mjs`: real Chrome smoke/regression harness.
+- Create `scripts/e2e/verify-severe-fixes.mjs`: real Chrome smoke/regression harness.
 - Modify `validators.js` and `test/regex-safety.test.js` for bounded nested-quantifier rejection.
 - Modify `content.js` for trusted browser-event checks.
 - Modify `background.js` for lifecycle cancellation and detection-state preservation; add the three helper files to its `importScripts` list.
@@ -131,7 +131,7 @@ Expected: the focused test and all repository tests pass; `isSafeRegex('^(?:a{1,
 
 **Files:**
 - Modify: `content.js:277-870`
-- Create/update: `audit-proof/verify-severe-fixes.mjs`
+- Create/update: `scripts/e2e/verify-severe-fixes.mjs`
 
 - [ ] **Step 1: Add a browser regression assertion before changing handlers.**
 
@@ -142,7 +142,7 @@ In the browser harness, start a job on a local page, dispatch an untrusted `Keyb
 Run:
 
 ```bash
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 Expected: the synthetic key/click assertion fails against the current handlers.
@@ -166,7 +166,7 @@ Run:
 ```bash
 npm test
 npm run lint
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 Expected: synthetic events are ignored, real input works, and all existing checks pass.
@@ -315,7 +315,7 @@ Run:
 node --test test/settings-export.test.js test/import.test.js
 npm test
 npm run lint
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 Expected: exported JSON contains only configuration keys and the existing import/export UI still works.
@@ -338,7 +338,7 @@ Run:
 npm test
 npm run lint
 npm run build
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 git diff --check
 git status --short
 ```

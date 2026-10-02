@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
-const REPO = path.resolve(new URL('..', import.meta.url).pathname);
+const REPO = path.resolve(new URL('../..', import.meta.url).pathname);
 const CHROME = '/Users/tylereck/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -60,14 +60,17 @@ try {
     randomTimer: false, randomMin: 5000, randomMax: 60000, stopAfter: 0,
     keyword: '', stopOnKeyword: false, stopOnChange: false, stopOnClick: false,
   };
-  const send = (message) => ext.evaluate((message) => new Promise(resolve => {
-    chrome.runtime.sendMessage(message, resolve);
-  }), message);
-  const startResponse = await send({ type: 'START_REFRESH', tabId, settings });
+  // Drive the worker directly. A START_REFRESH *message* from options.html would
+  // be bound to the options tab itself (sender.tab wins over msg.tabId — the
+  // trust-boundary rule), not to the test page.
+  const swTarget = await browser.waitForTarget(t => t.type() === 'service_worker');
+  const sw = await swTarget.worker();
+  const jobExists = () => sw.evaluate((tabId) => !!activeJobs[tabId], tabId);
+  const startResponse = await sw.evaluate((tabId, settings) => startRefresh(tabId, settings), tabId, settings);
   console.log('start response', startResponse);
-  await ext.evaluate((tabId) => new Promise(resolve => chrome.tabs.sendMessage(tabId, {
-    type: 'COUNTDOWN_START', totalMs: 90000, deadline: Date.now() + 90000,
-  }, resolve)), tabId);
+  assert.equal(startResponse, 'started');
+  // No content script is declared for the page: the overlay appearing proves
+  // the worker injected content.js on demand.
   for (let i = 0; i < 80; i++) {
     if (await page.evaluate(() => !!document.getElementById('__ar_overlay'))) break;
     await sleep(100);
@@ -86,8 +89,7 @@ try {
     },
   }), tabId);
   await sleep(200);
-  const afterSynthetic = await send({ type: 'GET_STATUS', tabId });
-  assert.ok(afterSynthetic && afterSynthetic.job, 'synthetic page events stopped the job');
+  assert.equal(await jobExists(), true, 'synthetic page events stopped the job');
 
   // Real browser input must still be delivered as a trusted DOM event.
   await page.bringToFront();
@@ -104,16 +106,13 @@ try {
   await page.mouse.click(stopBox.x + stopBox.width / 2, stopBox.y + stopBox.height / 2);
   assert.deepEqual(await page.evaluate(() => window.__auditClick), { trusted: true, id: '__ar_stop' });
 
-  // Puppeteer's scripting-world injection does not carry sender.tab metadata,
-  // so cleanup uses the extension page after proving synthetic events were
-  // ignored and the browser emitted a trusted control event.
-  await send({ type: 'STOP_REFRESH', tabId });
-  await sleep(300);
-  assert.equal((await send({ type: 'GET_STATUS', tabId })).job, null);
+  // The trusted click on the overlay's Stop button reached the worker.
+  for (let i = 0; i < 30 && await jobExists(); i++) await sleep(100);
+  assert.equal(await jobExists(), false, 'trusted Stop click did not stop the job');
 
   await ext.close();
   await page.close();
-  console.log('PASS: synthetic events ignored; trusted browser input observed');
+  console.log('PASS: content.js injected on demand; synthetic events ignored; trusted Stop click stopped the job');
 } finally {
   if (browser) await browser.close().catch(() => {});
   server.close();

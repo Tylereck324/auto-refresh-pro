@@ -1,7 +1,7 @@
 // Screenshot harness for the UI/UX pass. Loads the unpacked extension in
 // Chrome for Testing and snapshots each surface. Output label comes from argv:
-//   node .agents/shots.mjs after        → .agents/proof/shots-after/*.png
-//   HEADED=1 node .agents/shots.mjs ...  → headed
+//   node scripts/e2e/shots.mjs after        → scripts/e2e/out/shots-after/*.png
+//   HEADED=1 node scripts/e2e/shots.mjs ...  → headed
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -14,9 +14,9 @@ const puppeteer = require('puppeteer');
 
 // Repo root holding manifest.json. Defaults to this script's parent dir so the
 // harness travels with the checkout; override with REPO=… for another tree.
-const REPO = process.env.REPO || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const REPO = process.env.REPO || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const LABEL = process.argv[2] || 'shots';
-const OUT = path.join(REPO, '.agents', 'proof', `shots-${LABEL}`);
+const OUT = path.join(REPO, 'scripts', 'e2e', 'out', `shots-${LABEL}`);
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('•', ...a);

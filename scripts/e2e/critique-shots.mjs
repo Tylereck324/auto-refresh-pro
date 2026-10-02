@@ -3,8 +3,8 @@
 // reaches: running countdown, keyword lock, regex/validation errors, populated
 // Manage with overflow + extreme content, hotkey recording, resized overlays,
 // forced-colors, and 200% zoom.
-//   node .agents/critique-shots.mjs before
-//   node .agents/critique-shots.mjs after
+//   node scripts/e2e/critique-shots.mjs before
+//   node scripts/e2e/critique-shots.mjs after
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -15,9 +15,9 @@ import { createRequire } from 'node:module';
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
 
-const REPO = process.env.REPO || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const REPO = process.env.REPO || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const LABEL = process.argv[2] || 'edge';
-const OUT = path.join(REPO, '.agents', 'proof', `edge-${LABEL}`);
+const OUT = path.join(REPO, 'scripts', 'e2e', 'out', `edge-${LABEL}`);
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('•', ...a);
