@@ -69,6 +69,7 @@
 
   function handleContextInvalidated() {
     contextValid = false;
+    applyLiveWatch(false);
     stopTick();
     if (overlayEl) { overlayEl.remove(); overlayEl = null; }
     // Unwire the document-level drag/resize listeners — the overlay they serve
@@ -730,6 +731,7 @@
         const s = resp.job.settings || {};
         stopOnClickEnabled = !!s.stopOnClick;
         applyPreserveScroll(s.preserveScroll);
+        applyLiveWatch(!!resp.job.liveWatch && !resp.job.paused);
         // Respect the "Show countdown overlay" setting (click-to-stop still works).
         if (s.showCountdown !== false) {
           const total = (s.currentInterval || s.interval)
@@ -750,6 +752,47 @@
         setTimeout(() => syncWithBackground(attempt + 1), delay);
       }
     });
+  }
+
+  // ── Instant live watch ────────────────────────────────────────────────────
+  // With Live watch on, report DOM changes so the worker re-scans the items at
+  // once instead of on its next timer tick (zero requests to the site — the
+  // scan reads this already-loaded page). Changes to our own overlay / flash
+  // (the countdown ticks every second; the per-item read briefly detaches the
+  // overlay) are ignored, or the extension would trigger itself in a loop. A
+  // short trailing debounce groups one render's burst of insertions; the
+  // worker also rate-limits per job.
+  let liveObserver = null;
+  let liveTimer = null;
+  const LIVE_DEBOUNCE_MS = 150;
+
+  function isOurNode(n) {
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    return !!(el && el.closest && el.closest('#__ar_overlay, #__ar_flash, #__ar_styles, #__ar_flash_styles'));
+  }
+  function isPageMutation(r) {
+    if (isOurNode(r.target)) return false;
+    if (r.type !== 'childList') return true;
+    const nodes = [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)];
+    return nodes.length === 0 || nodes.some((n) => !isOurNode(n) &&
+      !(n.nodeType === 1 && /^__ar_/.test(/** @type {Element} */ (n).id || '')));
+  }
+
+  function applyLiveWatch(on) {
+    if (on && contextValid && !liveObserver && document.body) {
+      liveObserver = new MutationObserver((records) => {
+        if (liveTimer || !records.some(isPageMutation)) return;
+        liveTimer = setTimeout(() => {
+          liveTimer = null;
+          safeMessage({ type: 'DOM_MUTATED', tabId: null });
+        }, LIVE_DEBOUNCE_MS);
+      });
+      liveObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    } else if (!on && liveObserver) {
+      liveObserver.disconnect();
+      liveObserver = null;
+      if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+    }
   }
 
   // ── Footer hint ───────────────────────────────────────────────────────────
@@ -852,6 +895,7 @@
         case 'COUNTDOWN_START':
           stopOnClickEnabled = !!msg.stopOnClick;
           if (typeof msg.hotkey === 'string') hotkeyLabel = msg.hotkey;
+          applyLiveWatch(!!msg.liveWatch); // a COUNTDOWN_START means running (not paused)
           applyPreserveScroll(msg.preserveScroll);
           // Respect the "Show countdown overlay" setting. Click-to-stop still
           // works without the overlay, so it's wired above regardless.
@@ -870,6 +914,7 @@
           sendResponse({ ok: true });
           break;
         case 'STOPPED':
+          applyLiveWatch(false);
           stopOnClickEnabled = false;
           paused = false; // so the next overlay starts un-paused (⏸ / "until next refresh")
           hideOverlay();
@@ -885,6 +930,7 @@
           // or stall at 0:00. Manual pause is already handled by the overlay's own
           // button; a duplicate signal here is idempotent.
           applyOverlayPaused(msg.reason);
+          applyLiveWatch(false); // paused: the worker would skip scans anyway
           sendResponse({ ok: true });
           break;
 

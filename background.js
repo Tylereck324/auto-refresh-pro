@@ -699,6 +699,7 @@ function scheduleDomScan(tabId) {
 
 function clearDomScan(job) {
   if (job && job._domTimer) { clearTimeout(job._domTimer); job._domTimer = null; }
+  if (job && job._mutationTimer) { clearTimeout(job._mutationTimer); job._mutationTimer = null; }
 }
 
 // One live-watch tick: read the per-item array, diff against the shared
@@ -707,7 +708,57 @@ function clearDomScan(job) {
 // SAME baseline, so whichever observes a new item first alerts and the other
 // stays silent (the diff-then-advance section is synchronous, so an overlapping
 // reload cycle can't double-fire).
+// Per-item reads can overlap — the reload cycle, the live-watch timer, and a
+// page-change trigger. Each read takes a ticket BEFORE its executeScript; its
+// result may advance the seen-set only if no newer read already has. Without
+// this, a slow older read finishing last rewinds the baseline and the next
+// read re-alerts the same study.
+function beginItemRead(job) {
+  job._readSeq = (job._readSeq || 0) + 1;
+  return job._readSeq;
+}
+function claimItemRead(job, ticket) {
+  if (ticket < (job._appliedReadSeq || 0)) return false;
+  job._appliedReadSeq = ticket;
+  return true;
+}
+
+// One live-watch scan at a time per job. A scan requested while one is in
+// flight (timer tick or page-change trigger) is folded into one rerun after it.
 async function doDomScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job) return;
+  if (job._scanning) { job._rescan = true; return; }
+  job._scanning = true;
+  try {
+    await domScanOnce(tabId);
+  } finally {
+    job._scanning = false;
+  }
+  if (job._rescan && activeJobs[tabId] === job) {
+    job._rescan = false;
+    requestMutationScan(tabId);
+  }
+}
+
+// Instant live watch: the job page's content script reports DOM changes
+// (DOM_MUTATED) and the scan runs at once instead of waiting for the next
+// timer tick. Rate-limited per job — a page with a ticking clock mutates
+// constantly — and the timer chain keeps running as the backstop.
+const MUTATION_SCAN_MIN_GAP_MS = 1000;
+function requestMutationScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job || !domScanEnabled(job) || job._mutationTimer) return;
+  const wait = Math.max(0, (job._lastMutationScan || 0) + MUTATION_SCAN_MIN_GAP_MS - Date.now());
+  job._mutationTimer = setTimeout(() => {
+    job._mutationTimer = null;
+    if (activeJobs[tabId] !== job) return;
+    job._lastMutationScan = Date.now();
+    doDomScan(tabId);
+  }, wait);
+}
+
+async function domScanOnce(tabId) {
   const job = activeJobs[tabId];
   if (!job || !domScanEnabled(job)) return; // stopped or reconfigured — chain ends
   // While paused, END the chain rather than tick-and-skip: an idle chain would
@@ -739,6 +790,7 @@ async function doDomScan(tabId) {
     const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
     if (matcher.ok && !matcher.empty) {
       let raw = null;
+      const readTicket = beginItemRead(job);
       try {
         const results = await chrome.scripting.executeScript({
           target: { tabId },
@@ -751,7 +803,7 @@ async function doDomScan(tabId) {
       // object may advance the baseline. null = no read (page mid-render);
       // an ARRAY — including [] — is a real observation (same policy as the
       // cycle path).
-      if (activeJobs[tabId] === job && Array.isArray(raw)) {
+      if (activeJobs[tabId] === job && Array.isArray(raw) && claimItemRead(job, readTicket)) {
         const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
         const curr = ARPItemDetect.collectItems(raw, matcher, itemKeyOpts(job.settings), exclude);
         const currKeys = curr.map(c => c.key);
@@ -919,6 +971,7 @@ async function doMonitorRefresh(tabId, job) {
   if (activeJobs[tabId] !== job) return;
 
   let results;
+  const readTicket = beginItemRead(job);
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
@@ -971,6 +1024,9 @@ async function doMonitorRefresh(tabId, job) {
   // null set means "no baseline yet" and never fires (cycle 1). Taken whenever the
   // read was per-item, so the item array never flows into the string path below.
   if (perItem) {
+    // A live-watch read that started AFTER this one may already have advanced
+    // the baseline; applying this older read would rewind it.
+    if (!claimItemRead(job, readTicket)) return;
     // Exclusion filter, compiled once per job like _matcher (lazily after a
     // worker restart — rehydrated jobs don't carry it).
     const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
@@ -1243,7 +1299,9 @@ async function sendCountdownStart(tabId, attempt) {
   const total = (job.settings && job.settings.currentInterval) || job.settings.interval;
   const hotkey = await shortcutLabel();
   if (!activeJobs[tabId]) return;
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey }, (resp) => {
+  // liveWatch: arm the page's change observer (instant live watch).
+  const liveWatch = domScanEnabled(job);
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey, liveWatch }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script yet (a fresh Start, or the page-load injection
       // hasn't landed). Inject it — content.js is idempotent (guards via

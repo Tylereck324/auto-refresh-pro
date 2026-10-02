@@ -10,7 +10,7 @@ test('every message type the extension sends has a handler', () => {
   const h = createHarness();
   const types = h.evaluate('Object.keys(MESSAGE_HANDLERS).sort()');
   assert.deepEqual([...types], [
-    'CLEAR_ALERTS', 'EXTEND_JOB', 'GET_ALL_JOBS', 'GET_STATUS', 'PAUSE_JOB',
+    'CLEAR_ALERTS', 'DOM_MUTATED', 'EXTEND_JOB', 'GET_ALL_JOBS', 'GET_STATUS', 'PAUSE_JOB',
     'RESUME_JOB', 'START_REFRESH', 'STOP_ALL', 'STOP_REFRESH', 'TEST_WEBHOOK',
     'UPDATE_INTERVAL',
   ]);
