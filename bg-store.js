@@ -84,6 +84,12 @@ function buildJobRecord(tabId, settings) {
     // worker (which idles out in ~30s). Expired deadlines are dropped at
     // rehydrate time; the job's stop path deletes the whole entry.
     snoozeUntil: Number(job._snoozeUntil) || 0,
+    // Dead-watch state + its inputs. At intervals past the MV3 idle timeout the
+    // worker dies between cycles, so without these a stall could never reach
+    // its confirmation count (and the failure backoff would reset each cycle).
+    consecutiveFailures: Number(job._consecutiveFailures) || 0,
+    health: job._health || null,
+    healthIgnore: Array.isArray(job._healthIgnore) ? job._healthIgnore : [],
     savedAt: Date.now(),
   };
 }

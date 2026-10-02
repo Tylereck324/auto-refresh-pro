@@ -134,6 +134,11 @@ function createHarness(options = {}) {
         if (typeof options.onExecuteScript === 'function') {
           await options.onExecuteScript({ details, calls });
         }
+        // Per-call results (e.g. a different answer per injected function); a
+        // throw here surfaces as executeScript rejecting, like an unscriptable page.
+        if (typeof options.executeScriptResultFor === 'function') {
+          return [{ result: await options.executeScriptResultFor(details) }];
+        }
         return [{ result: options.executeScriptResult === undefined ? '' : options.executeScriptResult }];
       },
     },

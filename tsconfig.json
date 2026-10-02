@@ -20,6 +20,6 @@
     "keyword-match.js", "lifecycle-generation.js", "monitor-decision.js", "normalize.js",
     "notif-id.js", "quiet-hours.js", "refresh-guards.js", "rehydrate.js",
     "runtime-checkpoint.js", "serialize.js", "settings-export.js", "validators.js",
-    "webhook-delivery.js", "webhook-format.js"
+    "webhook-delivery.js", "webhook-format.js", "watch-health.js"
   ]
 }

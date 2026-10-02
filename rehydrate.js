@@ -67,6 +67,11 @@
       // the user believes they're muted). An expired or non-numeric deadline
       // degrades to 0 = not snoozed.
       _snoozeUntil: (Number(stored.snoozeUntil) || 0) > now ? Number(stored.snoozeUntil) : 0,
+      // Dead-watch state (bg watch-health) and the failure streak it reads.
+      _consecutiveFailures: Number(stored.consecutiveFailures) || 0,
+      _health: stored.health && typeof stored.health === 'object' ? stored.health : null,
+      _healthIgnore: Array.isArray(stored.healthIgnore)
+        ? stored.healthIgnore.filter((r) => r === 'login' || r === 'captcha') : [],
       _matcher: opts.matcher,
       _lastRefresh: 0,
       _timer: null,

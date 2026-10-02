@@ -39,6 +39,8 @@ importScripts('runtime-checkpoint.js');
 importScripts('webhook-delivery.js');
 // Pure Discord/Slack/JSON body builder (ARPWebhookFormat.buildBody).
 importScripts('webhook-format.js');
+// Pure dead-watch decision logic (ARPWatchHealth: sign-in / captcha / unreadable).
+importScripts('watch-health.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -225,6 +227,10 @@ async function fireRefresh(tabId) {
     console.warn('Refresh error on tab', tabId, e);
   }
   job._detectionBusy = false;
+  if ((hasKeyword || hasMonitor) && activeJobs[tabId] === job) {
+    await checkWatchHealth(tabId, job);
+    if (activeJobs[tabId] !== job) return; // stopped while alerting
+  }
   // Re-arm live watch every active cycle (idempotent — scheduleDomScan clears
   // before arming, so chains never multiply). This is the self-heal for chain
   // deaths with no resume edge of their own: a transient-offline tick, or a
@@ -532,6 +538,54 @@ function arrivalItems(currDetails, newKeys, inverse) {
     if (d) out.push(d);
   }
   return out;
+}
+
+// ── Dead-watch detection ───────────────────────────────────────────────────
+// A detecting job whose page has turned into a sign-in screen, a captcha, or a
+// page that won't load keeps cycling without ever alerting — studies get
+// missed with no signal. After each detection cycle, probe the page and let
+// ARPWatchHealth decide when to raise (once) a "watch blocked" alert.
+
+function watchesForChanges(settings) {
+  return !!(settings && (settings.monitorMode ||
+    (typeof settings.keyword === 'string' && settings.keyword.trim())));
+}
+
+// Injected into the page: 'captcha' | 'login' | null. Only VISIBLE password
+// fields count (many pages carry a hidden login form).
+function probePageHealth() {
+  const captcha = !!document.querySelector(
+    'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"],' +
+    ' .g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, #cf-challenge-running')
+    || /^just a moment/i.test(document.title || '');
+  if (captcha) return 'captcha';
+  const fields = document.querySelectorAll('input[type="password"]');
+  for (let i = 0; i < fields.length; i++) {
+    const el = /** @type {HTMLElement} */ (fields[i]);
+    if (el.offsetWidth || el.offsetHeight || el.getClientRects().length) return 'login';
+  }
+  return null;
+}
+
+async function checkWatchHealth(tabId, job) {
+  let probe = null;
+  try {
+    const results = await chrome.scripting.executeScript({ target: { tabId }, func: probePageHealth });
+    probe = (results && results[0] && results[0].result) || null;
+  } catch (e) { /* unscriptable — the failure streak covers this case */ }
+  if (activeJobs[tabId] !== job) return;
+  const failures = job._consecutiveFailures || 0;
+  const reason = ARPWatchHealth.classify(probe, failures, job._healthIgnore);
+  const r = ARPWatchHealth.step(job._health, reason);
+  job._health = r.state;
+  if (r.alert) {
+    await deliverStallAlert(tabId, job, ARPWatchHealth.describe(reason, failures));
+    await saveJobToStorage(tabId, job.settings); // don't re-alert after a worker restart
+  } else if (r.recovered) {
+    const meta = await tabMeta(tabId);
+    await logAlert({ tabId, url: meta.url, title: meta.title, type: 'recovered', snippet: 'Watch is working again' }, { unacked: false });
+    await saveJobToStorage(tabId, job.settings);
+  }
 }
 
 // ── Navigate-away pause (#12): pause instead of stop, resume on return ──────
@@ -1107,6 +1161,18 @@ async function startRefresh(tabId, settings, suppliedToken) {
 
     if (isCancelled()) return 'cancelled';
 
+    // Dead-watch baseline: a sign-in box or captcha ALREADY on the page at start
+    // is part of what the user chose to watch, so it must never read as a stall.
+    let healthIgnore = [];
+    if (watchesForChanges(settings)) {
+      try {
+        const results = await chrome.scripting.executeScript({ target: { tabId }, func: probePageHealth });
+        const probe = results && results[0] && results[0].result;
+        if (probe) healthIgnore = [probe];
+      } catch (e) { /* not scriptable — nothing to ignore */ }
+      if (isCancelled()) return 'cancelled';
+    }
+
     activeJobs[tabId] = {
       settings,
       refreshCount: 0,
@@ -1121,6 +1187,8 @@ async function startRefresh(tabId, settings, suppliedToken) {
       _lastRefresh: 0,                  // no refresh has fired yet
       _timer: null,                     // short-interval setTimeout handle
       _domTimer: null,                  // live-watch scan chain handle
+      _healthIgnore: healthIgnore,      // page signals present at start (never a stall)
+      _health: null,                    // dead-watch state (ARPWatchHealth)
     };
 
     scheduleNext(tabId, interval);

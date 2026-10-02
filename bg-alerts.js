@@ -253,6 +253,25 @@ chrome.notifications.onClosed.addListener((id, byUser) => {
   if (tabId != null) clearAckBeeps(tabId);
 });
 
+// A detecting job's watch has stopped working (sign-in page, captcha, page
+// won't load). Journal + badge always; notification and webhook honor the
+// same mutes as keyword alerts (snooze, quiet-hours notify channel).
+async function deliverStallAlert(tabId, job, reasonText) {
+  const meta = await tabMeta(tabId);
+  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'stall', snippet: reasonText });
+  const snoozed = job._snoozeUntil && Date.now() < job._snoozeUntil;
+  if (snoozed || ARPQuietHours.isChannelMuted(new Date(), job.settings.quietHours, 'notify')) return;
+  sendWebhook(job, { tabId, type: 'stall', title: meta.title || meta.url, url: meta.url, reason: reasonText });
+  notify('stall', tabId, {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: 'Watch blocked',
+    message: reasonText + '. Alerts can\'t fire until it\'s fixed.',
+    requireInteraction: true,
+    buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }],
+  });
+}
+
 // Repeat the alert beep on an interval until the user acknowledges (clicks/closes
 // the notification) or a bounded cap is reached. Strictly bounded and cleared on
 // every job-stop path so it can never run away.
@@ -341,7 +360,10 @@ function withAlertStore(mutate) {
 }
 // Record one detection and bump the unacked counter. Every field is bounded so a
 // hostile page's title/url/snippet can't bloat the persisted log.
-async function logAlert(entry) {
+// opts.unacked === false records the entry without bumping the badge count
+// (informational entries such as "watch resumed").
+async function logAlert(entry, opts) {
+  const bump = !(opts && opts.unacked === false);
   try {
     await withAlertStore((s) => {
       s.alertLog.push({
@@ -349,11 +371,11 @@ async function logAlert(entry) {
         tabId: entry.tabId,
         url: String(entry.url || '').slice(0, 2048),
         title: String(entry.title || '').slice(0, 200),
-        type: entry.type,                       // 'kw' | 'chg'
+        type: entry.type,                       // 'kw' | 'chg' | 'stall' | 'recovered'
         keyword: String(entry.keyword || '').slice(0, 200),
         snippet: String(entry.snippet || '').slice(0, 240),
       });
-      s.unackedAlerts = (s.unackedAlerts || 0) + 1;
+      if (bump) s.unackedAlerts = (s.unackedAlerts || 0) + 1;
     });
   } catch (e) { console.warn('logAlert failed', e); }
   refreshBadge();
