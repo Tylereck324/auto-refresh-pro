@@ -151,7 +151,7 @@ function bindEvents() {
   // Save the per-launch popup state on any change.
   ['optKeyword','optSound','optStopOnKeyword','optMonitor','optStopOnChange',
    'optKwCase','optKwWhole','optKwRegex','optKwInverse','optKwPerItem','optBeepUntilAck',
-   'optFlashOnKeyword','optWatchSelector','optKwExclude','optDomWatch','optDomWatchSec',
+   'optFlashOnKeyword','optWatchSelector','optKwExclude','optMinPay','optDomWatch','optDomWatchSec',
    'optNoiseTolerant','optCollapseDigits','optMinChange','optStopOnClick'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -358,6 +358,7 @@ function updatePerItemEnabled(hasSelector) {
   const exEnabled = hasSelector && cb.checked;
   for (const [inputId, rowId] of [
     ['optKwExclude', 'kwExcludeRow'],
+    ['optMinPay', 'minPayRow'],
     ['optDomWatch', 'domWatchRow'],
     ['optDomWatchSec', null],
   ]) {
@@ -500,6 +501,10 @@ function readPopupState() {
     kwInverse: el('optKwInverse').checked,
     kwPerItem: el('optKwPerItem').checked,
     kwExclude: el('optKwExclude').value.trim().slice(0, 200),
+    minPayPerHour: (() => {
+      const v = parseFloat(el('optMinPay').value);
+      return Number.isFinite(v) ? Math.min(10000, Math.max(0, v)) : 0;
+    })(),
     domWatch: el('optDomWatch').checked,
     // Live-watch scan cadence, entered in seconds, stored as ms (bounds mirror
     // the background's DOM_SCAN_MIN/MAX_MS).
@@ -857,6 +862,9 @@ function loadSettings() {
       if (s.keyword) document.getElementById('optKeyword').value = s.keyword;
       if (s.watchSelector) document.getElementById('optWatchSelector').value = s.watchSelector;
       if (s.kwExclude) document.getElementById('optKwExclude').value = s.kwExclude;
+      if (typeof s.minPayPerHour === 'number' && s.minPayPerHour > 0) {
+        document.getElementById('optMinPay').value = s.minPayPerHour;
+      }
       setCheckbox('optDomWatch', s.domWatch);
       if (typeof s.domWatchInterval === 'number' && s.domWatchInterval > 0) {
         document.getElementById('optDomWatchSec').value = Math.round(s.domWatchInterval / 1000);

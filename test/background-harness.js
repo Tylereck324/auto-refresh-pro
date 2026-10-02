@@ -52,26 +52,37 @@ function createHarness(options = {}) {
       return { ok: true };
     },
   };
-  const storageArea = {
-    async get(keys) {
-      if (keys == null) return { ...storage };
-      const names = Array.isArray(keys) ? keys : [keys];
-      const out = {};
-      for (const key of names) if (Object.prototype.hasOwnProperty.call(storage, key)) out[key] = storage[key];
-      return out;
-    },
-    async set(values) {
-      Object.assign(storage, values);
-      calls.push({ api: 'storage.set', values });
-    },
-    async remove(keys) {
-      for (const key of (Array.isArray(keys) ? keys : [keys])) delete storage[key];
-    },
-  };
+  // Local and session areas are separate stores; set() calls are recorded as
+  // 'storage.set' (local, kept for existing assertions) and 'session.set'.
+  function makeArea(store, setApi, failures) {
+    return {
+      async get(keys) {
+        if (keys == null) return { ...store };
+        const names = Array.isArray(keys) ? keys : [keys];
+        const out = {};
+        for (const key of names) if (Object.prototype.hasOwnProperty.call(store, key)) out[key] = store[key];
+        return out;
+      },
+      async set(values) {
+        if (failures.set) throw new Error(setApi + ' failed');
+        // Clone like Chrome does, so later in-memory mutation can't leak in.
+        Object.assign(store, JSON.parse(JSON.stringify(values)));
+        calls.push({ api: setApi, values });
+      },
+      async remove(keys) {
+        for (const key of (Array.isArray(keys) ? keys : [keys])) delete store[key];
+        calls.push({ api: setApi.replace('.set', '.remove'), keys });
+      },
+    };
+  }
+  const sessionStorage = { ...(options.session || {}) };
+  const failures = { local: {}, session: {} };
+  const storageArea = makeArea(storage, 'storage.set', failures.local);
+  const sessionArea = makeArea(sessionStorage, 'session.set', failures.session);
 
   const chrome = {
     runtime,
-    storage: { local: storageArea, onChanged: event() },
+    storage: { local: storageArea, session: sessionArea, onChanged: event() },
     tabs: {
       onRemoved: event(),
       onUpdated: tabsOnUpdated,
@@ -130,6 +141,7 @@ function createHarness(options = {}) {
       create: async (name, info) => { calls.push({ api: 'alarms.create', name, info }); },
       clear: async (name) => { calls.push({ api: 'alarms.clear', name }); return true; },
     },
+    commands: { onCommand: event(), getAll: async () => (options.commands || []) },
     notifications: {
       onButtonClicked: event(),
       onClicked: event(),
@@ -155,7 +167,7 @@ function createHarness(options = {}) {
     URL,
     URLPattern: global.URLPattern,
     AbortController,
-    fetch: async () => ({ ok: true, status: 200, text: async () => '' }),
+    fetch: options.fetch || (async () => ({ ok: true, status: 200, text: async () => '' })),
     navigator: { onLine: true },
     setTimeout,
     clearTimeout,
@@ -216,6 +228,8 @@ function createHarness(options = {}) {
     calls,
     gates,
     storage,
+    session: sessionStorage,
+    failures,
     dispatch,
     evaluate,
     releaseFirstTabGet() {

@@ -2,158 +2,48 @@
 // Kept in an external file because Manifest V3's default CSP
 // (script-src 'self') forbids inline <script> in extension pages.
 
-// ── Keybinding state ──────────────────────────────────────────────────────
-let currentHotkey = null; // { key, ctrl, alt, shift, meta }
-let pendingHotkey = null;
-let recording = false;
-
-const displayEl = document.getElementById('hotkeyDisplay');
+// ── Keyboard shortcut ─────────────────────────────────────────────────────
+// The toggle shortcut is a manifest `commands` entry, so Chrome owns the
+// binding (rebindable at chrome://extensions/shortcuts) and it works on every
+// page without a content script listening for keys in each one.
 const textEl = document.getElementById('hotkeyText');
-const recordBtn = document.getElementById('recordBtn');
-const clearBtn = document.getElementById('clearBtn');
-const recordingHint = document.getElementById('recordingHint');
 
-function formatHotkey(hk) {
-  if (!hk) return null;
-  const parts = [];
-  if (hk.ctrl)  parts.push('Ctrl');
-  if (hk.alt)   parts.push('Alt');
-  if (hk.shift) parts.push('Shift');
-  if (hk.meta)  parts.push('⌘');
-  parts.push(hk.key.length === 1 ? hk.key.toUpperCase() : hk.key);
-  return parts;
-}
-
-function renderHotkey(hk) {
-  textEl.innerHTML = '';
-  if (!hk) {
-    textEl.style.color = 'var(--text2)';
-    textEl.style.fontSize = '12px';
-    textEl.textContent = 'Using default (Alt+R)';
-    return;
-  }
-  const parts = formatHotkey(hk);
-  parts.forEach((p, i) => {
-    const badge = document.createElement('kbd');
-    badge.className = 'key-badge';
-    badge.textContent = p;
-    textEl.appendChild(badge);
-    if (i < parts.length - 1) {
-      const plus = document.createElement('span');
-      plus.style.cssText = 'color:var(--text2);font-size:11px;';
-      plus.textContent = '+';
-      textEl.appendChild(plus);
+function renderShortcut() {
+  chrome.commands.getAll(function(cmds) {
+    const cmd = (cmds || []).find(function(c) { return c.name === 'toggle-refresh'; });
+    const shortcut = cmd && cmd.shortcut;
+    textEl.innerHTML = '';
+    if (!shortcut) {
+      textEl.style.color = 'var(--text2)';
+      textEl.style.fontSize = '12px';
+      textEl.textContent = 'Not set';
+      return;
     }
+    textEl.style.color = '';
+    textEl.style.fontSize = '';
+    // Chrome reports e.g. "Alt+R" or "⌥R" (macOS); render each key as a badge.
+    const parts = shortcut.includes('+') ? shortcut.split('+') : [shortcut];
+    parts.forEach(function(p, i) {
+      const badge = document.createElement('kbd');
+      badge.className = 'key-badge';
+      badge.textContent = p;
+      textEl.appendChild(badge);
+      if (i < parts.length - 1) {
+        const plus = document.createElement('span');
+        plus.style.cssText = 'color:var(--text2);font-size:11px;';
+        plus.textContent = '+';
+        textEl.appendChild(plus);
+      }
+    });
   });
-  textEl.style.color = '';
-  textEl.style.fontSize = '';
 }
 
-// Keys that are only modifiers — don't accept them alone
-const MODIFIER_KEYS = new Set(['Control','Alt','Shift','Meta','CapsLock','NumLock','ScrollLock']);
-// Keys to always block from recording (browser critical)
-const BLOCKED_KEYS = new Set(['F5','F11','F12','Tab']);
-
-const RECORD_HINT = 'Press any key combination… (Esc to cancel)';
-const CONFIRM_HINT = 'Press a different combo to change, or click “Use this” — Esc to cancel';
-
-function startRecording() {
-  recording = true;
-  pendingHotkey = null;
-  displayEl.classList.add('recording');
-  recordBtn.textContent = '⏹ Cancel';
-  recordBtn.classList.add('recording');
-  recordBtn.classList.remove('confirm');
-  recordingHint.textContent = RECORD_HINT;
-  recordingHint.style.display = 'block';
-  textEl.innerHTML = '';
-  textEl.style.color = 'var(--accent)';
-  textEl.style.fontSize = '12px';
-  textEl.textContent = 'Listening…';
-}
-
-function stopRecording(apply) {
-  recording = false;
-  displayEl.classList.remove('recording');
-  recordBtn.textContent = '⏺ Record';
-  recordBtn.classList.remove('recording');
-  recordBtn.classList.remove('confirm');
-  recordingHint.style.display = 'none';
-  recordingHint.textContent = RECORD_HINT;
-
-  if (apply && pendingHotkey) {
-    currentHotkey = pendingHotkey;
-  }
-  renderHotkey(currentHotkey);
-  pendingHotkey = null;
-}
-
-recordBtn.addEventListener('click', () => {
-  if (!recording) { startRecording(); return; }
-  // While recording: confirm the captured combo if there is one, else cancel.
-  if (pendingHotkey) { stopRecording(true); save(); }
-  else { stopRecording(false); }
+document.getElementById('changeShortcutBtn').addEventListener('click', function() {
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });
-
-clearBtn.addEventListener('click', () => {
-  if (recording) stopRecording(false);
-  currentHotkey = null;
-  renderHotkey(null);
-  save();
-});
-
-document.addEventListener('keydown', (e) => {
-  if (!recording) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  if (e.key === 'Escape') { stopRecording(false); return; }
-  if (MODIFIER_KEYS.has(e.key)) return; // wait for actual key
-  if (BLOCKED_KEYS.has(e.key)) {
-    textEl.textContent = `${e.key} is reserved — try another key`;
-    return;
-  }
-
-  // Require at least one modifier unless it's a function key
-  const isFunctionKey = /^F\d+$/.test(e.key);
-  if (!isFunctionKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-    textEl.textContent = 'Add Ctrl, Alt, or Shift with that key';
-    return;
-  }
-
-  pendingHotkey = {
-    key: e.key,
-    code: e.code, // physical key — layout- and macOS-Option-key-safe matching
-    ctrl: e.ctrlKey,
-    alt: e.altKey,
-    shift: e.shiftKey,
-    meta: e.metaKey
-  };
-
-  // Preview it
-  const parts = formatHotkey(pendingHotkey);
-  textEl.innerHTML = '';
-  parts.forEach((p, i) => {
-    const badge = document.createElement('kbd');
-    badge.className = 'key-badge';
-    badge.style.borderColor = 'var(--accent)';
-    badge.style.color = 'var(--accent)';
-    badge.textContent = p;
-    textEl.appendChild(badge);
-    if (i < parts.length - 1) {
-      const plus = document.createElement('span');
-      plus.style.cssText = 'color:var(--accent);font-size:11px;';
-      plus.textContent = '+';
-      textEl.appendChild(plus);
-    }
-  });
-
-  // Wait for explicit confirmation instead of auto-applying, so the user can
-  // adjust the combo before committing.
-  recordBtn.textContent = '✓ Use this';
-  recordBtn.classList.add('confirm');
-  recordingHint.textContent = CONFIRM_HINT;
-}, true);
+// Pick up a rebinding made on the shortcuts page when the user comes back.
+window.addEventListener('focus', renderShortcut);
+renderShortcut();
 
 // ── Presets ───────────────────────────────────────────────────────────────
 // Single source of truth shared with popup.js, defined in preset-row.js (loaded
@@ -188,13 +78,30 @@ function validateWebhookUrl() {
   return !bad;
 }
 
+// Send a sample alert through the worker's real delivery path (validation +
+// retry), so a typo'd or deleted webhook shows up now, not when a study is missed.
+document.getElementById('btnTestWebhook').addEventListener('click', async function() {
+  const btn = this;
+  const url = (document.getElementById('webhookUrl').value || '').trim();
+  if (!url || !validateWebhookUrl()) { showToast('Enter a valid HTTPS webhook URL first.', true); return; }
+  btn.disabled = true;
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: 'TEST_WEBHOOK', url, format: document.getElementById('webhookFormat').value,
+    });
+    if (res && res.ok) showToast('✓ Test alert delivered');
+    else showToast('Webhook failed: ' + ((res && res.error) || 'no response'), true);
+  } catch (e) {
+    showToast('Webhook failed: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 function load() {
-  chrome.storage.local.get(['globalSettings', 'customHotkey'], function(data) {
+  chrome.storage.local.get(['globalSettings'], function(data) {
     const s = data.globalSettings || {};
 
-    // Hotkey
-    currentHotkey = data.customHotkey || null;
-    renderHotkey(currentHotkey);
 
     // Toggles
     setCheck('defHardRefresh', s.hardRefresh);
@@ -347,7 +254,7 @@ function gatherAndSave() {
   // above used to erase all of those on the first toggle flip.
   chrome.storage.local.get(['globalSettings'], function(data) {
     const merged = Object.assign({}, data.globalSettings, settings);
-    chrome.storage.local.set({ globalSettings: merged, customHotkey: currentHotkey || null }, function() {
+    chrome.storage.local.set({ globalSettings: merged }, function() {
       // A failed write (quota, corruption) surfaces only via lastError — without
       // this check the page would flash "✓ Saved" over a save that didn't happen.
       if (chrome.runtime.lastError) {
@@ -367,7 +274,7 @@ function gatherAndSave() {
 // then would rebuild the preset rows under the user's cursor mid-keystroke).
 chrome.storage.onChanged.addListener(function(changes, area) {
   if (area !== 'local') return;
-  if (!changes.globalSettings && !changes.customHotkey) return;
+  if (!changes.globalSettings) return;
   if (!document.hidden) return;
   load();
 });

@@ -343,7 +343,8 @@ async function loadAlerts() {
   rows.forEach(entry => {
     if (!entry || typeof entry !== 'object') return;
     const when = Number.isFinite(entry.ts) ? new Date(entry.ts).toLocaleString() : '';
-    const typeLabel = entry.type === 'kw' ? 'Keyword' : 'Change';
+    const typeLabel = entry.type === 'kw' ? 'Keyword'
+      : entry.type === 'webhook' ? 'Webhook failed' : 'Change';
     const heading = entry.title || entry.url || '(no title)';
     // kw rows show the keyword, plus the snippet when one exists (per-item
     // batches log "3 new"/"2 gone" there — without it the count is invisible).
@@ -531,4 +532,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // the GET_ALL_JOBS round-trip (which wakes the worker). This page isn't usually
 // foregrounded and the refresh-count badges don't need 3 s granularity, so an
 // 8 s cadence cuts the wakeups without a noticeable staleness.
-setInterval(loadJobs, 8000);
+// Skipped while the page is hidden: each poll wakes the service worker, and a
+// Manage tab left open in the background would otherwise do so every 8 s for
+// nothing. Returning to the tab refreshes immediately.
+setInterval(() => { if (!document.hidden) loadJobs(); }, 8000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadJobs(); });

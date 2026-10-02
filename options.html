@@ -56,32 +56,11 @@
     align-items: center;
     gap: 8px;
     min-height: 42px;
-    transition: border-color 0.15s, box-shadow 0.15s;
-    /* Display-only: recording is driven by the Record button, so this isn't
-       clickable — don't imply otherwise with a pointer cursor. */
+    /* Display-only: Chrome owns the binding (Change opens its shortcuts page). */
     cursor: default;
     user-select: none;
     position: relative;
   }
-
-  .hotkey-display.recording {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.15);
-    color: var(--accent);
-  }
-
-  .hotkey-display.recording::after {
-    content: '';
-    position: absolute;
-    right: 12px;
-    width: 7px;
-    height: 7px;
-    background: var(--accent);
-    border-radius: 50%;
-    animation: blink 0.8s ease-in-out infinite;
-  }
-
-  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
 
   .key-badge {
     background: var(--surface);
@@ -111,28 +90,6 @@
     transition: background 0.15s;
   }
   .btn-record:hover { background: rgba(var(--accent-rgb),0.2); }
-  .btn-record.recording { background: rgba(var(--accent-rgb),0.25); }
-  .btn-record.confirm {
-    background: rgba(var(--green-rgb),0.15);
-    color: var(--success);
-    border-color: rgba(var(--green-rgb),0.4);
-  }
-  .btn-record.confirm:hover { background: rgba(var(--green-rgb),0.25); }
-
-  .btn-clear {
-    background: rgba(var(--red-rgb),0.1);
-    color: var(--danger);
-    border: 1px solid rgba(var(--red-rgb),0.25);
-    padding: 9px 14px;
-    border-radius: var(--radius);
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .btn-clear:hover { background: rgba(var(--red-rgb),0.2); }
-
   .hotkey-info {
     font-size: 11px;
     color: var(--text2);
@@ -144,16 +101,6 @@
   }
 
   .hotkey-info strong { color: var(--text); }
-
-  .recording-hint {
-    font-size: 11px;
-    color: var(--accent);
-    display: none;
-    text-align: center;
-    padding: 6px;
-    animation: fadeIn 0.2s ease;
-  }
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
   .num-input {
     background: var(--surface2);
@@ -269,23 +216,18 @@
     <div class="hotkey-section">
 
       <div class="hotkey-recorder">
-        <div class="hotkey-display" id="hotkeyDisplay" title="Click 'Record' then press your desired key combo">
-          <span id="hotkeyText" style="color:var(--text2);font-size:12px;">Click Record to set</span>
+        <div class="hotkey-display" id="hotkeyDisplay">
+          <span id="hotkeyText" style="color:var(--text2);font-size:12px;">Loading…</span>
         </div>
         <div class="hotkey-actions">
-          <button class="btn-record" id="recordBtn">⏺ Record</button>
-          <button class="btn-clear" id="clearBtn" title="Reset to default (Alt+R)" aria-label="Reset hotkey to default (Alt+R)">✕</button>
+          <button class="btn-record" id="changeShortcutBtn">Change</button>
         </div>
-      </div>
-
-      <div class="recording-hint" id="recordingHint">
-        Press any key combination… (Esc to cancel)
       </div>
 
       <div class="hotkey-info">
         <strong>Default:</strong> <kbd class="key-badge">Alt+R</kbd>
-        — quick one-handed shortcut.<br>
-        Works on any normal web page to toggle refresh on the active tab. It won't fire on browser/system pages (the new-tab page, <strong>chrome://</strong> pages, or the Web Store) where extensions can't run.
+        — toggles refresh on the active tab.<br>
+        Shortcuts are managed by Chrome: <strong>Change</strong> opens <strong>chrome://extensions/shortcuts</strong>, where you can rebind it or make it work while Chrome isn't focused. It won't start a job on browser/system pages (the new-tab page, <strong>chrome://</strong> pages, or the Web Store) where extensions can't run.
       </div>
 
     </div>
@@ -470,6 +412,13 @@
         <option value="slack">Slack</option>
         <option value="json">Generic JSON</option>
       </select>
+    </div>
+    <div class="setting-row" style="margin-top:12px;">
+      <div>
+        <div class="setting-label">Test Webhook</div>
+        <div class="setting-sub">Send a sample alert to the URL above</div>
+      </div>
+      <button type="button" class="btn btn-sm btn-accent" id="btnTestWebhook">Send test</button>
     </div>
   </div>
 

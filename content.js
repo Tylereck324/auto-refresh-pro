@@ -1,4 +1,6 @@
-// content.js - Injected into every page
+// content.js - Injected on demand (chrome.scripting) into pages that host a
+// refresh job — never declaratively into every page. The background re-injects
+// it after each load of a job's page (see ensureContentScript).
 
 (function () {
   if (window.__autoRefreshInjected) return;
@@ -353,9 +355,8 @@
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
     hintText.className = '__ar_hint_text';
-    // customHotkey may still be loading; the single module-level read below calls
-    // refreshHint() once it lands, and storage.onChanged keeps it current — so no
-    // separate per-overlay read is needed here.
+    // The shortcut label arrives with GET_STATUS / COUNTDOWN_START, which call
+    // refreshHint() — so no separate per-overlay read is needed here.
     hintText.textContent = hintLabel();
     hint.appendChild(hintText);
 
@@ -722,6 +723,7 @@
     attempt = attempt || 0;
     safeMessage({ type: 'GET_STATUS', tabId: null }, (resp) => {
       if (synced || !contextValid) return;
+      if (resp && typeof resp.hotkey === 'string') { hotkeyLabel = resp.hotkey; refreshHint(); }
       if (resp && resp.job) {
         synced = true;
         const s = resp.job.settings || {};
@@ -740,89 +742,25 @@
           if (resp.job.paused) applyOverlayPaused(resp.job.pauseReason);
         }
       } else if (attempt < 3) {
-        // No job for this tab is the common case (most pages never start one),
-        // and `synced` is only set when a job IS found — so these retries fire on
-        // every ordinary page load. Each one wakes the service worker, so keep
-        // the ceiling low: the only thing the retries buy is winning the race
-        // where the popup's START_REFRESH lands just after this script injected,
-        // which resolves within a few hundred ms. Backoff: 100, 200, 400 ms.
+        // The background injects this script only into job pages, but the sync
+        // can still beat a just-sent START_REFRESH; a few quick retries cover
+        // that race. Backoff: 100, 200, 400 ms.
         const delay = Math.min(100 * Math.pow(2, attempt), 1000);
         setTimeout(() => syncWithBackground(attempt + 1), delay);
       }
     });
   }
-  // Gate the initial sync on a tiny URL-index read straight from storage —
-  // chrome.storage reads are served by the browser process, so unlike
-  // sendMessage they do NOT wake the MV3 service worker. Without this gate the
-  // sync (plus its retries) fired on EVERY page load in every tab, waking the
-  // worker each time even though most pages never host a job. activeJobUrls is
-  // maintained by the background alongside every activeJobs write; a page whose
-  // origin+path matches no job's startUrl skips the sync entirely — a job
-  // started later still reaches it via the background's COUNTDOWN_START push
-  // (sendCountdownStart retries until this script answers).
-  safeStorageGet('activeJobUrls', (data) => {
-    const urls = (data && data.activeJobUrls) || [];
-    const here = location.origin + location.pathname;
-    const mayHaveJob = Array.isArray(urls) && urls.some((u) => {
-      try { const p = new URL(u); return p.origin + p.pathname === here; }
-      catch (e) { return false; }
-    });
-    if (mayHaveJob) syncWithBackground(0);
-  });
 
-  // ── Custom keybinding ─────────────────────────────────────────────────────
-  // The in-page hotkey is the single source of truth for toggling refresh.
-  // When the user hasn't recorded a custom combo, this default applies so the
-  // shortcut works out of the box. `code` is the physical key (layout- and
-  // Option-key-safe on macOS, where Alt+R mangles `e.key`).
-  const DEFAULT_HOTKEY = { key: 'r', code: 'KeyR', ctrl: false, alt: true, shift: false, meta: false };
+  // ── Footer hint ───────────────────────────────────────────────────────────
+  // The toggle shortcut is a Chrome command (chrome://extensions/shortcuts); the
+  // background supplies its current label, '' when unbound.
+  let hotkeyLabel = '';
 
-  // Single page-lifetime read of the custom hotkey. The keydown handler needs it
-  // even with no overlay (the hotkey can START a job), so this is not overlay-
-  // gated. refreshHint() corrects an already-built overlay's footer once it lands
-  // (no-op when no overlay exists).
-  let customHotkey = null;
-  safeStorageGet('customHotkey', (d) => { customHotkey = (d && d.customHotkey) || null; refreshHint(); });
-
-  function activeHotkey() { return customHotkey || DEFAULT_HOTKEY; }
-
-  try {
-    chrome.storage.onChanged.addListener((changes) => {
-      if (!contextValid) return;
-      if (changes.customHotkey) {
-        customHotkey = changes.customHotkey.newValue || null;
-        refreshHint();
-      }
-    });
-  } catch (e) {}
-
-  function matchesHotkey(e, hk) {
-    if (!hk) return false;
-    // Prefer matching the physical key (e.code) when the combo carries one —
-    // robust across keyboard layouts and macOS Option-key remapping. Fall back
-    // to e.key for older recorded combos that predate the code field.
-    const keyMatch = hk.code ? e.code === hk.code : e.key === hk.key;
-    return keyMatch &&
-      !!e.ctrlKey === !!hk.ctrl && !!e.altKey === !!hk.alt &&
-      !!e.shiftKey === !!hk.shift && !!e.metaKey === !!hk.meta;
-  }
-
-  function formatHotkeyDisplay(hk) {
-    if (!hk) return '';
-    const p = [];
-    if (hk.ctrl)  p.push('Ctrl');
-    if (hk.alt)   p.push('Alt');
-    if (hk.shift) p.push('Shift');
-    if (hk.meta)  p.push('⌘');
-    p.push(hk.key.length === 1 ? hk.key.toUpperCase() : hk.key);
-    return p.join('+');
-  }
-
-  // The overlay footer hint. When click-to-stop is armed, surface it so the
-  // next-click-stops behavior isn't a surprise; otherwise show the hotkey.
+  // When click-to-stop is armed, surface it so the next-click-stops behavior
+  // isn't a surprise; otherwise show the shortcut.
   function hintLabel() {
-    const hk = formatHotkeyDisplay(activeHotkey());
-    return stopOnClickEnabled ? ('Click page or ' + hk + ' to stop') : (hk + ' to toggle');
+    if (stopOnClickEnabled) return hotkeyLabel ? ('Click page or ' + hotkeyLabel + ' to stop') : 'Click page to stop';
+    return hotkeyLabel ? (hotkeyLabel + ' to toggle') : '';
   }
 
   function refreshHint() {
@@ -830,35 +768,12 @@
     if (h) h.textContent = hintLabel();
   }
 
-  // True when the keystroke is going into an editable target — the hotkey must
-  // not fire there. The default Alt+R is how macOS types '®' (and Alt-combos
-  // type accented characters on many layouts); swallowing it inside a form
-  // field would both eat the character AND start a job that reloads the page
-  // under the user's unsaved input.
-  function isEditableTarget(t) {
-    if (!t) return false;
-    if (t.isContentEditable) return true;
-    const tag = t.tagName;
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-  }
+  // Injected only into job pages, so sync straight away.
+  syncWithBackground(0);
 
   function isTrustedActionEvent(event) {
     return !!(event && event.isTrusted);
   }
-
-  document.addEventListener('keydown', (e) => {
-    if (!contextValid || !isTrustedActionEvent(e)) return;
-    // e.target is retargeted to the shadow HOST for keystrokes inside a shadow
-    // root (web-component search boxes etc.), which is never INPUT/TEXTAREA —
-    // composedPath()[0] is the real innermost target. (Closed shadow roots
-    // still retarget; nothing more can be seen into those from here.)
-    const target = e.composedPath ? e.composedPath()[0] : e.target;
-    if (isEditableTarget(target)) return;
-    if (matchesHotkey(e, activeHotkey())) {
-      e.preventDefault();
-      safeMessage({ type: 'HOTKEY_TOGGLE' });
-    }
-  }, true);
 
   // ── Click-to-stop ─────────────────────────────────────────────────────────
   // When enabled, the first press anywhere on the page stops the refresh job.
@@ -934,6 +849,7 @@
       switch (msg.type) {
         case 'COUNTDOWN_START':
           stopOnClickEnabled = !!msg.stopOnClick;
+          if (typeof msg.hotkey === 'string') hotkeyLabel = msg.hotkey;
           applyPreserveScroll(msg.preserveScroll);
           // Respect the "Show countdown overlay" setting. Click-to-stop still
           // works without the overlay, so it's wired above regardless.

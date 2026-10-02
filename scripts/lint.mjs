@@ -15,7 +15,7 @@ const ok = (m) => console.log('✔ ' + m);
 // 1. Syntax-check all JS files (skip node_modules / .git / scripts deps).
 function walk(dir) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (['.git', 'node_modules', '.agents'].includes(e.name)) continue;
+    if (['.git', 'node_modules', '.agents', 'out', '.worktrees'].includes(e.name)) continue;
     const p = join(dir, e.name);
     if (e.isDirectory()) walk(p);
     else if (e.name.endsWith('.js') || e.name.endsWith('.mjs')) {
@@ -72,6 +72,9 @@ for (const html of ['popup.html', 'options.html', 'manage.html', 'offscreen.html
   checkScriptRefs(html, /<link\s+[^>]*href="([^"]+\.css)"/g, 'link-href');
 }
 checkScriptRefs('background.js', /importScripts\(['"]([^'"]+)['"]\)/g, 'importScripts');
+// content.js is injected on demand (chrome.scripting files:[…]), not declared in
+// the manifest, so its reference is only visible here.
+checkScriptRefs('background.js', /files:\s*\[\s*['"]([^'"]+)['"]/g, 'executeScript');
 
 console.log(errors ? `\n${errors} problem(s) found.` : '\nAll lint checks passed.');
 process.exit(errors ? 1 : 0);
