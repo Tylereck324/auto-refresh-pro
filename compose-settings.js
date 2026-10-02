@@ -19,7 +19,7 @@
 //   • service worker:   importScripts('compose-settings.js') → globalThis.ARPCompose
 //   • popup page:       <script src="compose-settings.js">    → window.ARPCompose
 //   • Node test runner: require('./compose-settings.js')       → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPCompose = api;
@@ -89,6 +89,9 @@
       // The background compiles them as literal whole-word terms — see
       // buildExcludeMatcher for why they never inherit substring/regex mode.
       kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, 200) : '',
+      // Per-item minimum reward/hour (0 = off): a matching card whose parsed
+      // pay is below this is skipped like an excluded one.
+      minPayPerHour: Math.min(10000, Math.max(0, numOr(s.minPayPerHour, 0))),
       // Live watch (#11): scan the DOM for new per-item matches BETWEEN reloads
       // (no server requests), catching items the site pushes into the page
       // itself. Interval bounds mirror background DOM_SCAN_MIN/MAX_MS: the floor

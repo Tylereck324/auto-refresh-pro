@@ -18,7 +18,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('item-detect.js') → globalThis.ARPItemDetect
 //   • Node test runner: require('./item-detect.js')      → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPItemDetect = api;
@@ -150,5 +150,29 @@
     return meta;
   }
 
-  return { itemKey, collectMatches, collectItems, computeNewKeys, parseItemMeta, MAX_ITEM_TEXT };
+  // Numeric reward-per-hour from an item's text ("£9.00/hr" → 9, "$12.5 per
+  // hour" → 12.5), or null when the card shows none. Currency-agnostic: the
+  // threshold is compared as a plain number in whatever currency the site uses.
+  function parsePayPerHour(text) {
+    const meta = parseItemMeta(text);
+    if (!meta.pay) return null;
+    const m = meta.pay.match(/\d[\d,]*(?:\.\d{1,2})?/);
+    if (!m) return null;
+    const v = parseFloat(m[0].replace(/,/g, ''));
+    return Number.isFinite(v) ? v : null;
+  }
+
+  // True when `minPay` is set (> 0) and the item's parsed pay is BELOW it — the
+  // "minimum reward/hour" filter. An item with no readable pay is never dropped:
+  // a card in an unexpected layout must still alert rather than vanish silently.
+  function belowMinPay(text, minPay) {
+    if (!(typeof minPay === 'number' && minPay > 0)) return false;
+    const pay = parsePayPerHour(text);
+    return pay !== null && pay < minPay;
+  }
+
+  return {
+    itemKey, collectMatches, collectItems, computeNewKeys, parseItemMeta,
+    parsePayPerHour, belowMinPay, MAX_ITEM_TEXT,
+  };
 });

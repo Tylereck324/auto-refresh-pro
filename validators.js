@@ -12,7 +12,7 @@
 //   • service worker:   importScripts('validators.js')        → globalThis.ARPValidators
 //   • extension pages:  <script src="validators.js"></script> → window.ARPValidators
 //   • Node test runner: require('./validators.js')            → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPValidators = api;
@@ -676,6 +676,8 @@
       // Per-item exclusion terms. Always matched as LITERAL whole words by the
       // background (never regex), so length is the only thing to bound here.
       kwExclude: typeof s.kwExclude === 'string' ? s.kwExclude.slice(0, MAX_KEYWORD_LEN) : '',
+      // Per-item minimum reward/hour; bounds mirror compose-settings.
+      minPayPerHour: num(s.minPayPerHour, 0, 10000, 0),
       // Live watch: bounds mirror compose-settings / background DOM_SCAN_*.
       domWatch: !!s.domWatch,
       domWatchInterval: num(s.domWatchInterval, 2000, 20000, 4000),
@@ -788,7 +790,7 @@
         out.autoStartUrls = safe;
       } else if (key === 'globalSettings') {
         if (!isPlainObject(val)) { out.globalSettings = {}; continue; }
-        const gs = safeShallowCopy(val);
+        const gs = /** @type {Record<string, any>} */ (safeShallowCopy(val));
         const presets = sanitizePresets(val.presets);
         if (presets) gs.presets = presets;
         // Webhook URL is fetched by the privileged worker — re-validate it

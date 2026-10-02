@@ -37,7 +37,7 @@ const EXPECTED_KEYS = [
   'stopAfter', 'soundVolume', 'soundTone', 'soundRepeat', 'randomTimer',
   'randomMin', 'randomMax', 'stopOnClick', 'sound', 'monitorMode', 'noiseTolerant',
   'collapseDigits', 'minChangedFraction', 'keyword', 'kwCaseSensitive',
-  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'domWatch',
+  'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'minPayPerHour', 'domWatch',
   'domWatchInterval', 'stopOnKeyword', 'stopOnChange',
   'beepUntilAck', 'flashOnKeyword', 'watchSelector', 'adaptive', 'adaptiveMax',
   'webhookUrl', 'webhookFormat', 'quietHours', 'currentInterval',

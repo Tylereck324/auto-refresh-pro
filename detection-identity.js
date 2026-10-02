@@ -7,7 +7,7 @@
 // Loaded two ways:
 //   • service worker: importScripts('detection-identity.js') → globalThis.ARPDetectionIdentity
 //   • Node tests: require('./detection-identity.js') → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPDetectionIdentity = api;
@@ -23,6 +23,7 @@
     'watchSelector',
     'kwPerItem',
     'kwExclude',
+    'minPayPerHour',
     'collapseDigits',
   ]);
 
@@ -47,6 +48,7 @@
       watchSelector: normalizedString(settings.watchSelector, false),
       kwPerItem: !!settings.kwPerItem,
       kwExclude: normalizedString(settings.kwExclude, true),
+      minPayPerHour: Number(settings.minPayPerHour) > 0 ? Number(settings.minPayPerHour) : 0,
       // Background/item-detect treat an omitted value as the legacy default
       // (collapse digits enabled), so undefined and true are equivalent.
       collapseDigits: settings.collapseDigits !== false,
