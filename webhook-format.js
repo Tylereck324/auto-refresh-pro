@@ -9,7 +9,7 @@
 // Generic JSON carries schemaVersion so a consumer (e.g. a relay that dedupes
 // and filters alerts) can detect shape changes. Version history:
 //   1 — event/title/url/keyword/snippet/count/timestamp/items[]/itemsTruncated
-//   2 — + schemaVersion, + items[].key (stable item identity); items[] capped
+//   2 — + schemaVersion, + items[].key (the extension's item hash); items[] capped
 //       at JSON_ITEM_CAP instead of the chat formats' WEBHOOK_ITEM_CAP
 //
 // Loaded two ways:
@@ -114,8 +114,10 @@
         items: jsonShown.map((it) => {
           const { meta } = webhookItemDetail(it.text);
           return {
-            // Stable per-item identity (the same hash the extension diffs on), so
-            // a relay can dedupe one study across reloads, tabs, and restarts.
+            // The hash the extension diffs items on. It covers the card's TEXT, so
+            // it changes when the card does (e.g. "12 places" → "11 places")
+            // unless the job collapses digits (Ignore noise + digits). A consumer
+            // should dedupe on `url` first; `key` is a fallback for link-less items.
             key: typeof it.key === 'string' ? it.key : '',
             title: meta.title || '',
             url: (it.href && Validators.isSafeNavigableUrl(it.href)) ? it.href : '',
