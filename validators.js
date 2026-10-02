@@ -861,6 +861,25 @@
     return sender.id === id;
   }
 
+  // True when the message came from one of this extension's own pages (popup,
+  // Settings, Manage, offscreen) rather than a content script. Both carry our
+  // sender.id, and Settings/Manage open in real tabs, so sender.tab can't tell
+  // them apart — sender.url can: Chrome sets it from the sending frame, which
+  // for an extension page is chrome-extension://<our id>/… and for a content
+  // script is the web page's own URL. A page cannot forge it.
+  function isExtensionPageSender(sender, ownId) {
+    if (!sender || typeof sender.url !== 'string') return false;
+    const id = ownId ||
+      (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) || null;
+    if (!id) return false;
+    try {
+      const u = new URL(sender.url);
+      return u.protocol === 'chrome-extension:' && u.hostname === id;
+    } catch (e) {
+      return false;
+    }
+  }
+
   return {
     isSafeNavigableUrl,
     isSafeImageSrc,
@@ -870,6 +889,7 @@
     sanitizeAutoStartUrls,
     sanitizePresets,
     isTrustedSender,
+    isExtensionPageSender,
     isSafeRegex,
     sanitizeKeywordPattern,
     isSafeUrlGlob,

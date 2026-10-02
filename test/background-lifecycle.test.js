@@ -69,3 +69,25 @@ test('UPDATE_INTERVAL resets the per-item baseline when detection identity chang
   assert.deepEqual(updateResponse, { ok: true });
   assert.equal(harness.evaluate('activeJobs[7]._seenKeys'), null);
 });
+
+// Manage and Settings run in real tabs. Their messages must target msg.tabId,
+// not the Manage/Settings tab they were sent from.
+test('Manage (an extension page in a tab) can stop and pause another tab\'s job', async () => {
+  const harness = createHarness();
+  await harness.dispatch({ type: 'START_REFRESH', tabId: 7, settings: { ...settings } });
+  const manage = { tab: { id: 50 }, url: 'chrome-extension://extension-test-id/manage.html' };
+
+  assert.deepEqual(await harness.dispatch({ type: 'PAUSE_JOB', tabId: 7 }, manage), { ok: true });
+  assert.equal(harness.evaluate('activeJobs[7]._manualPause'), true);
+
+  assert.deepEqual(await harness.dispatch({ type: 'STOP_REFRESH', tabId: 7 }, manage), { ok: true });
+  assert.deepEqual(harness.evaluate('Object.keys(activeJobs)'), []);
+});
+
+test('a content script cannot redirect a command to another tab', async () => {
+  const harness = createHarness();
+  await harness.dispatch({ type: 'START_REFRESH', tabId: 7, settings: { ...settings } });
+  const page = { tab: { id: 9 }, url: 'https://evil.example/' };
+  await harness.dispatch({ type: 'STOP_REFRESH', tabId: 7 }, page);
+  assert.deepEqual(harness.evaluate('Object.keys(activeJobs)'), ['7']);
+});

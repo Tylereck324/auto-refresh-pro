@@ -42,6 +42,7 @@ function createHarness(options = {}) {
   const runtime = {
     id: 'extension-test-id',
     lastError: null,
+    getURL: (p = '') => 'chrome-extension://extension-test-id/' + String(p).replace(/^\//, ''),
     onMessage: event(),
     onInstalled: event(),
     onStartup: event(),

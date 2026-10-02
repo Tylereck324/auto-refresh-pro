@@ -52,7 +52,9 @@ test('an undeliverable webhook is recorded in the alert journal without badging'
 test('TEST_WEBHOOK reports the delivery outcome to the settings page', async () => {
   const { fetch, calls } = scriptedFetch(204);
   const h = createHarness({ fetch });
-  const res = await h.dispatch({ type: 'TEST_WEBHOOK', url: 'https://hooks.example.com/abc', format: 'slack' });
+  // Settings opens in a real tab, so its sender carries a tab AND our page URL.
+  const settingsPage = { tab: { id: 50 }, url: 'chrome-extension://extension-test-id/options.html' };
+  const res = await h.dispatch({ type: 'TEST_WEBHOOK', url: 'https://hooks.example.com/abc', format: 'slack' }, settingsPage);
   assert.deepEqual(res, { ok: true, status: 204, attempts: 1 });
   assert.ok(JSON.parse(calls[0].init.body).text.includes('test alert'));
 });

@@ -24,3 +24,18 @@ test('rejects senders with no id (web page / external)', () => {
 test('fails closed when own id is unknown', () => {
   assert.equal(V.isTrustedSender({ id: OWN_ID }, null), false);
 });
+
+// Settings and Manage open in real tabs, so they carry sender.tab exactly like
+// a content script; only sender.url distinguishes them.
+test('isExtensionPageSender recognizes our own pages by sender.url', () => {
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, tab: { id: 3 }, url: `chrome-extension://${OWN_ID}/manage.html` }, OWN_ID), true);
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, url: `chrome-extension://${OWN_ID}/popup.html` }, OWN_ID), true);
+});
+
+test('isExtensionPageSender rejects content scripts, other extensions, and junk', () => {
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, tab: { id: 3 }, url: 'https://app.example.com/studies' }, OWN_ID), false);
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, url: 'chrome-extension://another-extension-id/page.html' }, OWN_ID), false);
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, tab: { id: 3 } }, OWN_ID), false);
+  assert.equal(V.isExtensionPageSender({ id: OWN_ID, url: 'not a url' }, OWN_ID), false);
+  assert.equal(V.isExtensionPageSender(null, OWN_ID), false);
+});

@@ -57,9 +57,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // regardless of any msg.tabId. Our own content script never sends a foreign
   // tabId, so this only constrains a forged message from a compromised page
   // process (which can imitate a content-script sender, but cannot fake
-  // sender.tab) to controlling its own tab. The popup/options/manage pages have
-  // no sender.tab and keep using msg.tabId.
-  const senderTabId = sender.tab && sender.tab.id;
+  // sender.tab) to controlling its own tab. Extension pages keep using
+  // msg.tabId: Settings and Manage run in real tabs too, so they are told apart
+  // by sender.url (see isExtensionPageSender) — binding them to sender.tab made
+  // Manage's Stop/Pause/Resume/+30s act on the Manage tab itself.
+  const senderTabId = ARPValidators.isExtensionPageSender(sender)
+    ? undefined
+    : (sender.tab && sender.tab.id);
   const resolvedCommandTabId = senderTabId ?? msg.tabId;
   const startToken = msg.type === 'START_REFRESH' && resolvedCommandTabId != null
     ? lifecycleRegistry.begin(resolvedCommandTabId)

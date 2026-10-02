@@ -60,9 +60,8 @@ try {
     randomTimer: false, randomMin: 5000, randomMax: 60000, stopAfter: 0,
     keyword: '', stopOnKeyword: false, stopOnChange: false, stopOnClick: false,
   };
-  // Drive the worker directly. A START_REFRESH *message* from options.html would
-  // be bound to the options tab itself (sender.tab wins over msg.tabId — the
-  // trust-boundary rule), not to the test page.
+  // Drive the worker directly, so the job's start doesn't depend on any page's
+  // message routing — this script is about what happens IN the test page.
   const swTarget = await browser.waitForTarget(t => t.type() === 'service_worker');
   const sw = await swTarget.worker();
   const jobExists = () => sw.evaluate((tabId) => !!activeJobs[tabId], tabId);
