@@ -57,10 +57,11 @@ async function persistOrToast(obj) {
 // ticket and bails after every await if a newer call has started — without
 // this, an older call's render could land after a newer one's and leave stale
 // data stuck on screen (the sig check would then skip every later rebuild).
-loadJobs._gen = 0;
-loadJobs._retries = 0;
+let loadJobsGen = 0;   // bumped per call; a superseded call must not render
+let lastJobsSig = null; // signature of the last rendered job list
+let loadJobsRetries = 0; // bounded retries while the worker is waking
 async function loadJobs() {
-  const gen = ++loadJobs._gen;
+  const gen = ++loadJobsGen;
   // A waking (cold-start) service worker can miss the first message and reply
   // with no response. Treat that as transient: keep the current view and retry
   // shortly, rather than flashing the empty state. Capped to consecutive
@@ -69,12 +70,12 @@ async function loadJobs() {
   const resp = await new Promise(resolve =>
     chrome.runtime.sendMessage({ type: 'GET_ALL_JOBS' }, r => resolve(chrome.runtime.lastError ? null : r))
   );
-  if (gen !== loadJobs._gen) return; // superseded while awaiting — newer call owns the DOM
+  if (gen !== loadJobsGen) return; // superseded while awaiting — newer call owns the DOM
   if (!resp) {
-    if (loadJobs._retries < 5) { loadJobs._retries++; setTimeout(loadJobs, 400); }
+    if (loadJobsRetries < 5) { loadJobsRetries++; setTimeout(loadJobs, 400); }
     return;
   }
-  loadJobs._retries = 0;
+  loadJobsRetries = 0;
   const jobs = resp.jobs || {};
 
   const tabIds = Object.keys(jobs).map(Number);
@@ -95,17 +96,17 @@ async function loadJobs() {
     jobs[id].paused, jobs[id].pauseReason, jobs[id].snoozeUntil,
     jobModeLabel(jobs[id].settings),
   ]));
-  if (sig === loadJobs._sig) return;
+  if (sig === lastJobsSig) return;
 
   if (tabIds.length === 0) {
-    loadJobs._sig = sig;
+    lastJobsSig = sig;
     tabList.innerHTML = `<div class="empty-state"><div class="empty-icon">⏸</div><div class="empty-title">No active refresh jobs</div><div>Open a tab and start auto refresh from the extension popup.</div></div>`;
     return;
   }
 
   const tabs = await Promise.all(tabIds.map(id => chrome.tabs.get(id).catch(() => null)));
-  if (gen !== loadJobs._gen) return; // superseded during tabs.get — don't commit or render stale data
-  loadJobs._sig = sig; // committed only with the render it describes
+  if (gen !== loadJobsGen) return; // superseded during tabs.get — don't commit or render stale data
+  lastJobsSig = sig; // committed only with the render it describes
   tabList.innerHTML = '';
 
   tabs.forEach((tab, i) => {
@@ -163,20 +164,20 @@ async function loadJobs() {
     `;
     // Favicon fallback — set programmatically; inline onerror= is blocked by
     // the MV3 content security policy.
-    const fav = card.querySelector('.tab-favicon');
+    const fav = /** @type {HTMLImageElement | null} */ (card.querySelector('.tab-favicon'));
     if (fav) fav.addEventListener('error', () => { fav.src = 'icons/icon16.png'; });
 
     tabList.appendChild(card);
   });
 
-  document.querySelectorAll('.btn-sm-stop').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.btn-sm-stop')).forEach(btn => {
     btn.addEventListener('click', async () => {
       await chrome.runtime.sendMessage({ type: 'STOP_REFRESH', tabId: parseInt(btn.dataset.id) });
       loadJobs();
     });
   });
 
-  document.querySelectorAll('.btn-sm-go').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.btn-sm-go')).forEach(btn => {
     btn.addEventListener('click', () => {
       // The tab can close between the 8s poll and the click; update() REJECTS
       // (async) on a stale id, which no try/catch around the call can see.
@@ -188,7 +189,7 @@ async function loadJobs() {
 
 // ── Auto-start URLs ──────────────────────────────────────────────────────
 async function loadAutoStart() {
-  const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+  const { autoStartUrls = [] } = /** @type {any} */ (await chrome.storage.local.get('autoStartUrls'));
   const list = document.getElementById('autoStartList');
   list.innerHTML = '';
   autoStartUrls.forEach((item, i) => {
@@ -205,9 +206,9 @@ async function loadAutoStart() {
   // Remove by VALUE, not render-time index: the array can change between render
   // and click (a second Manage window, an import landing, a double-click racing
   // the re-render), and a stale index deletes the wrong entry.
-  list.querySelectorAll('.autostart-remove').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.autostart-remove')).forEach(btn => {
     btn.addEventListener('click', async () => {
-      const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+      const { autoStartUrls = [] } = /** @type {any} */ (await chrome.storage.local.get('autoStartUrls'));
       const idx = autoStartUrls.findIndex(item => item && item.url === btn.dataset.url);
       if (idx !== -1) {
         autoStartUrls.splice(idx, 1);
@@ -233,7 +234,7 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
     return;
   }
 
-  const { autoStartUrls = [] } = await chrome.storage.local.get('autoStartUrls');
+  const { autoStartUrls = [] } = /** @type {any} */ (await chrome.storage.local.get('autoStartUrls'));
   // Same cap the import sanitizer enforces (it hard-truncates with slice) —
   // without this check, entries past the cap save fine here but silently
   // vanish on an export→import round-trip.
@@ -255,7 +256,7 @@ document.getElementById('addAutoStart').addEventListener('click', async () => {
 
 // ── URL rules ────────────────────────────────────────────────────────────
 async function loadRules() {
-  const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+  const { urlRules = [] } = /** @type {any} */ (await chrome.storage.local.get('urlRules'));
   const list = document.getElementById('ruleList');
   list.innerHTML = '';
   urlRules.forEach((rule, i) => {
@@ -275,9 +276,9 @@ async function loadRules() {
 
   // Remove/toggle by VALUE, not render-time index (same rationale as the
   // auto-start list above — a stale index hits the wrong rule).
-  list.querySelectorAll('.rule-remove').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.rule-remove')).forEach(btn => {
     btn.addEventListener('click', async () => {
-      const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+      const { urlRules = [] } = /** @type {any} */ (await chrome.storage.local.get('urlRules'));
       const idx = urlRules.findIndex(r => r && r.pattern === btn.dataset.pattern);
       if (idx !== -1) {
         urlRules.splice(idx, 1);
@@ -288,7 +289,7 @@ async function loadRules() {
   });
   list.querySelectorAll('.rule-enabled').forEach(box => {
     box.addEventListener('change', async () => {
-      const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+      const { urlRules = [] } = /** @type {any} */ (await chrome.storage.local.get('urlRules'));
       const rule = urlRules.find(r => r && r.pattern === box.dataset.pattern);
       if (rule) rule.enabled = box.checked;
       await persistOrToast({ urlRules });
@@ -304,7 +305,7 @@ document.getElementById('addRule').addEventListener('click', async () => {
     showToast('Invalid pattern. Use e.g. *://*.example.com/*', true);
     return;
   }
-  const { urlRules = [] } = await chrome.storage.local.get('urlRules');
+  const { urlRules = [] } = /** @type {any} */ (await chrome.storage.local.get('urlRules'));
   if (urlRules.length >= ARPValidators.MAX_URL_RULES) {
     showToast('Too many rules (max ' + ARPValidators.MAX_URL_RULES + ').', true);
     return;
@@ -328,7 +329,7 @@ document.getElementById('addRule').addEventListener('click', async () => {
 const ALERT_RENDER_CAP = 200;
 
 async function loadAlerts() {
-  const { alertLog = [] } = await chrome.storage.local.get('alertLog');
+  const { alertLog = [] } = /** @type {any} */ (await chrome.storage.local.get('alertLog'));
   const list = document.getElementById('alertList');
   if (!list) return;
   list.innerHTML = '';
@@ -373,7 +374,7 @@ async function loadAlerts() {
   // The originating tab may be gone — update() rejects (async, so a try/catch
   // around the call can't see it) on a stale id. Surface it instead of an
   // unhandled rejection with zero feedback.
-  list.querySelectorAll('.alert-go').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.alert-go')).forEach(btn => {
     btn.addEventListener('click', () => {
       const id = parseInt(btn.dataset.id);
       if (!Number.isInteger(id)) return;
@@ -394,7 +395,7 @@ document.getElementById('clearAlertsBtn').addEventListener('click', async () => 
 });
 
 document.getElementById('exportAlertsBtn').addEventListener('click', async () => {
-  const { alertLog = [] } = await chrome.storage.local.get('alertLog');
+  const { alertLog = [] } = /** @type {any} */ (await chrome.storage.local.get('alertLog'));
   const blob = new Blob([JSON.stringify(alertLog, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -406,7 +407,7 @@ document.getElementById('exportAlertsBtn').addEventListener('click', async () =>
 
 // ── Domain denylist ──────────────────────────────────────────────────────
 async function loadDenylist() {
-  const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+  const { domainDenylist = [] } = /** @type {any} */ (await chrome.storage.local.get('domainDenylist'));
   const list = document.getElementById('denyList');
   if (!list) return;
   list.innerHTML = '';
@@ -422,9 +423,9 @@ async function loadDenylist() {
   });
 
   // Remove by VALUE, not render-time index (same rationale as the URL-rules list).
-  list.querySelectorAll('.deny-remove').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.deny-remove')).forEach(btn => {
     btn.addEventListener('click', async () => {
-      const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+      const { domainDenylist = [] } = /** @type {any} */ (await chrome.storage.local.get('domainDenylist'));
       const idx = domainDenylist.indexOf(btn.dataset.pattern);
       if (idx !== -1) {
         domainDenylist.splice(idx, 1);
@@ -442,7 +443,7 @@ document.getElementById('addDeny').addEventListener('click', async () => {
     showToast('Invalid domain pattern. Use e.g. *.bank.com', true);
     return;
   }
-  const { domainDenylist = [] } = await chrome.storage.local.get('domainDenylist');
+  const { domainDenylist = [] } = /** @type {any} */ (await chrome.storage.local.get('domainDenylist'));
   if (domainDenylist.length >= ARPValidators.MAX_DENYLIST) {
     showToast('Too many entries (max ' + ARPValidators.MAX_DENYLIST + ').', true);
     return;

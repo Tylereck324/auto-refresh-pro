@@ -52,6 +52,7 @@
   // loading this script (e.g. when the popup or options page opens) never pays
   // the WAV synthesis cost — that only happens once Preview or an alert fires.
   // `build` synthesizes a tone; `file` points at a bundled asset.
+  /** @param {{ label: string, lenMs: number, build?: object, file?: string }} tone */
   function makeTone({ label, lenMs, build, file }) {
     let uri;
     return {

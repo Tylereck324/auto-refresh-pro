@@ -100,7 +100,7 @@ document.getElementById('btnTestWebhook').addEventListener('click', async functi
 
 function load() {
   chrome.storage.local.get(['globalSettings'], function(data) {
-    const s = data.globalSettings || {};
+    const s = /** @type {any} */ (data.globalSettings || {});
 
 
     // Toggles
@@ -279,12 +279,13 @@ chrome.storage.onChanged.addListener(function(changes, area) {
   load();
 });
 
+let savedMsgTimer = null;
 function showSaved() {
   const msg = document.getElementById('successMsg');
   if (msg) {
     msg.style.display = 'inline';
-    clearTimeout(showSaved._t);
-    showSaved._t = setTimeout(function() { msg.style.display = 'none'; }, 1500);
+    clearTimeout(savedMsgTimer);
+    savedMsgTimer = setTimeout(function() { msg.style.display = 'none'; }, 1500);
   }
   // Also surface a toast: the inline note sits at the bottom of a long page, so
   // a change made near the top would otherwise confirm off-screen.

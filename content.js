@@ -21,6 +21,7 @@
     if (stale) stale.remove();
   }
 
+  /** @type {any} */ // the overlay div also carries _timer/_fill/_sublabel/_setPaused refs
   let overlayEl  = null;
   let tickInterval = null;
   let deadline      = 0;  // absolute timestamp of the next refresh (job.nextRefresh)
@@ -787,7 +788,8 @@
   document.addEventListener('pointerdown', (e) => {
     if (!contextValid || !isTrustedActionEvent(e) || !stopOnClickEnabled) return;
     if (e.button || !e.isPrimary) return; // primary button / first touch point only
-    if (e.target && e.target.closest && e.target.closest('#__ar_overlay')) return;
+    const target = /** @type {Element | null} */ (e.target);
+    if (target && target.closest && target.closest('#__ar_overlay')) return;
     // Stop the job, then disarm only once the stop is acknowledged. Disarming
     // before the message round-trips could otherwise drop the press silently if
     // the send failed. The flag is re-armed on the next COUNTDOWN_START anyway.

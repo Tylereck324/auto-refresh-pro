@@ -204,7 +204,7 @@ function applyCustomInterval() {
     return;
   }
 
-  document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.pill')).forEach(b => b.classList.remove('active'));
   const raw = val * unit;
   const clamped = raw < 2000;
   selectedMs = Math.max(2000, raw);
@@ -763,7 +763,7 @@ function renderPresets(presets) {
     btn.dataset.ms = p.ms;
     btn.textContent = p.label;
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
+      /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.pill')).forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       selectedMs = parseInt(btn.dataset.ms);
       // Clear the custom row INCLUDING its validation state — setting .value
@@ -783,7 +783,7 @@ function renderPresets(presets) {
 }
 
 function highlightSelectedPreset() {
-  document.querySelectorAll('.pill').forEach(btn => {
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.pill')).forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.ms) === selectedMs);
   });
 }
@@ -794,7 +794,7 @@ function highlightSelectedPreset() {
 // sits empty: the UI reads "nothing chosen" while gatherSettings ships the
 // stored custom value.
 function syncCustomRowToSelected() {
-  const isPreset = Array.from(document.querySelectorAll('.pill'))
+  const isPreset = Array.from(/** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.pill')))
     .some(btn => parseInt(btn.dataset.ms) === selectedMs);
   if (isPreset || !(selectedMs > 0)) return;
   const unitSel = document.getElementById('customUnit');
@@ -808,7 +808,8 @@ function syncCustomRowToSelected() {
 }
 
 function loadSettings() {
-  chrome.storage.local.get(['popupSettings', 'globalSettings'], ({ popupSettings: s, globalSettings: g }) => {
+  chrome.storage.local.get(['popupSettings', 'globalSettings'], (/** @type {any} */ data) => {
+    let { popupSettings: s, globalSettings: g } = data;
     g = g || {};
     globalDefaults = g; // read by gatherSettings for the moved-to-Settings prefs
 
