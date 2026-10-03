@@ -15,6 +15,9 @@ const ROOT = path.join(__dirname, '..');
 
 const PAGE_SCRIPTS = [
   'background.js',
+  'bg-alerts.js',
+  'bg-store.js',
+  'bg-messages.js',
   'content.js',
   'popup.js',
   'options.js',
@@ -31,6 +34,15 @@ for (const file of PAGE_SCRIPTS) {
     assert.doesNotThrow(() => new vm.Script(src, { filename: file }));
   });
 }
+
+// background.js and its bg-*.js modules share the worker's global scope, so a
+// let/const declared in two of them would throw at load time. Compiling them as
+// one script surfaces that here.
+test('worker scripts declare no top-level let/const twice', () => {
+  const src = ['background.js', 'bg-alerts.js', 'bg-store.js', 'bg-messages.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
+  assert.doesNotThrow(() => new vm.Script(src, { filename: 'worker-bundle.js' }));
+});
 
 test('manifest.json is valid JSON with the expected shape', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));

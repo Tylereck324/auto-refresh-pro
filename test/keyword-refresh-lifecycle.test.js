@@ -51,10 +51,10 @@ test('keyword introduced by reload 1 alerts during cycle 1', async () => {
   const cycleCalls = harness.calls.slice(cycleStart);
   const reloadIndex = cycleCalls.findIndex((call) => call.api === 'tabs.reload');
   const settleIndex = cycleCalls.findIndex(
-    (call) => call.api === 'scripting.executeScript' && call.details.func.name === 'waitForPageSettle',
+    (call) => call.api === 'scripting.executeScript' && call.details.func?.name === 'waitForPageSettle',
   );
   const readIndex = cycleCalls.findIndex(
-    (call) => call.api === 'scripting.executeScript' && call.details.func.name === 'readPageText',
+    (call) => call.api === 'scripting.executeScript' && call.details.func?.name === 'readPageText',
   );
   const alertIndex = cycleCalls.findIndex((call) => call.api === 'notifications.create');
   assert.ok(reloadIndex >= 0, 'cycle should reload');
@@ -82,7 +82,7 @@ test('keyword introduced by post-load hydration alerts during cycle 1 and reques
     }, 50);
   };
   options.onExecuteScript = async ({ details }) => {
-    if (details.func.name === 'waitForPageSettle') {
+    if (details.func?.name === 'waitForPageSettle') {
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
   };

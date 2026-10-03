@@ -166,4 +166,4 @@ universal-site permission model:
   future runtime keys. Covered by `test/settings-export.test.js`.
 
 Validation for this remediation: `npm test` (265 passing), `npm run lint`,
-`npm run build`, and `node audit-proof/verify-severe-fixes.mjs` all pass.
+`npm run build`, and `node scripts/e2e/verify-severe-fixes.mjs` all pass.

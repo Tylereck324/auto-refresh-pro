@@ -6,7 +6,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('refresh-guards.js') → globalThis.ARPGuards
 //   • Node test runner: require('./refresh-guards.js')       → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPGuards = api;

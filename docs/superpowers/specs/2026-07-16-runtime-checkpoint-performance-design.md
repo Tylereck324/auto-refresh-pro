@@ -143,7 +143,7 @@ Implementation is complete only after fresh runs of:
 npm test
 npm run lint
 npm run build
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 git diff --check
 ```
 

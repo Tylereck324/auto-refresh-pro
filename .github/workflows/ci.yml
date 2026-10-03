@@ -13,5 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm test
       - run: npm run lint
+      - run: npm run typecheck
+      # Packages the Web Store zip: re-checks the version sync and that every
+      # allowlisted runtime file exists.
+      - run: npm run build

@@ -864,6 +864,15 @@
           <input class="keyword-input" type="text" id="optKwExclude" placeholder="e.g. 1 place" aria-label="Skip per-item matches containing these terms" style="width:100%;" disabled
                  title="Comma-separated. A matching item is skipped if it also contains any of these terms — matched as whole words/phrases, so '1 place' skips a one-slot card but not one showing '21 places' or '120 places'.">
         </div>
+        <!-- Per-item minimum reward/hour: a matching card whose parsed pay
+             (e.g. "£9.00/hr") is below this is skipped. Cards with no readable
+             pay always alert. 0 / empty = off. Follows the per-item toggle like
+             the exclude filter above. -->
+        <div id="minPayRow" style="margin-top:10px;opacity:.5;">
+          <label class="kw-flag" title="Skip matching items whose reward per hour is below this amount (any currency). Items that show no hourly rate are never skipped. Leave at 0 to alert on every rate.">
+            Min reward/hr <input type="number" id="optMinPay" min="0" max="10000" step="0.5" value="0" style="width:64px;" disabled aria-label="Minimum reward per hour for per-item alerts">
+          </label>
+        </div>
         <!-- Live watch (#11): re-scan the DOM for new per-item matches BETWEEN
              reloads. Zero server requests per scan (it reads the already-loaded
              page), so it catches items the site pushes in via its own live

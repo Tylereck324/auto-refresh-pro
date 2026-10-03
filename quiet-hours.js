@@ -15,7 +15,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('quiet-hours.js') → globalThis.ARPQuietHours
 //   • Node test runner: require('./quiet-hours.js')       → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPQuietHours = api;

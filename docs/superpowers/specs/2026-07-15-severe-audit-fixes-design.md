@@ -30,7 +30,7 @@ The work is divided into independently testable and independently committable ch
 - `detection-identity.js` determines whether two settings objects describe the same keyword and per-item detection behavior.
 - `settings-export.js` builds a settings-only backup from an explicit top-level allowlist.
 - `test/background-harness.js` runs the real `background.js` message listener with deterministic Chrome API fakes and deferred promises.
-- `audit-proof/verify-severe-fixes.mjs` loads the real unpacked extension in Chrome for Testing and verifies hostile-page event isolation and representative end-to-end flows.
+- `scripts/e2e/verify-severe-fixes.mjs` loads the real unpacked extension in Chrome for Testing and verifies hostile-page event isolation and representative end-to-end flows.
 
 ### Existing files changed
 
@@ -151,7 +151,7 @@ Every remediation follows red-green TDD: add the smallest regression test, run i
 
 ### Browser verification
 
-`audit-proof/verify-severe-fixes.mjs` will use a relative repository path, a temporary Chrome profile, a local HTTP test page, and the real unpacked extension. It will verify:
+`scripts/e2e/verify-severe-fixes.mjs` will use a relative repository path, a temporary Chrome profile, a local HTTP test page, and the real unpacked extension. It will verify:
 
 - synthetic page-created clicks, keydowns, and pointer events do not change job state;
 - real Puppeteer keyboard and mouse input still operates extension controls;
@@ -168,7 +168,7 @@ Implementation is complete only after all of these pass from the repository root
 npm test
 npm run lint
 npm run build
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 The implementation report must also include:

@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire('/opt/homebrew/lib/node_modules/@covibes/zeroshot/');
 const puppeteer = require('puppeteer');
 
-const REPO = path.resolve(new URL('..', import.meta.url).pathname);
-const OUT = path.join(REPO, 'artifacts', 'keyword-first-reload');
+const REPO = path.resolve(new URL('../..', import.meta.url).pathname);
+const OUT = path.join(REPO, 'docs', 'evidence', 'keyword-first-reload');
 const CHROME = '/Users/tylereck/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 fs.mkdirSync(OUT, { recursive: true });

@@ -31,7 +31,7 @@ git status --short
 git diff --check
 npm test
 npm run lint
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 Preferred path: with explicit user approval, commit the already-verified security remediation as its own baseline commit, staging its exact known file set. Then create or switch to a `codex/` performance branch and execute the task commits below.
@@ -1055,7 +1055,7 @@ Expected: `dist/auto-refresh-pro-1.1.0.zip` is rebuilt successfully and contains
 - [ ] **Step 4: Run the existing real-browser smoke suite**
 
 ```bash
-node audit-proof/verify-severe-fixes.mjs
+node scripts/e2e/verify-severe-fixes.mjs
 ```
 
 Expected: representative Start, Stop, interval-update, popup, Manage, and trusted-event flows pass without console errors.

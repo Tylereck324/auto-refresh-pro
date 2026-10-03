@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Refresh Pro",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Auto refresh pages with custom intervals, page monitoring, keyword detection, and more.",
   "permissions": [
     "storage",
@@ -33,15 +33,12 @@
     "128": "icons/icon128.png"
   },
   "options_page": "options.html",
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "content.js"
-      ],
-      "run_at": "document_idle"
+  "commands": {
+    "toggle-refresh": {
+      "suggested_key": {
+        "default": "Alt+R"
+      },
+      "description": "Start or stop auto refresh on the current tab"
     }
-  ]
+  }
 }

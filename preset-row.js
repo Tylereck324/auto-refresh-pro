@@ -6,7 +6,7 @@
 // as  "><img src=x onerror=alert(1)>  to execute on the Settings page. This
 // builder uses createElement + value/textContent assignment exclusively, so the
 // label is always treated as inert string data — never parsed as HTML.
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.buildPresetRow = api.buildPresetRow;

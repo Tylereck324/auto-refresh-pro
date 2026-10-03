@@ -7,7 +7,7 @@
 // Loaded two ways, dependency-free and side-effect-free:
 //   • service worker:   importScripts('keyword-match.js') → globalThis.ARPKeyword
 //   • Node test runner: require('./keyword-match.js')      → module.exports
-(function (root, factory) {
+(function (/** @type {any} */ root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ARPKeyword = api;
