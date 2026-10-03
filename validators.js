@@ -795,12 +795,15 @@
         if (presets) gs.presets = presets;
         // Webhook URL is fetched by the privileged worker — re-validate it
         // (https-only + SSRF guard) so an import can't aim it at localhost/LAN.
-        if ('webhookUrl' in gs && gs.webhookUrl && !isSafeWebhookUrl(gs.webhookUrl)) {
-          gs.webhookUrl = '';
-          errors.push('removed an unsafe webhook URL');
-        }
-        if ('webhookFormat' in gs) {
-          gs.webhookFormat = ['discord', 'slack', 'json'].includes(gs.webhookFormat) ? gs.webhookFormat : 'json';
+        for (const slot of ['', '2']) {
+          const urlKey = 'webhookUrl' + slot, fmtKey = 'webhookFormat' + slot;
+          if (urlKey in gs && gs[urlKey] && !isSafeWebhookUrl(gs[urlKey])) {
+            gs[urlKey] = '';
+            errors.push('removed an unsafe webhook URL');
+          }
+          if (fmtKey in gs) {
+            gs[fmtKey] = ['discord', 'slack', 'json'].includes(gs[fmtKey]) ? gs[fmtKey] : 'json';
+          }
         }
         if ('quietHours' in gs) gs.quietHours = sanitizeQuietHours(gs.quietHours);
         if ('watchSelector' in gs && typeof gs.watchSelector === 'string' && !isSafeSelector(gs.watchSelector)) {
