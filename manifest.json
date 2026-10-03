@@ -3,6 +3,7 @@
   "name": "Auto Refresh Pro",
   "version": "1.2.0",
   "description": "Auto refresh pages with custom intervals, page monitoring, keyword detection, and more.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuezZuPwGEBVKGRqdcjtUK6XulzXzAXw9dqJYhBP6u4INnW+9yAYL7Q9ISQyxbqAjv7CpGaiNKj/Z+HhOoOXC0qkOCGOlYaYuWgUp+WTReTWltqGSilFhmEj8z8UQW8VQ1sh7KLpWy1WyLt0Rc6IEvPZ5bqBu2FYhBAb7uym8IGBAuD01037g4c/RTpmL3fdnM9Tr9lOQm/cTOK+3w8EWDKHyfHTtxgYYEh7tbNSBCRLXIarA3SjbK3BfSzQNh3EsQ+l5m+e4LA+pfWjCFBXTjeFWpDe781lWn64+IyN+SnBhGV4riM4zuJsqzcslfgvma4vCBFO11BvqhHQs3IGA0wIDAQAB",
   "permissions": [
     "storage",
     "alarms",

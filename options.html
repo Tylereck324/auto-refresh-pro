@@ -396,7 +396,7 @@
        stored (validated with ARPValidators.isSafeWebhookUrl on save). -->
   <div class="card">
     <div class="card-title">Webhook Alerts</div>
-    <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">POST an alert to a webhook when a keyword or change fires. HTTPS only.</div>
+    <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">POST an alert to a webhook when a keyword or change fires. HTTPS only. Webhook URLs stay on this computer — they are not synced.</div>
     <div class="field-stack">
       <label for="webhookUrl">Webhook URL</label>
       <input class="url-input" type="text" id="webhookUrl" placeholder="https://discord.com/api/webhooks/..." aria-label="Webhook URL" autocomplete="off" spellcheck="false">
@@ -455,6 +455,9 @@
     <div class="setting-row">
       <div><div class="setting-label">Auto Refresh Pro</div><div class="setting-sub">Personal edition — all features unlocked</div></div>
       <span id="extVersion" style="font-family:var(--font-mono);font-size:11px;color:var(--text2);"></span>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Chrome sync</div><div class="setting-sub">Settings, presets, popup setup, URL rules and the domain denylist sync to your other Chromes signed in to the same Google account. Webhooks, running jobs and the alert journal stay on this computer.</div></div>
     </div>
   </div>
 

@@ -34,6 +34,7 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 - **Scroll preservation** — optionally restore the scroll position across refreshes
 - **Navigation detection** — pauses (with a notification) when you navigate away from the original URL, and resumes automatically when the tab returns to it; the detection baseline is frozen while away, so matches that arrived in the meantime still alert on return
 - **Manage All Tabs** — view and stop all active refresh jobs across every open tab
+- **Chrome sync** — Settings, presets, popup setup, URL rules and the domain denylist sync between your Chromes (e.g. a Mac and a Windows PC) signed in to the same Google account. Webhook URLs, running jobs, the alert journal and auto-start URLs stay on each computer. The manifest pins the extension ID (`key`) so unpacked copies on different machines count as the same extension
 - **Import / Export** — back up and restore all settings as JSON (imports are sanitized — see below)
 - **Auto-start URLs** — open specific URLs and start refreshing automatically when Chrome launches
 
@@ -94,6 +95,8 @@ Open **Settings** from the popup footer → Keyboard Shortcut → **Change**. Th
 ├── webhook-delivery.js  # Webhook POST with status checks and 429/5xx retry
 ├── webhook-format.js    # Discord / Slack / JSON body builder
 ├── watch-health.js      # Dead-watch decisions (sign-in / captcha / unreadable)
+├── settings-sync.js     # What syncs across Chromes (webhooks stay local)
+├── bg-sync.js           # Worker: local ⇄ chrome.storage.sync bridge
 ├── serialize.js         # Async mutex for storage read-modify-write
 ├── notif-id.js          # Encode/decode tab id in a notification id
 ├── preset-row.js        # Preset row builder + shared DEFAULT_PRESETS

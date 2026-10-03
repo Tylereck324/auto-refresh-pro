@@ -58,7 +58,16 @@ log('launched chrome, headless =', HEADLESS);
 // extension page directly: this both confirms the extension loaded and wakes
 // its (otherwise idle) MV3 service worker. ──
 import crypto from 'node:crypto';
-const hash = crypto.createHash('sha256').update(REPO).digest('hex').slice(0, 32);
+// The extension ID: Chrome derives it from the manifest's pinned `key` when
+// present (the same ID on every machine), else from the unpacked folder path.
+function extensionIdSource(repo) {
+  try {
+    const key = JSON.parse(fs.readFileSync(path.join(repo, 'manifest.json'), 'utf8')).key;
+    if (key) return Buffer.from(key, 'base64');
+  } catch { /* fall through */ }
+  return repo;
+}
+const hash = crypto.createHash('sha256').update(extensionIdSource(REPO)).digest('hex').slice(0, 32);
 const EXT_ID = [...hash].map(c => String.fromCharCode(97 + parseInt(c, 16))).join('');
 log('extension id (from path)', EXT_ID);
 
