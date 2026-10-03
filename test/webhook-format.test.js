@@ -73,3 +73,13 @@ test('change alerts include the diff snippet', () => {
   const body = F.buildBody('discord', { type: 'chg', title: 'Shop', url: 'https://s.example/', snippet: '+ in stock' });
   assert.match(body.content, /Page changed: “Shop”\n\+ in stock\nhttps:\/\/s\.example\//);
 });
+
+test('a stalled watch is reported in every format', () => {
+  const info = { type: 'stall', title: 'Studies', url: 'https://app.example.com/studies', reason: 'The page is asking you to sign in' };
+  assert.match(F.buildBody('discord', info).content, /^⚠️ Watch blocked on “Studies”: The page is asking you to sign in\nhttps:/);
+  assert.match(F.buildBody('slack', info).text, /Watch blocked/);
+  const json = F.buildBody('json', info);
+  assert.equal(json.event, 'stall');
+  assert.equal(json.reason, 'The page is asking you to sign in');
+  assert.equal('reason' in F.buildBody('json', { type: 'kw', title: 't', url: 'u', keyword: 'k' }), false);
+});

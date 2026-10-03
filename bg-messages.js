@@ -28,6 +28,8 @@ function serializeJob(job) {
     // Snooze (#2): when the alerts are muted via a notification button, surface
     // the remaining time so the popup can show a "snoozed" pill.
     snoozeUntil: (job._snoozeUntil && Date.now() < job._snoozeUntil) ? job._snoozeUntil : undefined,
+    // Instant live watch: tells the job page's content script to observe DOM changes.
+    liveWatch: domScanEnabled(job) || undefined,
   };
 }
 
@@ -155,6 +157,13 @@ const MESSAGE_HANDLERS = {
     });
     const result = await ARPWebhook.deliver(url, body);
     return { ok: result.ok, status: result.status, attempts: result.attempts, error: result.error };
+  },
+
+  async DOM_MUTATED(msg, ctx) {
+    // From the job page's content script only: the page changed, scan now.
+    if (ctx.senderTabId == null) return { ok: false };
+    requestMutationScan(ctx.senderTabId);
+    return { ok: true };
   },
 
   async GET_ALL_JOBS() {

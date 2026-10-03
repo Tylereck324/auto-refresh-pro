@@ -11,6 +11,8 @@
 //   1 — event/title/url/keyword/snippet/count/timestamp/items[]/itemsTruncated
 //   2 — + schemaVersion, + items[].key (the extension's item hash); items[] capped
 //       at JSON_ITEM_CAP instead of the chat formats' WEBHOOK_ITEM_CAP
+//       (additive, same version) event 'stall' + `reason` when a watch stops
+//       working: sign-in page, captcha, or a page that won't load
 //
 // Loaded two ways:
 //   • service worker:   importScripts('webhook-format.js') → globalThis.ARPWebhookFormat
@@ -60,7 +62,9 @@
   function buildBody(fmt, info) {
     const line = info.type === 'kw'
       ? ('🔔 Keyword ' + (info.inverse ? 'disappeared from' : 'found on') + ' “' + info.title + '”: ' + info.keyword)
-      : ('🔔 Page changed: “' + info.title + '”' + (info.snippet ? ('\n' + info.snippet) : ''));
+      : info.type === 'stall'
+        ? ('⚠️ Watch blocked on “' + info.title + '”: ' + (info.reason || 'the page stopped working'))
+        : ('🔔 Page changed: “' + info.title + '”' + (info.snippet ? ('\n' + info.snippet) : ''));
     const message = line + '\n' + info.url;
 
     // Per-item arrivals carry their own deep-link (the study), so when present we
@@ -107,7 +111,9 @@
       const jsonShown = items.slice(0, JSON_ITEM_CAP);
       body = {
         schemaVersion: SCHEMA_VERSION,
-        event: info.type === 'kw' ? 'keyword' : 'change',
+        event: info.type === 'kw' ? 'keyword' : info.type === 'stall' ? 'stall' : 'change',
+        // Only on event 'stall': why the watch stopped working.
+        ...(info.type === 'stall' ? { reason: String(info.reason || '') } : {}),
         title: info.title, url: info.url, keyword: info.keyword,
         snippet: info.snippet || '', count: info.count,
         timestamp: typeof info.now === 'number' ? info.now : Date.now(),

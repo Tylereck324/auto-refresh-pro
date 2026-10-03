@@ -39,6 +39,8 @@ importScripts('runtime-checkpoint.js');
 importScripts('webhook-delivery.js');
 // Pure Discord/Slack/JSON body builder (ARPWebhookFormat.buildBody).
 importScripts('webhook-format.js');
+// Pure dead-watch decision logic (ARPWatchHealth: sign-in / captcha / unreadable).
+importScripts('watch-health.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -225,6 +227,10 @@ async function fireRefresh(tabId) {
     console.warn('Refresh error on tab', tabId, e);
   }
   job._detectionBusy = false;
+  if ((hasKeyword || hasMonitor) && activeJobs[tabId] === job) {
+    await checkWatchHealth(tabId, job);
+    if (activeJobs[tabId] !== job) return; // stopped while alerting
+  }
   // Re-arm live watch every active cycle (idempotent — scheduleDomScan clears
   // before arming, so chains never multiply). This is the self-heal for chain
   // deaths with no resume edge of their own: a transient-offline tick, or a
@@ -455,14 +461,19 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   if (!muted('notify')) sendWebhook(job, { tabId, type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount, items: opts.items });
   if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
   const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
+  // Exactly one new study with a usable link: name it in the notification and
+  // make the click open it directly.
+  const study = singleStudy(opts.items);
   if (!muted('notify')) notify('kw', tabId, {
     type: 'basic',
     iconUrl: 'icons/icon48.png',
-    title: 'Keyword Detected!',
-    message: opts.message || ('"' + job.settings.keyword + '" ' + verb + ' page!'),
+    title: study ? 'New study' : 'Keyword Detected!',
+    message: study
+      ? (study.title + (study.detail ? '\n' + study.detail : '') + '\nClick to open it')
+      : (opts.message || ('"' + job.settings.keyword + '" ' + verb + ' page!')),
     requireInteraction: true,                              // persist until acted on (Win/Linux/ChromeOS)
     buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }], // #2 actionable buttons
-  });
+  }, study ? study.url : undefined);
   // The alert is evaluated after the reload, so the live content script can
   // receive the screen-edge flash immediately.
   const flashPlan = ARPMonitor.computeFlashDelivery({
@@ -504,6 +515,16 @@ function perItemMessage(settings, count) {
     : (count + ' new ' + noun + ' for "' + kw + '"');
 }
 
+// The one arrival a notification can open directly: exactly one item with a
+// safe http(s) link. Returns { url, title, detail } or null.
+function singleStudy(items) {
+  if (!Array.isArray(items) || items.length !== 1) return null;
+  const it = items[0];
+  if (!it || !it.href || !ARPValidators.isSafeNavigableUrl(it.href)) return null;
+  const { meta, detail } = ARPWebhookFormat.webhookItemDetail(it.text);
+  return { url: it.href, title: (meta.title || 'New match').slice(0, 120), detail: detail.slice(0, 120) };
+}
+
 // Map the just-fired new keys back to their per-item detail ({ key, href, text })
 // so an alert can deep-link each arrival to its own study. Departures (inverse
 // mode) aren't in the current set and have no live link, so return none there.
@@ -517,6 +538,54 @@ function arrivalItems(currDetails, newKeys, inverse) {
     if (d) out.push(d);
   }
   return out;
+}
+
+// ── Dead-watch detection ───────────────────────────────────────────────────
+// A detecting job whose page has turned into a sign-in screen, a captcha, or a
+// page that won't load keeps cycling without ever alerting — studies get
+// missed with no signal. After each detection cycle, probe the page and let
+// ARPWatchHealth decide when to raise (once) a "watch blocked" alert.
+
+function watchesForChanges(settings) {
+  return !!(settings && (settings.monitorMode ||
+    (typeof settings.keyword === 'string' && settings.keyword.trim())));
+}
+
+// Injected into the page: 'captcha' | 'login' | null. Only VISIBLE password
+// fields count (many pages carry a hidden login form).
+function probePageHealth() {
+  const captcha = !!document.querySelector(
+    'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"],' +
+    ' .g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, #cf-challenge-running')
+    || /^just a moment/i.test(document.title || '');
+  if (captcha) return 'captcha';
+  const fields = document.querySelectorAll('input[type="password"]');
+  for (let i = 0; i < fields.length; i++) {
+    const el = /** @type {HTMLElement} */ (fields[i]);
+    if (el.offsetWidth || el.offsetHeight || el.getClientRects().length) return 'login';
+  }
+  return null;
+}
+
+async function checkWatchHealth(tabId, job) {
+  let probe = null;
+  try {
+    const results = await chrome.scripting.executeScript({ target: { tabId }, func: probePageHealth });
+    probe = (results && results[0] && results[0].result) || null;
+  } catch (e) { /* unscriptable — the failure streak covers this case */ }
+  if (activeJobs[tabId] !== job) return;
+  const failures = job._consecutiveFailures || 0;
+  const reason = ARPWatchHealth.classify(probe, failures, job._healthIgnore);
+  const r = ARPWatchHealth.step(job._health, reason);
+  job._health = r.state;
+  if (r.alert) {
+    await deliverStallAlert(tabId, job, ARPWatchHealth.describe(reason, failures));
+    await saveJobToStorage(tabId, job.settings); // don't re-alert after a worker restart
+  } else if (r.recovered) {
+    const meta = await tabMeta(tabId);
+    await logAlert({ tabId, url: meta.url, title: meta.title, type: 'recovered', snippet: 'Watch is working again' }, { unacked: false });
+    await saveJobToStorage(tabId, job.settings);
+  }
 }
 
 // ── Navigate-away pause (#12): pause instead of stop, resume on return ──────
@@ -630,6 +699,7 @@ function scheduleDomScan(tabId) {
 
 function clearDomScan(job) {
   if (job && job._domTimer) { clearTimeout(job._domTimer); job._domTimer = null; }
+  if (job && job._mutationTimer) { clearTimeout(job._mutationTimer); job._mutationTimer = null; }
 }
 
 // One live-watch tick: read the per-item array, diff against the shared
@@ -638,7 +708,57 @@ function clearDomScan(job) {
 // SAME baseline, so whichever observes a new item first alerts and the other
 // stays silent (the diff-then-advance section is synchronous, so an overlapping
 // reload cycle can't double-fire).
+// Per-item reads can overlap — the reload cycle, the live-watch timer, and a
+// page-change trigger. Each read takes a ticket BEFORE its executeScript; its
+// result may advance the seen-set only if no newer read already has. Without
+// this, a slow older read finishing last rewinds the baseline and the next
+// read re-alerts the same study.
+function beginItemRead(job) {
+  job._readSeq = (job._readSeq || 0) + 1;
+  return job._readSeq;
+}
+function claimItemRead(job, ticket) {
+  if (ticket < (job._appliedReadSeq || 0)) return false;
+  job._appliedReadSeq = ticket;
+  return true;
+}
+
+// One live-watch scan at a time per job. A scan requested while one is in
+// flight (timer tick or page-change trigger) is folded into one rerun after it.
 async function doDomScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job) return;
+  if (job._scanning) { job._rescan = true; return; }
+  job._scanning = true;
+  try {
+    await domScanOnce(tabId);
+  } finally {
+    job._scanning = false;
+  }
+  if (job._rescan && activeJobs[tabId] === job) {
+    job._rescan = false;
+    requestMutationScan(tabId);
+  }
+}
+
+// Instant live watch: the job page's content script reports DOM changes
+// (DOM_MUTATED) and the scan runs at once instead of waiting for the next
+// timer tick. Rate-limited per job — a page with a ticking clock mutates
+// constantly — and the timer chain keeps running as the backstop.
+const MUTATION_SCAN_MIN_GAP_MS = 1000;
+function requestMutationScan(tabId) {
+  const job = activeJobs[tabId];
+  if (!job || !domScanEnabled(job) || job._mutationTimer) return;
+  const wait = Math.max(0, (job._lastMutationScan || 0) + MUTATION_SCAN_MIN_GAP_MS - Date.now());
+  job._mutationTimer = setTimeout(() => {
+    job._mutationTimer = null;
+    if (activeJobs[tabId] !== job) return;
+    job._lastMutationScan = Date.now();
+    doDomScan(tabId);
+  }, wait);
+}
+
+async function domScanOnce(tabId) {
   const job = activeJobs[tabId];
   if (!job || !domScanEnabled(job)) return; // stopped or reconfigured — chain ends
   // While paused, END the chain rather than tick-and-skip: an idle chain would
@@ -670,6 +790,7 @@ async function doDomScan(tabId) {
     const matcher = job._matcher || (job._matcher = buildMatcher(job.settings));
     if (matcher.ok && !matcher.empty) {
       let raw = null;
+      const readTicket = beginItemRead(job);
       try {
         const results = await chrome.scripting.executeScript({
           target: { tabId },
@@ -682,7 +803,7 @@ async function doDomScan(tabId) {
       // object may advance the baseline. null = no read (page mid-render);
       // an ARRAY — including [] — is a real observation (same policy as the
       // cycle path).
-      if (activeJobs[tabId] === job && Array.isArray(raw)) {
+      if (activeJobs[tabId] === job && Array.isArray(raw) && claimItemRead(job, readTicket)) {
         const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
         const curr = ARPItemDetect.collectItems(raw, matcher, itemKeyOpts(job.settings), exclude);
         const currKeys = curr.map(c => c.key);
@@ -850,6 +971,7 @@ async function doMonitorRefresh(tabId, job) {
   if (activeJobs[tabId] !== job) return;
 
   let results;
+  const readTicket = beginItemRead(job);
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
@@ -902,6 +1024,9 @@ async function doMonitorRefresh(tabId, job) {
   // null set means "no baseline yet" and never fires (cycle 1). Taken whenever the
   // read was per-item, so the item array never flows into the string path below.
   if (perItem) {
+    // A live-watch read that started AFTER this one may already have advanced
+    // the baseline; applying this older read would rewind it.
+    if (!claimItemRead(job, readTicket)) return;
     // Exclusion filter, compiled once per job like _matcher (lazily after a
     // worker restart — rehydrated jobs don't carry it).
     const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
@@ -1092,6 +1217,18 @@ async function startRefresh(tabId, settings, suppliedToken) {
 
     if (isCancelled()) return 'cancelled';
 
+    // Dead-watch baseline: a sign-in box or captcha ALREADY on the page at start
+    // is part of what the user chose to watch, so it must never read as a stall.
+    let healthIgnore = [];
+    if (watchesForChanges(settings)) {
+      try {
+        const results = await chrome.scripting.executeScript({ target: { tabId }, func: probePageHealth });
+        const probe = results && results[0] && results[0].result;
+        if (probe) healthIgnore = [probe];
+      } catch (e) { /* not scriptable — nothing to ignore */ }
+      if (isCancelled()) return 'cancelled';
+    }
+
     activeJobs[tabId] = {
       settings,
       refreshCount: 0,
@@ -1106,6 +1243,8 @@ async function startRefresh(tabId, settings, suppliedToken) {
       _lastRefresh: 0,                  // no refresh has fired yet
       _timer: null,                     // short-interval setTimeout handle
       _domTimer: null,                  // live-watch scan chain handle
+      _healthIgnore: healthIgnore,      // page signals present at start (never a stall)
+      _health: null,                    // dead-watch state (ARPWatchHealth)
     };
 
     scheduleNext(tabId, interval);
@@ -1160,7 +1299,9 @@ async function sendCountdownStart(tabId, attempt) {
   const total = (job.settings && job.settings.currentInterval) || job.settings.interval;
   const hotkey = await shortcutLabel();
   if (!activeJobs[tabId]) return;
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey }, (resp) => {
+  // liveWatch: arm the page's change observer (instant live watch).
+  const liveWatch = domScanEnabled(job);
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey, liveWatch }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script yet (a fresh Start, or the page-load injection
       // hasn't landed). Inject it — content.js is idempotent (guards via

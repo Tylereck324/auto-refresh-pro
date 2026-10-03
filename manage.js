@@ -345,7 +345,9 @@ async function loadAlerts() {
     if (!entry || typeof entry !== 'object') return;
     const when = Number.isFinite(entry.ts) ? new Date(entry.ts).toLocaleString() : '';
     const typeLabel = entry.type === 'kw' ? 'Keyword'
-      : entry.type === 'webhook' ? 'Webhook failed' : 'Change';
+      : entry.type === 'webhook' ? 'Webhook failed'
+      : entry.type === 'stall' ? 'Watch blocked'
+      : entry.type === 'recovered' ? 'Watch resumed' : 'Change';
     const heading = entry.title || entry.url || '(no title)';
     // kw rows show the keyword, plus the snippet when one exists (per-item
     // batches log "3 new"/"2 gone" there — without it the count is invisible).
