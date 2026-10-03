@@ -22,5 +22,6 @@ declare var ARPCheckpoint: any;
 declare var ARPWebhook: any;
 declare var ARPWebhookFormat: any;
 declare var ARPWatchHealth: any;
+declare var ARPSettingsSync: any;
 declare var ARPSettingsExport: any;
 declare var AlertSounds: any;

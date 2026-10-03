@@ -18,6 +18,7 @@ const PAGE_SCRIPTS = [
   'bg-alerts.js',
   'bg-store.js',
   'bg-messages.js',
+  'bg-sync.js',
   'content.js',
   'popup.js',
   'options.js',
@@ -39,7 +40,7 @@ for (const file of PAGE_SCRIPTS) {
 // let/const declared in two of them would throw at load time. Compiling them as
 // one script surfaces that here.
 test('worker scripts declare no top-level let/const twice', () => {
-  const src = ['background.js', 'bg-alerts.js', 'bg-store.js', 'bg-messages.js']
+  const src = ['background.js', 'bg-alerts.js', 'bg-store.js', 'bg-messages.js', 'bg-sync.js']
     .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   assert.doesNotThrow(() => new vm.Script(src, { filename: 'worker-bundle.js' }));
 });
@@ -57,4 +58,15 @@ test('manifest.json is valid JSON with the expected shape', () => {
   for (const p of ['storage', 'alarms', 'notifications', 'scripting', 'offscreen']) {
     assert.ok(manifest.permissions.includes(p), `missing permission: ${p}`);
   }
+});
+
+// The pinned key makes every unpacked copy (Mac, Windows) the same extension,
+// which chrome.storage.sync requires. Chrome's ID = first 32 hex chars of
+// SHA-256(DER public key), mapped 0-f → a-p.
+test('manifest key pins the extension ID used for Chrome sync', () => {
+  const crypto = require('node:crypto');
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+  const hex = crypto.createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32);
+  const id = [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+  assert.equal(id, 'mikbpajmjfhmaknkancgjjkhkpkklpjn');
 });

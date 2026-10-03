@@ -4,7 +4,8 @@
 //
 // Refuses to build if manifest.json and package.json disagree on the version,
 // so a release can't go out half-bumped.
-import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,5 +49,14 @@ mkdirSync(outDir, { recursive: true });
 const outFile = join(outDir, `auto-refresh-pro-${manifest.version}.zip`);
 rmSync(outFile, { force: true });
 
-execFileSync('zip', ['-q', outFile, ...files], { cwd: root, stdio: 'inherit' });
+// The manifest's `key` pins the extension ID for unpacked installs (so Chrome
+// sync matches across computers). The Web Store assigns its own key and
+// rejects an uploaded one, so the packaged manifest omits it.
+const { key: _pinnedKey, ...storeManifest } = manifest;
+const stage = mkdtempSync(join(tmpdir(), 'arp-build-'));
+writeFileSync(join(stage, 'manifest.json'), JSON.stringify(storeManifest, null, 2) + '\n');
+const rest = files.filter((f) => f !== 'manifest.json');
+execFileSync('zip', ['-q', outFile, ...rest], { cwd: root, stdio: 'inherit' });
+execFileSync('zip', ['-q', '-j', outFile, join(stage, 'manifest.json')], { stdio: 'inherit' });
+rmSync(stage, { recursive: true, force: true });
 console.log(`✔ built ${outFile.replace(root + '/', '')} (version ${manifest.version})`);

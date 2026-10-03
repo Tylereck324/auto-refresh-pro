@@ -40,7 +40,16 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const testUrl = `http://127.0.0.1:${server.address().port}/`;
 
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arp-keyword-first-reload-'));
-const hash = crypto.createHash('sha256').update(REPO).digest('hex').slice(0, 32);
+// The extension ID: Chrome derives it from the manifest's pinned `key` when
+// present (the same ID on every machine), else from the unpacked folder path.
+function extensionIdSource(repo) {
+  try {
+    const key = JSON.parse(fs.readFileSync(path.join(repo, 'manifest.json'), 'utf8')).key;
+    if (key) return Buffer.from(key, 'base64');
+  } catch { /* fall through */ }
+  return repo;
+}
+const hash = crypto.createHash('sha256').update(extensionIdSource(REPO)).digest('hex').slice(0, 32);
 const extensionId = [...hash].map((char) => String.fromCharCode(97 + parseInt(char, 16))).join('');
 const extUrl = (file) => `chrome-extension://${extensionId}/${file}`;
 

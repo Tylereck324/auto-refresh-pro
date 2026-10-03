@@ -41,6 +41,8 @@ importScripts('webhook-delivery.js');
 importScripts('webhook-format.js');
 // Pure dead-watch decision logic (ARPWatchHealth: sign-in / captcha / unreadable).
 importScripts('watch-health.js');
+// Pure rules for what syncs across the user's Chromes (ARPSettingsSync).
+importScripts('settings-sync.js');
 
 // In-memory store for active refresh jobs
 // Structure: { tabId: { interval, nextRefresh, countdown, settings, alarmName } }
@@ -1507,3 +1509,4 @@ chrome.commands.onCommand.addListener((command, tab) => {
 importScripts('bg-alerts.js');
 importScripts('bg-store.js');
 importScripts('bg-messages.js');
+importScripts('bg-sync.js');

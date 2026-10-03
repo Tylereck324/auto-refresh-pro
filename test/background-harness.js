@@ -80,10 +80,13 @@ function createHarness(options = {}) {
   const failures = { local: {}, session: {} };
   const storageArea = makeArea(storage, 'storage.set', failures.local);
   const sessionArea = makeArea(sessionStorage, 'session.set', failures.session);
+  const syncStorage = { ...(options.sync || {}) };
+  failures.sync = {};
+  const syncArea = makeArea(syncStorage, 'sync.set', failures.sync);
 
   const chrome = {
     runtime,
-    storage: { local: storageArea, session: sessionArea, onChanged: event() },
+    storage: { local: storageArea, session: sessionArea, sync: syncArea, onChanged: event() },
     tabs: {
       onRemoved: event(),
       onUpdated: tabsOnUpdated,
@@ -235,6 +238,7 @@ function createHarness(options = {}) {
     gates,
     storage,
     session: sessionStorage,
+    sync: syncStorage,
     failures,
     dispatch,
     evaluate,
