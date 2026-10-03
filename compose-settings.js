@@ -116,6 +116,11 @@
       // per-cycle storage read. Editing them re-applies on the next job start.
       webhookUrl: typeof g.webhookUrl === 'string' ? g.webhookUrl : '',
       webhookFormat: g.webhookFormat || 'json',
+      // Second, independent webhook slot (e.g. a history relay alongside Discord).
+      // Delivery reads the CURRENT Settings at send time; these copies are only
+      // the fallback for a job whose Settings were never saved.
+      webhookUrl2: typeof g.webhookUrl2 === 'string' ? g.webhookUrl2 : '',
+      webhookFormat2: g.webhookFormat2 || 'json',
       quietHours: (g.quietHours && typeof g.quietHours === 'object') ? g.quietHours : null,
       currentInterval: interval,
     };

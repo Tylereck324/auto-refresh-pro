@@ -126,3 +126,11 @@ test('drops malformed customHotkey, keeps well-formed', () => {
   assert.equal(good.alt, true);
   assert.equal(good.junk, undefined);
 });
+
+test('imported second webhook slot is sanitized like the first', () => {
+  const out = V.sanitizeImportedSettings({ globalSettings: {
+    webhookUrl2: 'http://127.0.0.1/hook', webhookFormat2: 'evil',
+  } }).value.globalSettings;
+  assert.equal(out.webhookUrl2, '');
+  assert.equal(out.webhookFormat2, 'json');
+});

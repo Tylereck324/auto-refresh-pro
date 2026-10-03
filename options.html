@@ -420,6 +420,33 @@
       </div>
       <button type="button" class="btn btn-sm btn-accent" id="btnTestWebhook">Send test</button>
     </div>
+
+    <!-- Second, independent webhook — e.g. a phone channel (Discord) above plus a
+         history/analytics relay (Generic JSON) here. Each alert goes to both;
+         one being down never blocks the other. -->
+    <div class="field-stack" style="margin-top:20px;">
+      <label for="webhookUrl2">Second Webhook URL (optional)</label>
+      <input class="url-input" type="text" id="webhookUrl2" placeholder="https://your-relay.example/ingest/…" aria-label="Second webhook URL" autocomplete="off" spellcheck="false">
+      <div class="form-hint" id="webhookHint2">That URL is not a valid HTTPS webhook (or points to a private address) — it won't be saved.</div>
+    </div>
+    <div class="setting-row" style="margin-top:12px;">
+      <div>
+        <div class="setting-label">Payload Format</div>
+        <div class="setting-sub">Generic JSON for a relay / dashboard</div>
+      </div>
+      <select class="form-select" id="webhookFormat2" aria-label="Second webhook payload format">
+        <option value="discord">Discord</option>
+        <option value="slack">Slack</option>
+        <option value="json" selected>Generic JSON</option>
+      </select>
+    </div>
+    <div class="setting-row" style="margin-top:12px;">
+      <div>
+        <div class="setting-label">Test Second Webhook</div>
+        <div class="setting-sub">Send a sample alert to the second URL</div>
+      </div>
+      <button type="button" class="btn btn-sm btn-accent" id="btnTestWebhook2">Send test</button>
+    </div>
   </div>
 
   <!-- ── ABOUT ── -->

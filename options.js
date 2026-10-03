@@ -69,11 +69,16 @@ function syncQuietChannelsRow() {
   if (row) row.classList.toggle('row-hidden', mode !== 'suppress');
 }
 
+// Two independent webhook slots share these helpers; slot '' is the original
+// (#webhookUrl / #webhookFormat), slot '2' the optional second one.
+const WEBHOOK_SLOTS = ['', '2'];
+
 // Show the muted hint (and flag the input) only when the URL is non-empty AND
 // fails the shared SSRF/https guard. Empty is a valid "no webhook" state.
-function validateWebhookUrl() {
-  const input = document.getElementById('webhookUrl');
-  const hint = document.getElementById('webhookHint');
+function validateWebhookUrl(slot) {
+  slot = slot || '';
+  const input = document.getElementById('webhookUrl' + slot);
+  const hint = document.getElementById('webhookHint' + slot);
   const raw = (input.value || '').trim();
   const bad = raw.length > 0 && !ARPValidators.isSafeWebhookUrl(raw);
   input.classList.toggle('invalid', bad);
@@ -81,24 +86,33 @@ function validateWebhookUrl() {
   return !bad;
 }
 
+// The URL to persist for a slot: trimmed, or '' when it fails the guard (a
+// bad/SSRF URL must never be stored — the worker fetches it with host access).
+function webhookUrlToSave(slot) {
+  const raw = (document.getElementById('webhookUrl' + slot).value || '').trim();
+  return (raw && validateWebhookUrl(slot)) ? raw : '';
+}
+
 // Send a sample alert through the worker's real delivery path (validation +
 // retry), so a typo'd or deleted webhook shows up now, not when a study is missed.
-document.getElementById('btnTestWebhook').addEventListener('click', async function() {
-  const btn = this;
-  const url = (document.getElementById('webhookUrl').value || '').trim();
-  if (!url || !validateWebhookUrl()) { showToast('Enter a valid HTTPS webhook URL first.', true); return; }
-  btn.disabled = true;
-  try {
-    const res = await chrome.runtime.sendMessage({
-      type: 'TEST_WEBHOOK', url, format: document.getElementById('webhookFormat').value,
-    });
-    if (res && res.ok) showToast('✓ Test alert delivered');
-    else showToast('Webhook failed: ' + ((res && res.error) || 'no response'), true);
-  } catch (e) {
-    showToast('Webhook failed: ' + e.message, true);
-  } finally {
-    btn.disabled = false;
-  }
+WEBHOOK_SLOTS.forEach(function(slot) {
+  document.getElementById('btnTestWebhook' + slot).addEventListener('click', async function() {
+    const btn = this;
+    const url = (document.getElementById('webhookUrl' + slot).value || '').trim();
+    if (!url || !validateWebhookUrl(slot)) { showToast('Enter a valid HTTPS webhook URL first.', true); return; }
+    btn.disabled = true;
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'TEST_WEBHOOK', url, format: document.getElementById('webhookFormat' + slot).value,
+      });
+      if (res && res.ok) showToast('✓ Test alert delivered');
+      else showToast('Webhook failed: ' + ((res && res.error) || 'no response'), true);
+    } catch (e) {
+      showToast('Webhook failed: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 });
 
 function load() {
@@ -171,11 +185,15 @@ function load() {
     setCheck('qhChanNotify', chans ? chans.notify !== false : true);
     syncQuietChannelsRow();
 
-    // ── Webhook ──
-    document.getElementById('webhookUrl').value = typeof s.webhookUrl === 'string' ? s.webhookUrl : '';
-    document.getElementById('webhookFormat').value =
-      ['discord','slack','json'].includes(s.webhookFormat) ? s.webhookFormat : 'json';
-    validateWebhookUrl();
+    // ── Webhooks (two independent slots) ──
+    WEBHOOK_SLOTS.forEach(function(slot) {
+      const url = s['webhookUrl' + slot];
+      const fmt = s['webhookFormat' + slot];
+      document.getElementById('webhookUrl' + slot).value = typeof url === 'string' ? url : '';
+      document.getElementById('webhookFormat' + slot).value =
+        ['discord','slack','json'].includes(fmt) ? fmt : 'json';
+      validateWebhookUrl(slot);
+    });
 
     loaded = true;
   });
@@ -221,12 +239,6 @@ function gatherAndSave() {
   // length — so importing/having ≠8 presets doesn't drop or fabricate rows.
   const presets = readPresets(document, presetCount);
 
-  // Webhook: the worker fetches this with the extension's host access, so a
-  // bad/SSRF URL must never be stored. Trim, then persist '' if it fails the
-  // guard (and surface the hint). Empty stays empty (no webhook).
-  const webhookRaw = (document.getElementById('webhookUrl').value || '').trim();
-  const webhookOk = validateWebhookUrl();
-  const webhookUrl = (webhookRaw && webhookOk) ? webhookRaw : '';
 
   const settings = {
     hardRefresh: document.getElementById('defHardRefresh').checked,
@@ -245,8 +257,10 @@ function gatherAndSave() {
     presets: presets,
     // Quiet Hours + Webhook ride along into the Object.assign merge below.
     quietHours: buildQuietHours(),
-    webhookUrl: webhookUrl,
-    webhookFormat: document.getElementById('webhookFormat').value || 'json'
+    webhookUrl: webhookUrlToSave(''),
+    webhookFormat: document.getElementById('webhookFormat').value || 'json',
+    webhookUrl2: webhookUrlToSave('2'),
+    webhookFormat2: document.getElementById('webhookFormat2').value || 'json'
   };
 
   // MERGE into the stored object, never replace it. globalSettings also carries
@@ -308,14 +322,14 @@ function save() {
  'defPreserveScroll',
  'qhEnabled', 'qhMode', 'qhChanSound', 'qhChanFlash', 'qhChanNotify',
  'qhDay0', 'qhDay1', 'qhDay2', 'qhDay3', 'qhDay4', 'qhDay5', 'qhDay6',
- 'webhookFormat'].forEach(function(id) {
+ 'webhookFormat', 'webhookFormat2'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', save);
 });
 // Text/time/number inputs save on 'input' (save() debounces).
 ['defInterval', 'defSoundRepeat', 'defSoundVolume',
  'defStopAfter',
- 'qhStart', 'qhEnd', 'webhookUrl'].forEach(function(id) {
+ 'qhStart', 'qhEnd', 'webhookUrl', 'webhookUrl2'].forEach(function(id) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', save);
 });
@@ -324,7 +338,9 @@ function save() {
 document.getElementById('qhMode').addEventListener('change', syncQuietChannelsRow);
 // Live-validate the webhook URL as the user types (separate from the debounced
 // save so the hint reacts immediately).
-document.getElementById('webhookUrl').addEventListener('input', validateWebhookUrl);
+WEBHOOK_SLOTS.forEach(function(slot) {
+  document.getElementById('webhookUrl' + slot).addEventListener('input', function() { validateWebhookUrl(slot); });
+});
 
 // Keep the volume percentage readout in sync with the slider.
 function syncVolumeReadout() {

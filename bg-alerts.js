@@ -424,16 +424,39 @@ function webhookQueue(url) {
   return q;
 }
 
-async function sendWebhook(job, info) {
-  const url = job.settings && job.settings.webhookUrl;
-  if (!url || !ARPValidators.isSafeWebhookUrl(url)) return;
-  const body = ARPWebhookFormat.buildBody(job.settings.webhookFormat || 'json', info);
-  const result = await webhookQueue(url)(() => ARPWebhook.deliver(url, body));
-  if (!result.ok) {
-    console.warn('Webhook delivery failed', result);
-    await logWebhookFailure(info, result);
+// The webhooks an alert goes to: up to two independent slots ({ url, fmt }).
+// Read from the CURRENT Settings at send time, so changing a URL (e.g. a
+// tunnel that got a new hostname) takes effect for running jobs immediately.
+// Only when Settings has never been saved does a job's start-time copy apply.
+// Each URL is re-validated (https + SSRF guard) — storage could be poisoned.
+async function webhookTargets(job) {
+  let src = null;
+  try { src = (await chrome.storage.local.get('globalSettings')).globalSettings || null; } catch (e) {}
+  if (!src || typeof src !== 'object') src = (job && job.settings) || {};
+  const out = [];
+  for (const slot of ['', '2']) {
+    const url = typeof src['webhookUrl' + slot] === 'string' ? src['webhookUrl' + slot].trim() : '';
+    if (!url || !ARPValidators.isSafeWebhookUrl(url) || out.some((t) => t.url === url)) continue;
+    const fmt = ['discord', 'slack', 'json'].includes(src['webhookFormat' + slot]) ? src['webhookFormat' + slot] : 'json';
+    out.push({ url, fmt });
   }
-  return result;
+  return out;
+}
+
+// Deliver one alert to every configured webhook, in parallel; one failing or
+// slow endpoint never delays the other. Never throws. Returns one result per
+// target (empty when no webhook is set).
+async function sendWebhook(job, info) {
+  const targets = await webhookTargets(job);
+  return Promise.all(targets.map(async ({ url, fmt }) => {
+    const body = ARPWebhookFormat.buildBody(fmt, info);
+    const result = await webhookQueue(url)(() => ARPWebhook.deliver(url, body));
+    if (!result.ok) {
+      console.warn('Webhook delivery failed', result);
+      await logWebhookFailure(info, result);
+    }
+    return result;
+  }));
 }
 
 // Journal entry for a webhook that could not be delivered. Not counted as an

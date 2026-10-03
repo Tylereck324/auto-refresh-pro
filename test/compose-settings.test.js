@@ -40,7 +40,7 @@ const EXPECTED_KEYS = [
   'kwWholeWord', 'kwRegex', 'kwInverse', 'kwPerItem', 'kwExclude', 'minPayPerHour', 'domWatch',
   'domWatchInterval', 'stopOnKeyword', 'stopOnChange',
   'beepUntilAck', 'flashOnKeyword', 'watchSelector', 'adaptive', 'adaptiveMax',
-  'webhookUrl', 'webhookFormat', 'quietHours', 'currentInterval',
+  'webhookUrl', 'webhookUrl2', 'webhookFormat2', 'webhookFormat', 'quietHours', 'currentInterval',
 ].sort();
 
 test('emits exactly the expected field set (no missing / extra keys)', () => {
