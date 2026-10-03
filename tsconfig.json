@@ -1,7 +1,6 @@
 {
-  // Type-checks the worker and the pure modules (npm run typecheck). The page
-  // scripts (popup/options/manage/content/offscreen) are not included yet: their
-  // untyped getElementById(...).value access would need casts throughout.
+  // Type-checks the worker and the pure modules. The page scripts are checked
+  // by tsconfig.pages.json; `npm run typecheck` runs both.
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

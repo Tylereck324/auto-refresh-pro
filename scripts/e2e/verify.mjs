@@ -308,15 +308,18 @@ await ext.goto(extUrl('options.html'), { waitUntil: 'domcontentloaded' });
   await p.setViewport({ width: 760, height: 900 });
   await p.goto(extUrl('options.html'), { waitUntil: 'networkidle0' });
   await sleep(400);
+  // The shortcut is a Chrome command now: the page shows Chrome's binding and a
+  // Change button that opens chrome://extensions/shortcuts (no in-page recorder).
   const probe = await p.evaluate(() => ({
-    clearTitle: document.getElementById('clearBtn').getAttribute('title'),
-    infoHasOldLink: !!document.getElementById('chromeShortcutLink'),
+    shortcutShown: document.getElementById('hotkeyText').textContent.trim(),
+    hasChangeButton: !!document.getElementById('changeShortcutBtn'),
+    hasOldRecorder: !!document.getElementById('recordBtn') || !!document.getElementById('clearBtn'),
     infoText: document.querySelector('.hotkey-info').textContent.replace(/\s+/g, ' ').trim(),
   }));
   await p.screenshot({ path: path.join(OUT, 'C3-options.png') });
   results.C3 = probe;
-  log('C3: clearBtn title =', JSON.stringify(probe.clearTitle));
-  log('C3: stale chrome-shortcut link present =', probe.infoHasOldLink, '(want false)');
+  log('C3: shortcut shown =', JSON.stringify(probe.shortcutShown), '| Change button =', probe.hasChangeButton);
+  log('C3: old in-page recorder present =', probe.hasOldRecorder, '(want false)');
   await p.close();
 }
 
@@ -393,7 +396,7 @@ await ext.goto(extUrl('options.html'), { waitUntil: 'domcontentloaded' });
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// M5 — Settings auto-save (no Save button); L4 — hotkey needs manual confirm
+// M5 — Settings auto-save (no Save button)
 // ════════════════════════════════════════════════════════════════════════
 {
   const op = await browser.newPage();
@@ -415,22 +418,8 @@ await ext.goto(extUrl('options.html'), { waitUntil: 'domcontentloaded' });
   results.M5 = { ...m5, changedWithoutSaveClick: m5.notifyBefore !== m5.notifyAfter };
   log('M5: saveButton removed =', m5.saveButtonRemoved, '| notify persisted', m5.notifyBefore, '->', m5.notifyAfter);
 
-  // L4: record a combo; it must NOT auto-apply — only on explicit confirm.
-  const l4a = await op.evaluate(() => {
-    startRecording();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', code: 'KeyG', altKey: true, bubbles: true, cancelable: true }));
-    return { pending: !!pendingHotkey, btnText: recordBtn.textContent.trim(), appliedYet: JSON.stringify(currentHotkey) };
-  });
-  await sleep(1100); // well past the old 800ms auto-confirm window
-  const l4b = await op.evaluate(() => ({ stillRecording: recording, appliedAfterWait: JSON.stringify(currentHotkey) }));
-  const l4c = await op.evaluate(() => { recordBtn.click(); return { applied: JSON.stringify(currentHotkey), recording }; });
-  results.L4 = {
-    previewShown: l4a.pending,
-    confirmButtonShown: /use this/i.test(l4a.btnText),
-    didNotAutoApply: l4b.appliedAfterWait === 'null' && l4b.stillRecording === true,
-    appliedOnConfirm: /"code":"KeyG"/.test(l4c.applied) && l4c.recording === false,
-  };
-  log('L4: confirm-btn =', JSON.stringify(l4a.btnText), '| auto-applied after 1.1s =', l4b.appliedAfterWait !== 'null', '(want false) | applied on confirm =', results.L4.appliedOnConfirm);
+  // (L4, the in-page hotkey recorder's confirm flow, was removed with the
+  // recorder: the shortcut is now a Chrome command — see C3.)
   await op.screenshot({ path: path.join(OUT, 'M5-L4-options-autosave.png') });
   await op.close();
 }

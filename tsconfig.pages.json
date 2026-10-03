@@ -1,0 +1,11 @@
+{
+  // Page scripts (popup / Settings / Manage / content / offscreen). A separate
+  // program from tsconfig.json: these classic scripts and the worker's each
+  // get their own global scope at runtime, so they must not be checked as one.
+  "extends": "./tsconfig.json",
+  "include": [
+    "globals.d.ts", "pages.d.ts",
+    "popup.js", "options.js", "manage.js", "content.js", "offscreen.js",
+    "sounds.js", "toast.js", "preset-row.js"
+  ]
+}
