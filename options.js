@@ -41,6 +41,9 @@ function renderShortcut() {
 document.getElementById('changeShortcutBtn').addEventListener('click', function() {
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });
+// About card: the version comes from the manifest, so it can't drift from a release.
+document.getElementById('extVersion').textContent = 'v' + chrome.runtime.getManifest().version;
+
 // Pick up a rebinding made on the shortcuts page when the user comes back.
 window.addEventListener('focus', renderShortcut);
 renderShortcut();
