@@ -230,7 +230,7 @@
           font-weight:600;
           color:rgba(255,255,255,0.62);
           white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-          max-width:100%;
+          max-width:100%; flex-shrink:0; /* never squashed away; the overlay grows instead */
           transition:color 0.3s;
         }
         #__ar_count b { color:#ffffff; font-variant-numeric:tabular-nums; transition:color 0.3s; }
@@ -402,7 +402,6 @@
     overlayEl._sublabel = sublabel; // so a background PAUSED message can annotate the reason
     overlayEl._count = count;
     overlayEl._countNum = countNum;
-    overlayEl._countFits = true; // set by scaleOverlay
 
     // ── Scale everything proportionally with overlay size ──
     // forcedW/forcedH let the resize handler pass the dimensions it just computed,
@@ -474,10 +473,6 @@
       // return as the user grows the overlay back. Timer + progress bar stay.
       sublabel.style.display = h < 104 ? 'none' : '';
       hint.style.display     = h < 124 ? 'none' : '';
-      // The detection count stays at the default (auto-height) size, where the
-      // sublabel and hint are already hidden; only an overlay the user resized
-      // very short drops it.
-      overlayEl._countFits = !forcedH && !overlayEl.style.height ? true : h >= 96;
       renderDetections();
 
       // Border radius
@@ -672,11 +667,18 @@
       }, 2000);
     }
   }
+  // Always shown on a keyword job, at any overlay size. A remembered size that
+  // is too short to fit it (the overlay clips its overflow) is grown just
+  // enough, rather than hiding the count.
   function renderDetections() {
     if (!overlayEl || !overlayEl._count) return;
-    const show = detectionsTotal !== null && overlayEl._countFits;
+    const show = detectionsTotal !== null;
     overlayEl._count.style.display = show ? '' : 'none';
-    if (detectionsTotal !== null) overlayEl._countNum.textContent = detectionsTotal.toLocaleString();
+    if (!show) return;
+    overlayEl._countNum.textContent = detectionsTotal.toLocaleString();
+    if (overlayEl.style.height && overlayEl.scrollHeight > overlayEl.clientHeight) {
+      overlayEl.style.height = (overlayEl.offsetHeight + overlayEl.scrollHeight - overlayEl.clientHeight) + 'px';
+    }
   }
 
   // ── Tick logic ────────────────────────────────────────────────────────────
