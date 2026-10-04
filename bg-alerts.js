@@ -258,18 +258,19 @@ chrome.notifications.onClosed.addListener((id, byUser) => {
 // same mutes as keyword alerts (snooze, quiet-hours notify channel).
 async function deliverStallAlert(tabId, job, reasonText) {
   const meta = await tabMeta(tabId);
-  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'stall', snippet: reasonText });
   const snoozed = job._snoozeUntil && Date.now() < job._snoozeUntil;
-  if (snoozed || ARPQuietHours.isChannelMuted(new Date(), job.settings.quietHours, 'notify')) return;
-  sendWebhook(job, { tabId, type: 'stall', title: meta.title || meta.url, url: meta.url, reason: reasonText });
-  notify('stall', tabId, {
-    type: 'basic',
-    iconUrl: 'icons/icon48.png',
-    title: 'Watch blocked',
-    message: reasonText + '. Alerts can\'t fire until it\'s fixed.',
-    requireInteraction: true,
-    buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }],
-  });
+  if (!snoozed && !ARPQuietHours.isChannelMuted(new Date(), job.settings.quietHours, 'notify')) {
+    sendWebhook(job, { tabId, type: 'stall', title: meta.title || meta.url, url: meta.url, reason: reasonText });
+    notify('stall', tabId, {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'Watch blocked',
+      message: reasonText + '. Alerts can\'t fire until it\'s fixed.',
+      requireInteraction: true,
+      buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }],
+    });
+  }
+  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'stall', snippet: reasonText });
 }
 
 // Repeat the alert beep on an interval until the user acknowledges (clicks/closes
@@ -429,9 +430,29 @@ function webhookQueue(url) {
 // tunnel that got a new hostname) takes effect for running jobs immediately.
 // Only when Settings has never been saved does a job's start-time copy apply.
 // Each URL is re-validated (https + SSRF guard) — storage could be poisoned.
+//
+// globalSettings is read once per worker life and then kept current by
+// storage.onChanged, so an alert doesn't pay a storage read before its POST.
+// undefined = not read yet. The version counter stops a read that was in
+// flight when Settings changed from overwriting the newer value.
+let globalSettingsCache;
+let globalSettingsVersion = 0;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.globalSettings) return;
+  globalSettingsVersion++;
+  globalSettingsCache = changes.globalSettings.newValue || null;
+});
+async function currentGlobalSettings() {
+  if (globalSettingsCache !== undefined) return globalSettingsCache;
+  const version = globalSettingsVersion;
+  let value = null;
+  try { value = (await chrome.storage.local.get('globalSettings')).globalSettings || null; } catch (e) { return null; }
+  if (version === globalSettingsVersion) globalSettingsCache = value;
+  return value;
+}
+
 async function webhookTargets(job) {
-  let src = null;
-  try { src = (await chrome.storage.local.get('globalSettings')).globalSettings || null; } catch (e) {}
+  let src = await currentGlobalSettings();
   if (!src || typeof src !== 'object') src = (job && job.settings) || {};
   const out = [];
   for (const slot of ['', '2']) {
