@@ -80,6 +80,9 @@
   .alert-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .alert-url { font-size: 11px; color: var(--text2); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .alert-detail { font-size: 12px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detections-total { margin-right: auto; font-size: 13px; color: var(--text2); }
+  .detections-total b { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .btn-io.confirming, .btn-io.confirming:hover { border-color: var(--red); color: var(--red); }
   .alert-empty { color: var(--text2); font-size: 12px; padding: 8px 2px; }
 
   /* Import/Export */
@@ -145,7 +148,9 @@
   <!-- Recent Alerts -->
   <div class="section-title h-section">Recent Alerts</div>
   <div class="autostart-card">
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-bottom:4px;">
+    <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:4px;flex-wrap:wrap;">
+      <div class="detections-total" id="detectionsTotal" aria-live="polite"><b id="detectionsNum">0</b> keyword detections all time</div>
+      <button class="btn-io" id="resetDetectionsBtn" aria-label="Reset the all-time detection count">↺ Reset count</button>
       <button class="btn-io" id="exportAlertsBtn" aria-label="Export alert log as JSON">⬇ Export</button>
       <button class="btn-io" id="clearAlertsBtn" aria-label="Clear all alerts">✕ Clear</button>
     </div>

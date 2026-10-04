@@ -29,6 +29,7 @@ A personal Chrome extension for auto-refreshing pages with keyword detection, pa
 - **Repeat beep until acknowledged** — keep beeping on an alert until you click/dismiss the notification (bounded)
 - **Per-domain URL rules** — auto-start a job when a tab finishes loading a URL matching a match-pattern glob
 - **Draggable, resizable overlay** — countdown widget injected into the page; drag to reposition, resize from the corner; position and size are remembered
+- **Lifetime detection count** — keyword jobs show a running total of every keyword detection under the overlay's timer (e.g. "312 detected all time"); it survives Stop, restarts and clearing the alert log, and flashes green when it goes up. The Manage page shows the same total, with a two-click **Reset count**
 - **Hotkey** — `Alt+R` by default to toggle refresh on/off from the keyboard; it's a Chrome extension shortcut, rebindable at `chrome://extensions/shortcuts` (Settings → Keyboard Shortcut → **Change**)
 - **Popup countdown** — the extension popup shows a live hero countdown synced to the actual remaining time
 - **Scroll preservation** — optionally restore the scroll position across refreshes

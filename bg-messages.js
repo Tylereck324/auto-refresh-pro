@@ -68,12 +68,15 @@ const MESSAGE_HANDLERS = {
     // syncs must NOT clear it (the user hasn't seen anything yet).
     if (!ctx.senderTabId) clearUnacked();
     const tabId = ctx.targetTabId;
+    const job = tabId && activeJobs[tabId] ? activeJobs[tabId] : null;
     return {
       jobs: serializeJobs(),
-      job: tabId && activeJobs[tabId] ? serializeJob(activeJobs[tabId]) : null,
+      job: job ? serializeJob(job) : null,
       // The overlay footer shows the toggle shortcut; content scripts can't
       // read chrome.commands themselves.
       hotkey: ctx.senderTabId ? await shortcutLabel() : undefined,
+      // The overlay's lifetime detection count (keyword jobs only).
+      detections: ctx.senderTabId && job ? await overlayDetections(job) : undefined,
     };
   },
 
@@ -177,6 +180,16 @@ const MESSAGE_HANDLERS = {
     // storage.onChanged badge sync + Manage re-render follow from the write.
     try { await withAlertStore((s) => { s.alertLog = []; s.unackedAlerts = 0; }); } catch (e) {}
     refreshBadge();
+    return { ok: true };
+  },
+
+  async RESET_DETECTIONS(msg, ctx) {
+    // Manage page only — a page's content script must not wipe the count.
+    if (ctx.senderTabId != null) return { ok: false };
+    // Through the alert-log mutex, like CLEAR_ALERTS, so it can't interleave
+    // with an in-flight logAlert bump.
+    try { await withAlertStore((s) => { s.lifetimeDetections = 0; }); } catch (e) { return { ok: false }; }
+    pushLifetimeDetections();
     return { ok: true };
   },
 
