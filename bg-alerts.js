@@ -343,10 +343,11 @@ const alertLogMutex = ARPSerialize.createMutex();
 const MAX_ALERT_LOG = 200;
 function withAlertStore(mutate) {
   return alertLogMutex(async () => {
-    const data = await chrome.storage.local.get(['alertLog', 'unackedAlerts']);
+    const data = await chrome.storage.local.get(['alertLog', 'unackedAlerts', 'lifetimeDetections']);
     const store = {
       alertLog: Array.isArray(data.alertLog) ? data.alertLog : [],
       unackedAlerts: Number(data.unackedAlerts) || 0,
+      lifetimeDetections: Number(data.lifetimeDetections) || 0,
     };
     await mutate(store);
     // Oldest-evicted ring buffer (keep the newest MAX_ALERT_LOG).
@@ -355,16 +356,23 @@ function withAlertStore(mutate) {
     }
     if (store.unackedAlerts < 0) store.unackedAlerts = 0;
     unackedMirror = store.unackedAlerts;
-    await chrome.storage.local.set({ alertLog: store.alertLog, unackedAlerts: store.unackedAlerts });
+    lifetimeMirror = store.lifetimeDetections;
+    await chrome.storage.local.set({
+      alertLog: store.alertLog,
+      unackedAlerts: store.unackedAlerts,
+      lifetimeDetections: store.lifetimeDetections,
+    });
     return store;
   });
 }
 // Record one detection and bump the unacked counter. Every field is bounded so a
 // hostile page's title/url/snippet can't bloat the persisted log.
 // opts.unacked === false records the entry without bumping the badge count
-// (informational entries such as "watch resumed").
+// (informational entries such as "watch resumed"). opts.detections adds to the
+// lifetime keyword-detection total in the same write.
 async function logAlert(entry, opts) {
   const bump = !(opts && opts.unacked === false);
+  const detections = (opts && Number(opts.detections)) || 0;
   try {
     await withAlertStore((s) => {
       s.alertLog.push({
@@ -377,9 +385,41 @@ async function logAlert(entry, opts) {
         snippet: String(entry.snippet || '').slice(0, 240),
       });
       if (bump) s.unackedAlerts = (s.unackedAlerts || 0) + 1;
+      if (detections > 0) s.lifetimeDetections += detections;
     });
   } catch (e) { console.warn('logAlert failed', e); }
   refreshBadge();
+  if (detections > 0) pushLifetimeDetections();
+}
+
+// ── Lifetime detections ──────────────────────────────────────────────────────
+// Every keyword detection ever counted, across all jobs. Unlike a job's
+// keywordCount it survives Stop, restarts and clearing the alert journal. Shown
+// on the in-page overlay of keyword jobs. null = not read yet this worker life.
+let lifetimeMirror = null;
+async function lifetimeDetections() {
+  if (lifetimeMirror === null) {
+    try {
+      const data = await chrome.storage.local.get('lifetimeDetections');
+      // A logAlert during the read already set the newer value.
+      if (lifetimeMirror === null) lifetimeMirror = Number(data.lifetimeDetections) || 0;
+    } catch (e) { return 0; }
+  }
+  return lifetimeMirror;
+}
+// What a job's overlay shows: the total for keyword jobs, nothing otherwise.
+async function overlayDetections(job) {
+  const kw = job && job.settings && job.settings.keyword;
+  return (typeof kw === 'string' && kw.trim()) ? lifetimeDetections() : undefined;
+}
+// Update every keyword job's overlay right away. A reload cycle would carry the
+// new total in its next COUNTDOWN_START anyway, but a live-watch alert doesn't
+// reload. Fire-and-forget: a page without the overlay just ignores it.
+function pushLifetimeDetections() {
+  for (const [tabId, job] of Object.entries(activeJobs)) {
+    if (!job || !job.settings || typeof job.settings.keyword !== 'string' || !job.settings.keyword.trim()) continue;
+    chrome.tabs.sendMessage(Number(tabId), { type: 'DETECTIONS', total: lifetimeMirror }).catch(() => {});
+  }
 }
 // Clear the unacked count once the user has seen the alerts (notification ack,
 // or the popup opening via GET_STATUS).

@@ -30,6 +30,7 @@
   let stopOnClickEnabled = false; // when true, a left-click on the page stops the job
   let preserveScrollEnabled = false; // when true, scroll position survives refreshes
   let paused = false; // local mirror of the overlay's pause toggle (no COUNTDOWN_START follows PAUSE_JOB)
+  let detectionsTotal = null; // lifetime keyword detections; null = not a keyword job (row hidden)
   // Shared drag/resize state, read by the document-level pointer listeners that
   // are registered once (see below) rather than per overlay rebuild.
   let dragState = null;
@@ -225,6 +226,16 @@
           transform-origin:left;
           transition:transform 1s linear;
         }
+        #__ar_count {
+          font-weight:600;
+          color:rgba(255,255,255,0.62);
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+          max-width:100%;
+          transition:color 0.3s;
+        }
+        #__ar_count b { color:#ffffff; font-variant-numeric:tabular-nums; transition:color 0.3s; }
+        /* Brief green highlight when the count goes up. */
+        #__ar_count.__ar_bump, #__ar_count.__ar_bump b { color:#34d399; }
         #__ar_hint {
           font-weight:500;
           color:rgba(255,255,255,0.55);
@@ -245,7 +256,7 @@
            animations. */
         @media (prefers-reduced-motion: reduce) {
           #__ar_dot { animation:none; }
-          #__ar_overlay, #__ar_fill, #__ar_stop, #__ar_pause, #__ar_extend, #__ar_resize { transition:none; }
+          #__ar_overlay, #__ar_fill, #__ar_stop, #__ar_pause, #__ar_extend, #__ar_resize, #__ar_count, #__ar_count b { transition:none; }
         }
       `;
       document.head.appendChild(style);
@@ -353,6 +364,14 @@
     fill.id = '__ar_fill';
     track.appendChild(fill);
 
+    // Lifetime keyword-detection count. Filled by renderDetections().
+    const count = document.createElement('div');
+    count.id = '__ar_count';
+    count.style.display = 'none';
+    const countNum = document.createElement('b');
+    count.appendChild(countNum);
+    count.appendChild(document.createTextNode(' detected all time'));
+
     const hint = document.createElement('div');
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
@@ -365,6 +384,7 @@
     body.appendChild(timer);
     body.appendChild(sublabel);
     body.appendChild(track);
+    body.appendChild(count);
     body.appendChild(hint);
     overlayEl.appendChild(body);
 
@@ -380,6 +400,9 @@
     overlayEl._timer = timer;
     overlayEl._fill  = fill;
     overlayEl._sublabel = sublabel; // so a background PAUSED message can annotate the reason
+    overlayEl._count = count;
+    overlayEl._countNum = countNum;
+    overlayEl._countFits = true; // set by scaleOverlay
 
     // ── Scale everything proportionally with overlay size ──
     // forcedW/forcedH let the resize handler pass the dimensions it just computed,
@@ -437,6 +460,11 @@
       track.style.height = Math.max(2, Math.round(s * 0.016)) + 'px';
       track.style.marginBottom = Math.round(s * 0.04) + 'px';
 
+      // Detection count
+      count.style.fontSize = Math.max(8, Math.round(s * 0.042)) + 'px';
+      count.style.letterSpacing = '0.3px';
+      count.style.marginBottom = Math.round(s * 0.025) + 'px';
+
       // Hint
       hint.style.fontSize = Math.max(7, Math.round(s * 0.038)) + 'px';
       hint.style.letterSpacing = '0.3px';
@@ -446,6 +474,11 @@
       // return as the user grows the overlay back. Timer + progress bar stay.
       sublabel.style.display = h < 104 ? 'none' : '';
       hint.style.display     = h < 124 ? 'none' : '';
+      // The detection count stays at the default (auto-height) size, where the
+      // sublabel and hint are already hidden; only an overlay the user resized
+      // very short drops it.
+      overlayEl._countFits = !forcedH && !overlayEl.style.height ? true : h >= 96;
+      renderDetections();
 
       // Border radius
       overlayEl.style.borderRadius = Math.max(10, Math.round(s * 0.07)) + 'px';
@@ -621,6 +654,31 @@
     }
   }
 
+  // ── Lifetime detection count ──────────────────────────────────────────────
+  // The background sends the total with COUNTDOWN_START / GET_STATUS and pushes
+  // DETECTIONS when it changes; undefined means the job watches no keyword.
+  let bumpTimer = null;
+  function setDetections(total) {
+    const next = Number.isFinite(total) ? total : null;
+    const rose = next !== null && detectionsTotal !== null && next > detectionsTotal;
+    detectionsTotal = next;
+    renderDetections();
+    if (rose && overlayEl && overlayEl._count) {
+      overlayEl._count.classList.add('__ar_bump');
+      if (bumpTimer) clearTimeout(bumpTimer);
+      bumpTimer = setTimeout(() => {
+        bumpTimer = null;
+        if (overlayEl && overlayEl._count) overlayEl._count.classList.remove('__ar_bump');
+      }, 2000);
+    }
+  }
+  function renderDetections() {
+    if (!overlayEl || !overlayEl._count) return;
+    const show = detectionsTotal !== null && overlayEl._countFits;
+    overlayEl._count.style.display = show ? '' : 'none';
+    if (detectionsTotal !== null) overlayEl._countNum.textContent = detectionsTotal.toLocaleString();
+  }
+
   // ── Tick logic ────────────────────────────────────────────────────────────
   // Render the countdown as a pure function of the absolute deadline, mirroring
   // the popup. The tick is self-scheduled to land just past each wall-clock
@@ -728,6 +786,7 @@
       if (resp && typeof resp.hotkey === 'string') { hotkeyLabel = resp.hotkey; refreshHint(); }
       if (resp && resp.job) {
         synced = true;
+        setDetections(resp.detections);
         const s = resp.job.settings || {};
         stopOnClickEnabled = !!s.stopOnClick;
         applyPreserveScroll(s.preserveScroll);
@@ -897,6 +956,7 @@
           if (typeof msg.hotkey === 'string') hotkeyLabel = msg.hotkey;
           applyLiveWatch(!!msg.liveWatch); // a COUNTDOWN_START means running (not paused)
           applyPreserveScroll(msg.preserveScroll);
+          setDetections(msg.detections);
           // Respect the "Show countdown overlay" setting. Click-to-stop still
           // works without the overlay, so it's wired above regardless.
           if (msg.showCountdown === false) {
@@ -909,6 +969,7 @@
             else paused = false;
             startCountdown(msg.nextRefresh, msg.total);
             refreshHint();
+            renderDetections();
           }
           synced = true;
           sendResponse({ ok: true });
@@ -918,6 +979,10 @@
           stopOnClickEnabled = false;
           paused = false; // so the next overlay starts un-paused (⏸ / "until next refresh")
           hideOverlay();
+          sendResponse({ ok: true });
+          break;
+        case 'DETECTIONS':
+          setDetections(msg.total);
           sendResponse({ ok: true });
           break;
         case 'KEYWORD_FLASH':
