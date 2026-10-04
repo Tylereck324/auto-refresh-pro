@@ -396,6 +396,35 @@ document.getElementById('clearAlertsBtn').addEventListener('click', async () => 
   showToast('Alerts cleared.', false);
 });
 
+// ── Lifetime detections ──────────────────────────────────────────────────
+// The all-time keyword-detection total (also shown on keyword jobs' overlays).
+async function loadDetections() {
+  const { lifetimeDetections = 0 } = /** @type {any} */ (await chrome.storage.local.get('lifetimeDetections'));
+  document.getElementById('detectionsNum').textContent = (Number(lifetimeDetections) || 0).toLocaleString();
+}
+
+// Two-step reset: the first click arms it for a few seconds, the second resets.
+const resetDetectionsBtn = document.getElementById('resetDetectionsBtn');
+let resetArmTimer = null;
+function disarmReset() {
+  if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = null; }
+  resetDetectionsBtn.classList.remove('confirming');
+  resetDetectionsBtn.textContent = '↺ Reset count';
+}
+resetDetectionsBtn.addEventListener('click', async () => {
+  if (!resetArmTimer) {
+    resetDetectionsBtn.classList.add('confirming');
+    resetDetectionsBtn.textContent = 'Reset to 0?';
+    resetArmTimer = setTimeout(disarmReset, 4000);
+    return;
+  }
+  disarmReset();
+  // Through the worker (same mutex as logAlert), like Clear above.
+  const res = await chrome.runtime.sendMessage({ type: 'RESET_DETECTIONS' }).catch(() => null);
+  if (res && res.ok) { loadDetections(); showToast('Detection count reset.', false); }
+  else showToast('Could not reset the count.', true);
+});
+
 document.getElementById('exportAlertsBtn').addEventListener('click', async () => {
   const { alertLog = [] } = /** @type {any} */ (await chrome.storage.local.get('alertLog'));
   const blob = new Blob([JSON.stringify(alertLog, null, 2)], { type: 'application/json' });
@@ -522,6 +551,7 @@ loadJobs();
 loadAutoStart();
 loadRules();
 loadAlerts();
+loadDetections();
 loadDenylist();
 
 // Re-render the alert log when the background pushes a new entry (or it's
@@ -529,6 +559,7 @@ loadDenylist();
 // alertLog key so unrelated writes don't trigger a rebuild.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.alertLog) loadAlerts();
+  if (area === 'local' && changes.lifetimeDetections) loadDetections();
 });
 // Slow backstop poll. The _sig guard in loadJobs already skips the DOM rebuild +
 // per-tab tabs.get when nothing changed, so the only residual per-poll cost is

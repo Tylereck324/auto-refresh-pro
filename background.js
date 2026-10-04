@@ -484,7 +484,7 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
   // Journal + unacked badge — independent of delivery suppression, so a muted
   // overnight hit is still captured.
-  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' });
+  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' }, { detections: count });
   if (beep) await beep;
   if (job.settings.stopOnKeyword) {
     await stopRefresh(tabId);
@@ -1309,7 +1309,9 @@ async function sendCountdownStart(tabId, attempt) {
   if (!activeJobs[tabId]) return;
   // liveWatch: arm the page's change observer (instant live watch).
   const liveWatch = domScanEnabled(job);
-  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey, liveWatch }, (resp) => {
+  const detections = await overlayDetections(job); // lifetime total (keyword jobs only)
+  if (!activeJobs[tabId]) return;
+  chrome.tabs.sendMessage(tabId, { type: 'COUNTDOWN_START', nextRefresh, total, stopOnClick, showCountdown, preserveScroll, hotkey, liveWatch, detections }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
       // No live content script yet (a fresh Start, or the page-load injection
       // hasn't landed). Inject it — content.js is idempotent (guards via
