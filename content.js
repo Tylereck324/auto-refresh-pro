@@ -226,19 +226,27 @@
           transform-origin:left;
           transition:transform 1s linear;
         }
+        /* One footer line: detection count · shortcut hint. Sharing a line keeps
+           both visible without making the overlay taller. */
+        #__ar_foot {
+          display:flex; align-items:baseline; justify-content:center;
+          max-width:100%; white-space:nowrap;
+          flex-shrink:0; /* never squashed away; the overlay grows instead */
+        }
         #__ar_count {
           font-weight:600;
           color:rgba(255,255,255,0.62);
-          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-          max-width:100%; flex-shrink:0; /* never squashed away; the overlay grows instead */
+          flex-shrink:0; /* the count never truncates; the hint gives way */
           transition:color 0.3s;
         }
+        #__ar_sep { color:rgba(255,255,255,0.35); padding:0 0.45em; flex-shrink:0; }
         #__ar_count b { color:#ffffff; font-variant-numeric:tabular-nums; transition:color 0.3s; }
         /* Brief green highlight when the count goes up. */
         #__ar_count.__ar_bump, #__ar_count.__ar_bump b { color:#34d399; }
         #__ar_hint {
           font-weight:500;
           color:rgba(255,255,255,0.55);
+          min-width:0; overflow:hidden; text-overflow:ellipsis;
         }
         #__ar_resize {
           position:absolute; bottom:0; right:0;
@@ -364,15 +372,26 @@
     fill.id = '__ar_fill';
     track.appendChild(fill);
 
-    // Lifetime keyword-detection count. Filled by renderDetections().
-    const count = document.createElement('div');
+    // Footer line: lifetime keyword-detection count · shortcut hint. Which
+    // parts show is decided by updateFoot().
+    const foot = document.createElement('div');
+    foot.id = '__ar_foot';
+    const count = document.createElement('span');
     count.id = '__ar_count';
     count.style.display = 'none';
+    count.title = 'Keyword detections, all time (reset on the Manage page)';
     const countNum = document.createElement('b');
+    const countAllTime = document.createElement('span');
+    countAllTime.textContent = ' all time';
     count.appendChild(countNum);
-    count.appendChild(document.createTextNode(' detected all time'));
+    count.appendChild(document.createTextNode(' detected'));
+    count.appendChild(countAllTime);
+    const sep = document.createElement('span');
+    sep.id = '__ar_sep';
+    sep.textContent = '·';
+    sep.setAttribute('aria-hidden', 'true');
 
-    const hint = document.createElement('div');
+    const hint = document.createElement('span');
     hint.id = '__ar_hint';
     const hintText = document.createElement('span');
     hintText.className = '__ar_hint_text';
@@ -384,8 +403,10 @@
     body.appendChild(timer);
     body.appendChild(sublabel);
     body.appendChild(track);
-    body.appendChild(count);
-    body.appendChild(hint);
+    foot.appendChild(count);
+    foot.appendChild(sep);
+    foot.appendChild(hint);
+    body.appendChild(foot);
     overlayEl.appendChild(body);
 
     // ── Resize handle ──
@@ -402,6 +423,11 @@
     overlayEl._sublabel = sublabel; // so a background PAUSED message can annotate the reason
     overlayEl._count = count;
     overlayEl._countNum = countNum;
+    overlayEl._countAllTime = countAllTime;
+    overlayEl._foot = foot;
+    overlayEl._sep = sep;
+    overlayEl._hint = hint;
+    overlayEl._tall = false; // set by scaleOverlay
 
     // ── Scale everything proportionally with overlay size ──
     // forcedW/forcedH let the resize handler pass the dimensions it just computed,
@@ -459,21 +485,18 @@
       track.style.height = Math.max(2, Math.round(s * 0.016)) + 'px';
       track.style.marginBottom = Math.round(s * 0.04) + 'px';
 
-      // Detection count
-      count.style.fontSize = Math.max(8, Math.round(s * 0.042)) + 'px';
-      count.style.letterSpacing = '0.3px';
-      count.style.marginBottom = Math.round(s * 0.025) + 'px';
-
-      // Hint
-      hint.style.fontSize = Math.max(7, Math.round(s * 0.038)) + 'px';
-      hint.style.letterSpacing = '0.3px';
+      // Footer line (count · hint)
+      foot.style.fontSize = Math.max(8, Math.round(s * 0.04)) + 'px';
+      foot.style.letterSpacing = '0.3px';
 
       // At small sizes the sublabel/hint would shrink to ~7px (illegible) and
       // crowd the timer, so drop them and let the countdown own the space. They
       // return as the user grows the overlay back. Timer + progress bar stay.
       sublabel.style.display = h < 104 ? 'none' : '';
-      hint.style.display     = h < 124 ? 'none' : '';
-      renderDetections();
+      // The hint alone keeps its old rule (its own line needs room). Beside the
+      // count it rides on a line that is showing anyway, so it costs no height.
+      overlayEl._tall = h >= 124;
+      updateFoot();
 
       // Border radius
       overlayEl.style.borderRadius = Math.max(10, Math.round(s * 0.07)) + 'px';
@@ -667,16 +690,27 @@
       }, 2000);
     }
   }
-  // Always shown on a keyword job, at any overlay size. A remembered size that
-  // is too short to fit it (the overlay clips its overflow) is grown just
-  // enough, rather than hiding the count.
-  function renderDetections() {
-    if (!overlayEl || !overlayEl._count) return;
-    const show = detectionsTotal !== null;
-    overlayEl._count.style.display = show ? '' : 'none';
-    if (!show) return;
-    overlayEl._countNum.textContent = detectionsTotal.toLocaleString();
-    if (overlayEl.style.height && overlayEl.scrollHeight > overlayEl.clientHeight) {
+  function renderDetections() { updateFoot(); }
+
+  // Lay out the footer line. The count is always shown on a keyword job, at any
+  // overlay size; the shortcut hint joins it on the same line. A remembered
+  // size too short to fit the line (the overlay clips its overflow) is grown
+  // just enough, rather than hiding it.
+  function updateFoot() {
+    if (!overlayEl || !overlayEl._foot) return;
+    const showCount = detectionsTotal !== null;
+    const hintText = hintLabel();
+    const showHint = !!hintText && (showCount || overlayEl._tall);
+    overlayEl._count.style.display = showCount ? '' : 'none';
+    overlayEl._hint.style.display = showHint ? '' : 'none';
+    overlayEl._sep.style.display = showCount && showHint ? '' : 'none';
+    overlayEl._foot.style.display = showCount || showHint ? '' : 'none';
+    // "all time" only when the count has the line to itself.
+    overlayEl._countAllTime.style.display = showHint ? 'none' : '';
+    overlayEl._hint.title = showHint ? hintText : '';
+    if (showCount) overlayEl._countNum.textContent = detectionsTotal.toLocaleString();
+    if ((showCount || showHint) && overlayEl.style.height &&
+        overlayEl.scrollHeight > overlayEl.clientHeight) {
       overlayEl.style.height = (overlayEl.offsetHeight + overlayEl.scrollHeight - overlayEl.clientHeight) + 'px';
     }
   }
@@ -871,6 +905,7 @@
   function refreshHint() {
     const h = overlayEl && overlayEl.querySelector('.__ar_hint_text');
     if (h) h.textContent = hintLabel();
+    updateFoot(); // the hint may have appeared, vanished or changed length
   }
 
   // Injected only into job pages, so sync straight away.
