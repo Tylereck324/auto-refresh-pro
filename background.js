@@ -454,14 +454,13 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
   // the stopOnKeyword early-return so a stop-on-hit cycle still counts the hit.
   job.keywordCount = (job.keywordCount || 0) + count;
   job._changedThisCycle = true; // adaptive backoff: snap back to the fast base
-  // Journal + unacked badge — independent of delivery suppression, so a muted
-  // overnight hit is still captured.
   const meta = await tabMeta(tabId);
-  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' });
-  // Outbound webhook (not awaited: its internal fetch is timed-out, and blocking
-  // the reload on a slow endpoint would stall the cycle).
+  // Every outward channel starts before the journal write and the beep's
+  // offscreen setup, so none of them waits on the others. Outbound webhook
+  // (not awaited: its internal fetch is timed-out, and blocking the reload on a
+  // slow endpoint would stall the cycle).
   if (!muted('notify')) sendWebhook(job, { tabId, type: 'kw', title: meta.title || meta.url, url: meta.url, keyword: job.settings.keyword, inverse: !!job.settings.kwInverse, count: job.keywordCount, items: opts.items });
-  if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
+  const beep = (job.settings.sound && !muted('sound')) ? playBeep(soundOpts(job.settings)) : null;
   const verb = job.settings.kwInverse ? 'disappeared from' : 'found on';
   // Exactly one new study with a usable link: name it in the notification and
   // make the click open it directly.
@@ -483,6 +482,10 @@ async function deliverKeywordAlert(tabId, job, muted, opts) {
     flashOnKeyword: job.settings.flashOnKeyword && !muted('flash'),
   });
   if (flashPlan === 'now') sendKeywordFlash(tabId, 0);
+  // Journal + unacked badge — independent of delivery suppression, so a muted
+  // overnight hit is still captured.
+  await logAlert({ tabId, url: meta.url, title: meta.title, type: 'kw', keyword: job.settings.keyword, snippet: opts.snippet || '' });
+  if (beep) await beep;
   if (job.settings.stopOnKeyword) {
     await stopRefresh(tabId);
     return true;
@@ -1104,9 +1107,10 @@ async function doMonitorRefresh(tabId, job) {
         collapseDigits: job.settings.collapseDigits !== false && job.settings.noiseTolerant,
       });
       const meta = await tabMeta(tabId);
-      await logAlert({ tabId, url: meta.url, title: meta.title, type: 'chg', snippet: diff.summary });
+      // Same ordering as deliverKeywordAlert: outward channels first, then the
+      // journal write and the beep.
       if (!muted('notify')) sendWebhook(job, { tabId, type: 'chg', title: meta.title || meta.url, url: meta.url, snippet: diff.summary, count: job.refreshCount });
-      if (job.settings.sound && !muted('sound')) await playBeep(soundOpts(job.settings));
+      const beep = (job.settings.sound && !muted('sound')) ? playBeep(soundOpts(job.settings)) : null;
       if (!muted('notify')) notify('chg', tabId, {
         type: 'basic',
         iconUrl: 'icons/icon48.png',
@@ -1115,6 +1119,8 @@ async function doMonitorRefresh(tabId, job) {
         requireInteraction: true,
         buttons: [{ title: 'Stop' }, { title: 'Snooze 15m' }],
       });
+      await logAlert({ tabId, url: meta.url, title: meta.title, type: 'chg', snippet: diff.summary });
+      if (beep) await beep;
       if (job.settings.stopOnChange) {
         await stopRefresh(tabId);
         return;

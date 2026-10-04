@@ -55,7 +55,14 @@ function createHarness(options = {}) {
   };
   // Local and session areas are separate stores; set() calls are recorded as
   // 'storage.set' (local, kept for existing assertions) and 'session.set'.
-  function makeArea(store, setApi, failures) {
+  // storage.onChanged fires only with options.emitStorageChanges, so suites
+  // written before it existed keep their exact behavior.
+  const storageOnChanged = event();
+  function emitChanges(areaName, changes) {
+    if (!options.emitStorageChanges || !Object.keys(changes).length) return;
+    for (const listener of [...storageOnChanged.listeners]) listener(changes, areaName);
+  }
+  function makeArea(store, setApi, failures, areaName) {
     return {
       async get(keys) {
         if (keys == null) return { ...store };
@@ -67,26 +74,35 @@ function createHarness(options = {}) {
       async set(values) {
         if (failures.set) throw new Error(setApi + ' failed');
         // Clone like Chrome does, so later in-memory mutation can't leak in.
-        Object.assign(store, JSON.parse(JSON.stringify(values)));
+        const cloned = JSON.parse(JSON.stringify(values));
+        const changes = {};
+        for (const key of Object.keys(cloned)) changes[key] = { oldValue: store[key], newValue: cloned[key] };
+        Object.assign(store, cloned);
         calls.push({ api: setApi, values });
+        emitChanges(areaName, changes);
       },
       async remove(keys) {
-        for (const key of (Array.isArray(keys) ? keys : [keys])) delete store[key];
+        const changes = {};
+        for (const key of (Array.isArray(keys) ? keys : [keys])) {
+          if (Object.prototype.hasOwnProperty.call(store, key)) changes[key] = { oldValue: store[key] };
+          delete store[key];
+        }
         calls.push({ api: setApi.replace('.set', '.remove'), keys });
+        emitChanges(areaName, changes);
       },
     };
   }
   const sessionStorage = { ...(options.session || {}) };
   const failures = { local: {}, session: {} };
-  const storageArea = makeArea(storage, 'storage.set', failures.local);
-  const sessionArea = makeArea(sessionStorage, 'session.set', failures.session);
+  const storageArea = makeArea(storage, 'storage.set', failures.local, 'local');
+  const sessionArea = makeArea(sessionStorage, 'session.set', failures.session, 'session');
   const syncStorage = { ...(options.sync || {}) };
   failures.sync = {};
-  const syncArea = makeArea(syncStorage, 'sync.set', failures.sync);
+  const syncArea = makeArea(syncStorage, 'sync.set', failures.sync, 'sync');
 
   const chrome = {
     runtime,
-    storage: { local: storageArea, session: sessionArea, sync: syncArea, onChanged: event() },
+    storage: { local: storageArea, session: sessionArea, sync: syncArea, onChanged: storageOnChanged },
     tabs: {
       onRemoved: event(),
       onUpdated: tabsOnUpdated,
