@@ -120,10 +120,12 @@
         items: jsonShown.map((it) => {
           const { meta } = webhookItemDetail(it.text);
           return {
-            // The hash the extension diffs items on. It covers the card's TEXT, so
-            // it changes when the card does (e.g. "12 places" → "11 places")
-            // unless the job collapses digits (Ignore noise + digits). A consumer
-            // should dedupe on `url` first; `key` is a fallback for link-less items.
+            // The key the extension diffs items on. When the card has a unique
+            // element id (Prolific's data-testid="study-<id>") it is "id:<that id>"
+            // and stable for the item's lifetime; otherwise it's a hash of the
+            // card's TEXT and changes when the card does ("12 places" → "11
+            // places"). Prefer an "id:" key for dedup — `url` can be shared by
+            // every card (Prolific's cards all link to "/studies#").
             key: typeof it.key === 'string' ? it.key : '',
             title: meta.title || '',
             url: (it.href && Validators.isSafeNavigableUrl(it.href)) ? it.href : '',
