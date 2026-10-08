@@ -75,6 +75,13 @@
   function itemHref(el) {
     return el && typeof el === 'object' && typeof el.href === 'string' ? el.href : '';
   }
+  function itemId(el) {
+    return el && typeof el === 'object' && typeof el.id === 'string' ? el.id.trim() : '';
+  }
+
+  // Keys minted from a site-provided element id carry this prefix; text-hash
+  // keys are bare base36 and can never contain ':', so the two never collide.
+  const ID_KEY_PREFIX = 'id:';
 
   // From an array of items, return one detail record { key, href, text } per item
   // the matcher accepts, de-duplicated by key in first-occurrence order — so a
@@ -95,13 +102,22 @@
     const out = [];
     if (!Array.isArray(items) || !matcher || typeof matcher.test !== 'function') return out;
     const skip = exclude && typeof exclude.test === 'function' ? exclude : null;
+    // An element id identifies an item only if it's unique on the page: a
+    // shared id ("study-card" on every row) would merge distinct items into
+    // one key and swallow arrivals, so duplicated ids fall back to text keys.
+    const idCount = new Map();
+    for (let i = 0; i < items.length; i++) {
+      const id = itemId(items[i]);
+      if (id) idCount.set(id, (idCount.get(id) || 0) + 1);
+    }
     const seen = new Set();
     for (let i = 0; i < items.length; i++) {
       const text = itemText(items[i]);
       if (!text) continue;
       if (!matcher.test(text)) continue;
       if (skip && skip.test(text)) continue;
-      const k = itemKey(text, opts);
+      const id = itemId(items[i]);
+      const k = id && idCount.get(id) === 1 ? ID_KEY_PREFIX + id : itemKey(text, opts);
       if (!k || seen.has(k)) continue;
       seen.add(k);
       out.push({ key: k, href: itemHref(items[i]), text });
@@ -128,6 +144,16 @@
     }
     const prev = new Set(Array.isArray(prevKeys) ? prevKeys : []);
     return (Array.isArray(currKeys) ? currKeys : []).filter(k => !prev.has(k));
+  }
+
+  // True when the previous seen-set was built with text keys only but this
+  // read produced id keys — i.e. a baseline persisted by a version before
+  // id keying. Diffing across the two schemes would report every matching item
+  // as new (or, in inverse mode, as gone), so the caller re-seeds instead.
+  function isLegacyBaseline(prevKeys, currKeys) {
+    if (!Array.isArray(prevKeys) || prevKeys.length === 0) return false;
+    const isId = (k) => typeof k === 'string' && k.startsWith(ID_KEY_PREFIX);
+    return !prevKeys.some(isId) && Array.isArray(currKeys) && currKeys.some(isId);
   }
 
   // Best-effort presentation metadata pulled from one item's visible text, used
@@ -172,7 +198,7 @@
   }
 
   return {
-    itemKey, collectMatches, collectItems, computeNewKeys, parseItemMeta,
+    itemKey, collectMatches, collectItems, computeNewKeys, isLegacyBaseline, parseItemMeta,
     parsePayPerHour, belowMinPay, MAX_ITEM_TEXT,
   };
 });

@@ -383,7 +383,17 @@ function readPageText(selector, perItem) {
             href = a.href.length > 2000 ? a.href.slice(0, 2000) : a.href;
           }
         } catch (e) { /* selector-engine edge / detached node — href stays '' */ }
-        items.push({ text: t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t, href });
+        // Stable per-item identity when the site provides one (Prolific's
+        // li[data-testid="study-<id>"]). Lets the background key an item by WHO
+        // it is rather than by its text, so a ticking places count ("63 places"
+        // → "62 places", or "2 places" → "1 place") doesn't make the same study
+        // look new and re-alert. Missing/duplicated ids fall back to text keys.
+        let id = '';
+        try {
+          id = node.getAttribute('data-testid') || node.getAttribute('data-id') || node.id || '';
+          if (id.length > 200) id = '';
+        } catch (e) { id = ''; }
+        items.push({ text: t.length > MAX_ITEM_LEN ? t.slice(0, MAX_ITEM_LEN) : t, href, id });
       }
       // Zero matches on a body with no visible text is a mid-load read, not a
       // genuinely empty list — the selector had nothing to miss. Report "no
@@ -812,7 +822,9 @@ async function domScanOnce(tabId) {
         const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
         const curr = ARPItemDetect.collectItems(raw, matcher, itemKeyOpts(job.settings), exclude);
         const currKeys = curr.map(c => c.key);
-        const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+        const seenKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+        // A pre-id-keying baseline can't be diffed against id keys — re-seed.
+        const prevKeys = seenKeys && !ARPItemDetect.isLegacyBaseline(seenKeys, currKeys) ? seenKeys : null;
         const newKeys = prevKeys
           ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
           : []; // first observation seeds the baseline without firing
@@ -1037,7 +1049,9 @@ async function doMonitorRefresh(tabId, job) {
     const exclude = job._excludeMatcher || (job._excludeMatcher = buildExcludeMatcher(job.settings));
     const curr = ARPItemDetect.collectItems(currentContent, matcher, itemKeyOpts(job.settings), exclude);
     const currKeys = curr.map(c => c.key);
-    const prevKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+    const seenKeys = Array.isArray(job._seenKeys) ? job._seenKeys : null;
+    // A pre-id-keying baseline can't be diffed against id keys — re-seed.
+    const prevKeys = seenKeys && !ARPItemDetect.isLegacyBaseline(seenKeys, currKeys) ? seenKeys : null;
     const newKeys = prevKeys
       ? ARPItemDetect.computeNewKeys(prevKeys, currKeys, job.settings.kwInverse)
       : [];

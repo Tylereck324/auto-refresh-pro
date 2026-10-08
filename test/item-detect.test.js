@@ -236,3 +236,43 @@ test('parseItemMeta does not mistake a bare total reward for an hourly rate', ()
   // "£9.00" alone (no /hr, no "per hour") must not be reported as pay.
   assert.equal(parseItemMeta('Some study\n£9.00\n10 places').pay, undefined);
 });
+
+// ── id keying (stable element ids, e.g. Prolific data-testid) ───────────────
+const { isLegacyBaseline } = require('../item-detect.js');
+const kwRe = require('../keyword-match.js').compileMatcher(
+  { keyword: '\\b(Vortex Oasis|Galactic Probe)\\b', kwRegex: true });
+
+test('a unique element id keys the item, so its places count can tick freely', () => {
+  const before = collectMatches([
+    { id: 'study-abc', text: 'AI Videos - Evaluation\nBy Vortex Oasis\n$3.00\n2 places' },
+  ], kwRe);
+  const after = collectMatches([
+    { id: 'study-abc', text: 'AI Videos - Evaluation\nBy Vortex Oasis\n$3.00\n1 place' },
+  ], kwRe);
+  assert.deepEqual(before, ['id:study-abc']);
+  assert.deepEqual(computeNewKeys(before, after, false), []);
+});
+
+test('a new id fires even when its text is identical to a visible card', () => {
+  const text = 'AI Videos - Evaluation\nBy Vortex Oasis\n$3.00\n50 places';
+  const prev = collectMatches([{ id: 'study-a', text }], kwRe);
+  const curr = collectMatches([{ id: 'study-a', text }, { id: 'study-b', text }], kwRe);
+  assert.deepEqual(computeNewKeys(prev, curr, false), ['id:study-b']);
+});
+
+test('duplicated ids fall back to text keys instead of merging items', () => {
+  const keys = collectMatches([
+    { id: 'study-card', text: 'One\nBy Vortex Oasis' },
+    { id: 'study-card', text: 'Two\nBy Galactic Probe' },
+  ], kwRe);
+  assert.equal(keys.length, 2);
+  assert.ok(keys.every(k => !k.startsWith('id:')));
+});
+
+test('isLegacyBaseline flags a text-key baseline meeting id keys', () => {
+  assert.equal(isLegacyBaseline(['1x2y3z'], ['id:study-a']), true);
+  assert.equal(isLegacyBaseline(['id:study-a'], ['id:study-b']), false);
+  assert.equal(isLegacyBaseline(['1x2y3z'], ['4a5b6c']), false);
+  assert.equal(isLegacyBaseline([], ['id:study-a']), false); // real empty baseline
+  assert.equal(isLegacyBaseline(null, ['id:study-a']), false);
+});
